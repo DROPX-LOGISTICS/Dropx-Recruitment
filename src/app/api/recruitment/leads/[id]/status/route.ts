@@ -97,31 +97,46 @@ export async function PATCH(request: Request, { params }: { params: { id: string
       metadata: { source: "web_or_mobile", requested_status: nextStatus, retry: isRetry }
     });
     if (history.error) throw new Error(history.error.message);
+    let notificationWarning = "";
     if (nextStatus === "no_response" || nextStatus === "interview_scheduled" || nextStatus === "interview_rescheduled") {
-      const contact = current.data.location_id
-        ? await supabaseAdmin.from("recruitment_location_contacts")
-            .select("address,latitude,longitude,poc_mobile")
-            .eq("company_id", companyId).eq("location_id", current.data.location_id).maybeSingle()
-        : { data: null, error: null };
-      if (contact.error) throw new Error(contact.error.message);
-      await enqueueLeadNotification({
-        companyId,
-        lead: {
-          id: current.data.id,
-          phone: current.data.phone,
-          full_name: current.data.full_name,
-          stream: current.data.stream,
-          location_id: current.data.location_id,
-          recruitment_roles: current.data.recruitment_roles as { name?: string | null } | null,
-          recruitment_locations: contact.data
-        },
-        trigger: nextStatus === "no_response" ? "no_response" : "interview",
-        anchor: nextStatus === "no_response"
-          ? `${Number(current.data.no_response_attempts || 0) + 1}`
-          : String(body.interviewAt)
-      });
+      try {
+        const contact = current.data.location_id
+          ? await supabaseAdmin.from("recruitment_location_contacts")
+              .select("address,latitude,longitude,poc_mobile")
+              .eq("company_id", companyId).eq("location_id", current.data.location_id).maybeSingle()
+          : { data: null, error: null };
+        if (contact.error) throw new Error(contact.error.message);
+        const notification = await enqueueLeadNotification({
+          companyId,
+          lead: {
+            id: current.data.id,
+            phone: current.data.phone,
+            full_name: current.data.full_name,
+            stream: current.data.stream,
+            location_id: current.data.location_id,
+            recruitment_roles: current.data.recruitment_roles as { name?: string | null } | null,
+            recruitment_locations: contact.data
+          },
+          trigger: nextStatus === "no_response" ? "no_response" : "interview",
+          anchor: nextStatus === "no_response"
+            ? `${Number(current.data.no_response_attempts || 0) + 1}`
+            : String(body.interviewAt)
+        });
+        if (!notification.queued) {
+          notificationWarning = notification.reason
+            || "The status was saved, but the WhatsApp automation could not be queued.";
+        }
+      } catch (error) {
+        console.error("Recruitment status notification failed", error);
+        notificationWarning = error instanceof Error
+          ? `The status was saved, but the WhatsApp automation failed: ${error.message}`
+          : "The status was saved, but the WhatsApp automation failed.";
+      }
     }
-    return NextResponse.json({ lead: saved.data });
+    return NextResponse.json({
+      lead: saved.data,
+      ...(notificationWarning ? { notificationWarning } : {})
+    });
   } catch (error) {
     console.error("Recruitment status update failed", error);
     return NextResponse.json({ error: "Unable to update lead." }, { status: 500 });

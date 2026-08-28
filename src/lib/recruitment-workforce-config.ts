@@ -189,7 +189,14 @@ export async function loadWorkforceConfig(companyId: string) {
       scheduleType: (["callback","interview"].includes(scheduleType) ? scheduleType : null) as LeadStatusMasterItem["scheduleType"],
       sortOrder: Number.isFinite(Number(item.sortOrder)) ? Number(item.sortOrder) : (index + 1) * 10
     } satisfies LeadStatusMasterItem;
-  }).filter((item) => item.code && item.label).sort((a,b) => a.sortOrder - b.sortOrder);
+  }).filter((item) => item.code && item.label).map((item) => {
+    if (item.scheduleType || !item.requiresSchedule) return item;
+    if (item.code === "call_back") return { ...item, scheduleType: "callback" as const };
+    if (item.code === "interview_scheduled" || item.code === "interview_rescheduled") {
+      return { ...item, scheduleType: "interview" as const };
+    }
+    return item;
+  }).sort((a,b) => a.sortOrder - b.sortOrder);
   // Older installations only stored Workforce statuses.  Add the HR-specific
   // defaults and make the shared first-call outcomes available to both
   // workspaces.  Once saved through Lead Status Master, the administrator's

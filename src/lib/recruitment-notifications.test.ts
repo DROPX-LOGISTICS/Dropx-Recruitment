@@ -113,4 +113,12 @@ describe("recruitment WhatsApp notification rules", () => {
     expect(rules.find((item) => item.stream === "hr" && item.trigger === "interview")?.contactSource)
       .toBe("station_then_default");
   });
+
+  it("falls back to the legacy default interview template when connection config is incomplete", () => {
+    const rules = notificationRulesFromConfig({});
+    expect(rules.find((item) => item.stream === "workforce" && item.trigger === "interview")?.templateName)
+      .toBe("job_location_share");
+    expect(rules.find((item) => item.stream === "workforce" && item.trigger === "new_lead")?.templateName)
+      .toBe("job_application_number");
+  });
 });

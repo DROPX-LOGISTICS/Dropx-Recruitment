@@ -385,6 +385,7 @@ export default function RecruitmentApp() {
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error);
+      if (payload.notificationWarning) setError(payload.notificationWarning);
       await load();
       if (stream === "workforce" && active === "Interviews" && status === "joined") {
         detailCache.current.delete(lead.id);
@@ -717,6 +718,13 @@ const workforceQuickStatuses = [
   "document_issue"
 ];
 
+function workforceStatusScheduleType(code: string, scheduleType?: string | null) {
+  if (scheduleType === "interview" || scheduleType === "callback") return scheduleType;
+  if (code === "call_back") return "callback";
+  if (code === "interview_scheduled" || code === "interview_rescheduled") return "interview";
+  return null;
+}
+
 function workforceStatusOptions(options:any) {
   const configured = Array.isArray(options?.workforceStatuses) ? options.workforceStatuses : [];
   return configured.length ? configured : workforceQuickStatuses.map((code,index)=>({
@@ -909,11 +917,12 @@ function LeadStatusControl({ lead, busy, canEdit, update, options }: {
   const [when,setWhen]=useState("");
   const [remarks,setRemarks]=useState("");
   const selectedOption=options.find((item)=>item.code===next);
+  const scheduleType=workforceStatusScheduleType(next,selectedOption?.scheduleType);
   const needsDate=selectedOption?.requiresSchedule===true;
   async function apply() {
     await update(lead,next,{
-      interviewAt:selectedOption?.scheduleType==="interview"?localInputToIso(when):undefined,
-      callbackAt:selectedOption?.scheduleType==="callback"?localInputToIso(when):undefined,
+      interviewAt:scheduleType==="interview"?localInputToIso(when):undefined,
+      callbackAt:scheduleType==="callback"?localInputToIso(when):undefined,
       remarks
     });
     setNext("");setWhen("");setRemarks("");
@@ -934,11 +943,12 @@ function InterviewOutcomeControl({ lead, busy, canEdit, update, options }: {
   const [remarks,setRemarks]=useState("");
   const outcomes = workforceInterviewActionOptions(options);
   const selected = outcomes.find((item)=>item.code===next);
+  const scheduleType=workforceStatusScheduleType(next,selected?.scheduleType);
   const needsDate = selected?.requiresDate===true;
   async function apply() {
     await update(lead,next,{
-      interviewAt:selected?.scheduleType==="interview"?localInputToIso(when):undefined,
-      callbackAt:selected?.scheduleType==="callback"?localInputToIso(when):undefined,
+      interviewAt:scheduleType==="interview"?localInputToIso(when):undefined,
+      callbackAt:scheduleType==="callback"?localInputToIso(when):undefined,
       remarks
     });
     setNext("");setWhen("");setRemarks("");
@@ -3231,8 +3241,24 @@ function ActiveAds({ data, token, stream, reload, request, canDirectPost, openPu
     ...(item.meta_ad_id ? insightState.values[item.meta_ad_id] : null),
     guard:item.meta_ad_id?insightState.recommendations[item.meta_ad_id]:null
   })),[baseAds,insightState.values,insightState.recommendations]);
-  const stations = [...new Set(ads.map((item:any)=>item.recruitment_locations?.code).filter(Boolean))].sort() as string[];
-  const clusters = [...new Set(ads.map((item:any)=>item.recruitment_locations?.cluster).filter(Boolean))].sort() as string[];
+  const stationCatalog = useMemo(() => {
+    const merged = new Map<string, { code: string; name: string; cluster: string | null }>();
+    for (const item of data?.stationOptions ?? []) {
+      if (!item?.code) continue;
+      merged.set(item.code, { code: item.code, name: item.name || item.code, cluster: item.cluster ?? null });
+    }
+    for (const item of ads) {
+      const code = item.recruitment_locations?.code;
+      if (!code || merged.has(code)) continue;
+      merged.set(code, {
+        code,
+        name: item.recruitment_locations?.name || code,
+        cluster: item.recruitment_locations?.cluster ?? null
+      });
+    }
+    return [...merged.values()].sort((left, right) => left.code.localeCompare(right.code));
+  }, [ads, data?.stationOptions]);
+  const clusters = [...new Set(stationCatalog.map((item) => item.cluster).filter(Boolean))].sort() as string[];
   const roles = [...new Set(ads.map((item:any)=>item.recruitment_roles?.code).filter(Boolean))].sort() as string[];
   const states = [...new Set(ads.map((item:any)=>String(item.status||"unknown").toUpperCase()))].sort() as string[];
   const selectedAdStates = new Set(status.split(",").filter(Boolean));
@@ -3302,7 +3328,7 @@ function ActiveAds({ data, token, stream, reload, request, canDirectPost, openPu
       <article className="ad-stat stat-total-spend"><span>Lifetime Spend</span><strong>₹{filtered.lifetimeSpend.toLocaleString("en-IN",{maximumFractionDigits:0})}</strong><small>historical total</small></article>
       <article className="ad-stat stat-leads"><span>Mapped Leads</span><strong>{filtered.leads.toLocaleString("en-IN")}</strong><small>unique dashboard leads</small></article>
     </div>
-    <div className="toolbar filter-toolbar ad-filter-toolbar"><input placeholder="Search ad, station or role…" value={search} onChange={(event)=>setSearch(event.target.value)}/><MultiFilter label="Status" value={status} options={states.map((item)=>[item,statusLabel(item)])} onChange={setStatus}/><MultiFilter label="Stations" value={station} options={stations.map((item)=>[item,item])} onChange={setStation}/><MultiFilter label="Clusters" value={cluster} options={clusters.map((item)=>[item,item])} onChange={setCluster}/><MultiFilter label="Roles" value={role} options={roles.map((item)=>[item,item])} onChange={setRole}/><FilterSelect label="Sort" value={sort} options={[["today","Today spend"],["week","7-day spend"],["lifetime","Lifetime spend"],["budget","Daily budget"],["leads","Leads"],["newest","Newest"],["name","Ad name"],["station","Station"]]} onChange={setSort}/>{hasFilters?<button className="secondary-action" onClick={resetFilters}>Clear</button>:null}<span>{visible.length} of {ads.length}</span></div>
+    <div className="toolbar filter-toolbar ad-filter-toolbar"><input placeholder="Search ad, station or role…" value={search} onChange={(event)=>setSearch(event.target.value)}/><MultiFilter label="Status" value={status} options={states.map((item)=>[item,statusLabel(item)])} onChange={setStatus}/><MultiFilter label="Stations" value={station} options={stationCatalog.map((item)=>[item.code,`${item.code} — ${item.name}`])} onChange={setStation}/><MultiFilter label="Clusters" value={cluster} options={clusters.map((item)=>[item,item])} onChange={setCluster}/><MultiFilter label="Roles" value={role} options={roles.map((item)=>[item,item])} onChange={setRole}/><FilterSelect label="Sort" value={sort} options={[["today","Today spend"],["week","7-day spend"],["lifetime","Lifetime spend"],["budget","Daily budget"],["leads","Leads"],["newest","Newest"],["name","Ad name"],["station","Station"]]} onChange={setSort}/>{hasFilters?<button className="secondary-action" onClick={resetFilters}>Clear</button>:null}<span>{visible.length} of {ads.length}</span></div>
     {insightState.loading?<div className="ad-insight-loading">Refreshing today and 7-day Meta insight in the background…</div>:insightState.available===false?<div className="ad-insight-warning">Daily Meta insight is temporarily unavailable. Lifetime values and saved budgets remain visible.{insightState.error?` ${insightState.error}`:""}</div>:null}
     {posterError?<div className="error-banner poster-error">{posterError}<button type="button" onClick={()=>setPosterError("")}>×</button></div>:null}
     <section className="spend-guard-panel"><header><div><span>AD SPEND WATCH</span><h3>Actions</h3></div><small>Click a line for analysis</small></header><div className="guard-list">{visible.filter((item:any)=>["critical","warning"].includes(item.guard?.severity)).sort((a:any,b:any)=>Number(b.guard?.score||0)-Number(a.guard?.score||0)).slice(0,10).map((item:any,index:number)=><details key={item.id} className={`guard-card guard-${item.guard.severity}`}><summary><span className="guard-rank">{index+1}</span><span className={`guard-level guard-${item.guard.severity}`}>{item.guard.severity}</span><span className="guard-ad"><b>{item.ad_name}</b><small>{item.recruitment_locations?.code||"Unmapped"} · {item.recruitment_roles?.code||"Unmapped"}</small></span><strong className="guard-action">{item.guard.title}</strong><span className="guard-facts"><b>{item.guard.evidence?.recentLeads||0}</b><small>7d leads</small></span><span className="guard-facts"><b>₹{Number(item.guard.evidence?.recentSpend||0).toLocaleString("en-IN")}</b><small>7d spend</small></span><em>Why?</em></summary><div className="guard-analysis"><p>{item.guard.explanation||item.guard.reason}</p><dl><span><dt>Previous week</dt><dd>{item.guard.evidence?.previousLeads||0} leads</dd></span><span><dt>Click → lead</dt><dd>{item.guard.evidence?.clickToLead||0}%</dd></span><span><dt>CTR</dt><dd>{item.guard.evidence?.ctr||0}%</dd></span><span><dt>CPL</dt><dd>₹{Number(item.guard.evidence?.cpl||0).toLocaleString("en-IN")}</dd></span><span><dt>SLA pending</dt><dd>{item.guard.evidence?.staleUnattempted||0}</dd></span></dl><button type="button" onClick={()=>setInsightAd(item)}>Full performance</button></div></details>)}</div>{!insightState.loading&&!visible.some((item:any)=>["critical","warning"].includes(item.guard?.severity))?<p className="guard-clear">No action needed from the current evidence.</p>:null}</section>

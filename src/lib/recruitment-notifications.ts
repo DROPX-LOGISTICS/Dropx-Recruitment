@@ -46,6 +46,21 @@ const templateKeys: Record<LeadNotificationTrigger, string> = {
   no_response: "reminder_template",
   interview: "interview_template"
 };
+const defaultTemplateNames: Record<LeadNotificationTrigger, string> = {
+  new_lead: "job_application_number",
+  no_response: "job_application_reminder",
+  interview: "job_location_share"
+};
+
+function resolvedTemplateName(
+  config: Record<string, string>,
+  trigger: LeadNotificationTrigger,
+  savedTemplateName?: unknown
+) {
+  return value(savedTemplateName)
+    || value(config[templateKeys[trigger]])
+    || defaultTemplateNames[trigger];
+}
 
 function value(input: unknown) {
   return String(input ?? "").trim();
@@ -83,7 +98,7 @@ export function notificationRulesFromConfig(config: Record<string, string>) {
       stream,
       trigger,
       enabled: booleanValue(row?.enabled, true),
-      templateName: value(row?.templateName) || value(config[templateKeys[trigger]]),
+      templateName: resolvedTemplateName(config, trigger, row?.templateName),
       contactSource: isContactSource(contactSource)
         ? contactSource
         : stream === "workforce" ? "station" : "station_then_default",
