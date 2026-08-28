@@ -102,6 +102,28 @@ function coordinate(value: unknown) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+async function auditMasterChange(input: {
+  companyId: string;
+  action: string;
+  changedFields: string[];
+  message: string;
+  actorProfileId: string;
+  actorEmail: string | null;
+}) {
+  if (!supabaseAdmin) throw new Error("Supabase is not configured.");
+  const audited = await supabaseAdmin.from("recruitment_connection_audit").insert({
+    company_id: input.companyId,
+    provider: "masters",
+    action: input.action,
+    changed_fields: input.changedFields,
+    outcome: "success",
+    message: input.message,
+    actor_profile_id: input.actorProfileId,
+    actor_email: input.actorEmail
+  });
+  if (audited.error) throw audited.error;
+}
+
 export async function PUT(request: Request) {
   try {
     if (!supabaseAdmin) throw new Error("Supabase is not configured.");
@@ -143,6 +165,7 @@ export async function PUT(request: Request) {
         actorProfileId: session.profileId,
         actorEmail: session.email
       });
+      await auditMasterChange({ companyId, action: "location_saved", changedFields: ["name", "state", "region", "cluster", "active"], message: `Station ${code} · ${name} saved.`, actorProfileId: session.profileId, actorEmail: session.email });
       return NextResponse.json({ saved: true, resource, item: saved.data, remapped });
     }
 
@@ -170,6 +193,7 @@ export async function PUT(request: Request) {
       const mirrored = await supabaseAdmin.from("recruitment_locations").update(values)
         .eq("company_id", companyId).eq("id", locationId);
       if (mirrored.error) throw mirrored.error;
+      await auditMasterChange({ companyId, action: "station_contact_saved", changedFields: ["address", "coordinates", "poc_name", "poc_mobile"], message: `Station contact details saved for ${locationId}.`, actorProfileId: session.profileId, actorEmail: session.email });
       return NextResponse.json({ saved: true, resource, item: saved.data });
     }
 
@@ -201,6 +225,7 @@ export async function PUT(request: Request) {
         actorProfileId: session.profileId,
         actorEmail: session.email
       });
+      await auditMasterChange({ companyId, action: "designation_saved", changedFields: ["name", "workspace", "aliases", "required_fields", "active"], message: `${stream} designation ${code} · ${name} saved.`, actorProfileId: session.profileId, actorEmail: session.email });
       return NextResponse.json({ saved: true, resource, item: saved.data, remapped });
     }
 
@@ -262,6 +287,7 @@ export async function PUT(request: Request) {
       });
       next.sort((a,b) => a.sortOrder - b.sortOrder);
       await saveWorkforceConfig(companyId, { lead_status_master: next }, session.profileId, session.email);
+      await auditMasterChange({ companyId, action: "candidate_status_saved", changedFields: ["label", "workspace", "schedule", "sort_order", "active"], message: `Candidate status ${code} · ${label} saved.`, actorProfileId: session.profileId, actorEmail: session.email });
       return NextResponse.json({ saved: true, resource, item: next.find((item) => item.code === code) });
     }
 
@@ -300,6 +326,7 @@ export async function PUT(request: Request) {
         updated_at: now
       }, { onConflict: "company_id,code" }).select("id,code,label").single();
       if (saved.error) throw saved.error;
+      await auditMasterChange({ companyId, action: "hr_lifecycle_saved", changedFields: ["label", "stage_group", "transitions", "requirements", "active"], message: `HR lifecycle ${code} · ${label} saved.`, actorProfileId: session.profileId, actorEmail: session.email });
       return NextResponse.json({ saved: true, resource, item: saved.data });
     }
 
@@ -315,6 +342,7 @@ export async function PUT(request: Request) {
         updated_at: now
       }, { onConflict: "company_id" }).select("id").single();
       if (saved.error) throw saved.error;
+      await auditMasterChange({ companyId, action: "hr_workflow_settings_saved", changedFields: ["max_interview_rounds", "default_interview_minutes", "require_offer_approval"], message: "HR interview and offer workflow settings saved.", actorProfileId: session.profileId, actorEmail: session.email });
       return NextResponse.json({
         saved: true,
         resource,

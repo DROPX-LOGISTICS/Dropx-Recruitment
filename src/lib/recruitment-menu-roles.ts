@@ -38,7 +38,7 @@ export const recruitmentMenuCatalog = [
   { id: "Master Reports", label: "Executive Reports", group: "Administration", workspaces: ["workforce", "hr"] },
   { id: "Connections", label: "Source Integrations", group: "Administration", workspaces: ["workforce", "hr"] },
   { id: "System Health", label: "System Health", group: "Administration", workspaces: ["workforce", "hr"] },
-  { id: "Audit", label: "Audit Trail", group: "Administration", workspaces: ["workforce", "hr"] }
+  { id: "Audit", label: "System Logs", group: "Administration", workspaces: ["workforce", "hr"] }
 ] as const;
 
 export type RecruitmentMenuId = typeof recruitmentMenuCatalog[number]["id"];

@@ -526,7 +526,7 @@ export default function RecruitmentApp() {
     ["Performance","Field Recruiter Performance","Field Recruitment"],
     ["Performance","Influencer Performance","Influencer Performance"],
     ["Advertising","Active Ads","Active Ads"],["Advertising","Ad Requests","Ad Requests"],["Master","Station Directory","Station Directory"],
-    ["Master","Station Contacts","Station Contacts"],["Master","Roles","Roles"],["Master","Lead Status Master","Lead Status Master"],["Master","Notification Rules","Notification Rules"],["Master","Incentive Master","Incentive Master"],["Master","Users & Access","Access Control"],["Master","User Roles","User Roles"],["Admin","Master Reports","Master Reports"],["Admin","Connections","Connections"],["Admin","System Health","System Health"],["Admin","Audit","Audit"]
+    ["Master","Station Contacts","Station Contacts"],["Master","Roles","Roles"],["Master","Lead Status Master","Lead Status Master"],["Master","Notification Rules","Notification Rules"],["Master","Incentive Master","Incentive Master"],["Master","Users & Access","Access Control"],["Master","User Roles","User Roles"],["Admin","Master Reports","Master Reports"],["Admin","Connections","Connections"],["Admin","System Health","System Health"],["Admin","System Logs","Audit"]
   ];
   const hrNav: Array<[string,string,string]> = [
     ["Overview","Recruitment Dashboard","Dashboard"],
@@ -542,7 +542,7 @@ export default function RecruitmentApp() {
     ["Master","Business Locations","Station Directory"],["Master","Positions & Designations","Roles"],
     ["Master","Candidate Statuses","Lead Status Master"],["Master","HR Lifecycle & Interview Rules","HR Lifecycle"],["Master","Notification Automation","Notification Rules"],["Master","Users & Access","Access Control"],["Master","User Roles","User Roles"],
     ["Administration","Executive Reports","Master Reports"],
-    ["Administration","Source Integrations","Connections"],["Administration","System Health","System Health"],["Administration","Audit Trail","Audit"]
+    ["Administration","Source Integrations","Connections"],["Administration","System Health","System Health"],["Administration","System Logs","Audit"]
   ];
   const hasExplicitMenuPermissions = Array.isArray(user.webMenuPermissions)
     || Array.isArray(user.menuPermissions);
@@ -606,9 +606,11 @@ export default function RecruitmentApp() {
   };
   const pageTitle = active === "Dashboard"
     ? (stream === "workforce" ? "Recruitment Command Center" : "Talent Command Center")
-    : active === "All Leads" ? (stream === "workforce" ? "Workforce Queue" : "HR Candidates") : active;
+    : active === "All Leads" ? (stream === "workforce" ? "Workforce Queue" : "HR Candidates")
+    : active === "Audit" ? "System Logs" : active;
   const pageSubtitle = active === "Dashboard"
     ? (stream === "workforce" ? "Source. Connect. Hire. Scale." : "Find the right people. Move them forward.")
+    : active === "Audit" ? "Meaningful additions, updates, approvals, access changes and deletions — ordinary clicks are excluded"
     : (stream === "workforce" ? "Every lead, action and outcome in one operating view" : "Candidate progress from screening to joining");
 
   return <main className="shell">
@@ -692,7 +694,7 @@ export default function RecruitmentApp() {
       {active === "Master Reports" ? <MasterReports data={moduleData} /> : null}
       {active === "Connections" ? <ConnectionMaster data={moduleData} token={token} canEdit={canEditMenu(stream,"Connections")} reload={load} /> : null}
       {active === "System Health" ? <SystemHealth data={moduleData} token={token} canRepair={menuLevel(stream,"System Health")==="all"} reload={load} /> : null}
-      {active === "Audit" ? <section className="content-card leads-card"><div className="toolbar"><span>Latest {moduleData?.events?.length ?? 0} audited changes</span></div><SimpleTable headers={["Time","Lead","Event","Change / reason","Actor"]} rows={(moduleData?.events ?? []).map((item: any) => [new Date(item.created_at).toLocaleString("en-IN"),item.recruitment_leads?.full_name || item.lead_id,item.event_type,item.remarks || `${item.old_value || "—"} → ${item.new_value || "—"}`,item.actor_email || "System"])} /></section> : null}
+      {active === "Audit" ? <SystemLogs data={moduleData} /> : null}
       {active === "Reports" ? <Reports data={moduleData} busy={busy} token={token} options={options} stream={stream} /> : null}
       {active === "Recruiter Performance" && stream === "workforce" ? user.recruitmentFunction==="telecaller"?<PersonalPerformance token={token} user={user}/>:<RecruiterPerformance data={moduleData} token={token} /> : null}
       {active === "Performance Center" && stream === "workforce" ? <PerformanceCenter token={token} /> : null}
@@ -2210,6 +2212,65 @@ function ReportPanel({ title, rows = [] }: { title: string; rows?: Array<{label:
     </div>)}
     {!rows.length ? <div className="empty">No report data for this scope.</div> : null}
   </div></article>;
+}
+
+type RecruitmentSystemLog = {
+  id: string;
+  source: string;
+  entity: string;
+  subject: string;
+  action: string;
+  change: string;
+  actor: string;
+  created_at: string;
+};
+
+const recruitmentLogDateTime = new Intl.DateTimeFormat("en-IN", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Kolkata" });
+const humanizeSystemLogValue = (value: string) => value.replace(/[_-]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+
+function SystemLogs({ data }: { data: { events?: RecruitmentSystemLog[]; sources?: string[]; actions?: string[] } | null }) {
+  const [searchValue, setSearchValue] = useState("");
+  const [source, setSource] = useState("");
+  const [action, setAction] = useState("");
+  const [actor, setActor] = useState("");
+  const events = useMemo(() => data?.events ?? [], [data?.events]);
+  const sources = useMemo(() => data?.sources ?? [...new Set(events.map((event) => event.source))].sort(), [data?.sources, events]);
+  const actions = useMemo(() => data?.actions ?? [...new Set(events.map((event) => event.action))].sort(), [data?.actions, events]);
+  const actors = useMemo(() => [...new Set(events.map((event) => event.actor))].sort(), [events]);
+  const filtered = useMemo(() => {
+    const term = searchValue.trim().toLowerCase();
+    return events.filter((event) => (!source || event.source === source)
+      && (!action || event.action === action)
+      && (!actor || event.actor === actor)
+      && (!term || `${event.source} ${event.entity} ${event.subject} ${event.action} ${event.change} ${event.actor}`.toLowerCase().includes(term)));
+  }, [action, actor, events, searchValue, source]);
+  const visible = filtered.slice(0, 300);
+  return <section className="system-logs-view">
+    <div className="system-log-kpis">
+      <article><span>Recorded changes</span><strong>{events.length}</strong><small>Latest retained history</small></article>
+      <article><span>Matching filters</span><strong>{filtered.length}</strong><small>Across all modules</small></article>
+      <article><span>Modules</span><strong>{new Set(filtered.map((event) => event.source)).size}</strong><small>Candidate and administration</small></article>
+      <article><span>Users</span><strong>{new Set(filtered.map((event) => event.actor)).size}</strong><small>Recorded actors</small></article>
+    </div>
+    <section className="content-card system-log-card">
+      <header><div><h2>Change history</h2><p>Add, update, approval, configuration and delete activity. Navigation and ordinary clicks are not recorded.</p></div><span>{visible.length}{filtered.length > visible.length ? ` of ${filtered.length}` : ""} shown</span></header>
+      <div className="system-log-filters">
+        <input value={searchValue} onChange={(event) => setSearchValue(event.target.value)} placeholder="Search user, record or change" aria-label="Search system logs" />
+        <select value={source} onChange={(event) => setSource(event.target.value)} aria-label="Filter log module"><option value="">All modules</option>{sources.map((item) => <option value={item} key={item}>{item}</option>)}</select>
+        <select value={action} onChange={(event) => setAction(event.target.value)} aria-label="Filter log action"><option value="">All actions</option>{actions.map((item) => <option value={item} key={item}>{humanizeSystemLogValue(item)}</option>)}</select>
+        <select value={actor} onChange={(event) => setActor(event.target.value)} aria-label="Filter log user"><option value="">All users</option>{actors.map((item) => <option value={item} key={item}>{item}</option>)}</select>
+        <button type="button" onClick={() => { setSearchValue(""); setSource(""); setAction(""); setActor(""); }}>Clear</button>
+      </div>
+      <SimpleTable headers={["Time","Module","Record","Action","Change / reason","User"]} rows={visible.map((item) => [
+        recruitmentLogDateTime.format(new Date(item.created_at)),
+        item.source,
+        item.subject || item.entity,
+        humanizeSystemLogValue(item.action),
+        item.change,
+        item.actor
+      ])} />
+    </section>
+  </section>;
 }
 
 function SimpleTable({ headers: labels, rows }: { headers: string[]; rows: Array<Array<string | number>> }) {

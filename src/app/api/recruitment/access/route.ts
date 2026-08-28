@@ -204,6 +204,17 @@ export async function POST(request: Request) {
         session.profileId,
         session.email
       );
+      const audited = await supabaseAdmin.from("recruitment_connection_audit").insert({
+        company_id: companyId,
+        provider: "access",
+        action: "role_permissions_updated",
+        changed_fields: ["workspaces", "menu_access", "menu_actions", "ad_request_actions"],
+        outcome: "success",
+        message: `Recruitment permissions updated for universal role ${roleId}.`,
+        actor_profile_id: session.profileId,
+        actor_email: session.email
+      });
+      if (audited.error) throw audited.error;
       invalidateMobileSessionCache();
       return NextResponse.json({
         saved: true,
@@ -432,6 +443,17 @@ export async function POST(request: Request) {
       }).eq("company_id", companyId).eq("profile_id", universalProfile.id);
       if (mobile.error) throw mobile.error;
     }
+    const audited = await supabaseAdmin.from("recruitment_connection_audit").insert({
+      company_id: companyId,
+      provider: "access",
+      action: existingRecruitmentAccess.data ? "user_access_updated" : "user_access_added",
+      changed_fields: ["workspace", "scope", "locations", "roles", "active"],
+      outcome: "success",
+      message: `${displayName || email || mobileE164} · ${workspace} · ${inheritUniversalScope ? "universal scope" : `${locationIds.length} selected station(s)`} · ${body.isActive === false ? "inactive" : "active"}.`,
+      actor_profile_id: session.profileId,
+      actor_email: session.email
+    });
+    if (audited.error) throw audited.error;
     invalidateMobileSessionCache();
     return NextResponse.json({
       saved: true,
