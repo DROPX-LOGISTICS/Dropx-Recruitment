@@ -12,6 +12,8 @@ describe("lead lifecycle", () => {
     expect(canTransition("call_back", "interested")).toBe(true);
     expect(canTransition("interested", "interview_scheduled")).toBe(true);
     expect(canTransition("interview_scheduled", "selected")).toBe(true);
+    expect(canTransition("interview_scheduled", "joined")).toBe(true);
+    expect(canTransition("interview_rescheduled", "joined")).toBe(true);
   });
 
   it("increments total and no-response attempts independently", () => {

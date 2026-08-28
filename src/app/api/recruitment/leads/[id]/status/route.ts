@@ -5,6 +5,7 @@ import { enqueueLeadNotification } from "@/lib/recruitment-notifications";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { loadWorkforceConfig } from "@/lib/recruitment-workforce-config";
 import type { RecruitmentMenuId } from "@/lib/recruitment-menu-roles";
+import { workforceInterviewActionOptions } from "@/lib/workforce-interview-lifecycle";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -15,6 +16,18 @@ const legacyWorkforceDirectStatuses = new Set([
   "interview_no_show","selected","joined","hold","closed","document_issue"
 ]);
 const statusMenus = new Set<RecruitmentMenuId>(["All Leads", "No Response / Call Back", "Interviews", "Screening"]);
+const workforceInterviewSourceStatuses = new Set(["interview_scheduled", "interview_rescheduled", "joined"]);
+
+function isWorkforceInterviewOutcomeUpdate(
+  stream: string | null | undefined,
+  menu: RecruitmentMenuId,
+  fromStatus: string | null | undefined,
+  toStatus: string
+) {
+  if (stream !== "workforce" || menu !== "Interviews") return false;
+  if (!workforceInterviewSourceStatuses.has(String(fromStatus ?? "").trim())) return false;
+  return workforceInterviewActionOptions().some((item) => item.code === toStatus);
+}
 
 export async function PATCH(request: Request, { params }: { params: { id: string } }) {
   try {
@@ -47,7 +60,14 @@ export async function PATCH(request: Request, { params }: { params: { id: string
     const workforceQuickUpdate = current.data.stream === "workforce" &&
       !["archived","invalid"].includes(current.data.status) &&
       workforceDirectStatuses.has(nextStatus);
-    if (!isRetry && !workforceQuickUpdate && !canTransition(current.data.status, nextStatus)) {
+    const workforceInterviewOutcomeUpdate = isWorkforceInterviewOutcomeUpdate(
+      current.data.stream,
+      menu,
+      current.data.status,
+      nextStatus
+    );
+    if (!isRetry && !workforceQuickUpdate && !workforceInterviewOutcomeUpdate
+      && !canTransition(current.data.status, nextStatus)) {
       return NextResponse.json({ error: `Transition from ${current.data.status || "new"} to ${nextStatus} is not allowed.` }, { status: 409 });
     }
     if (nextStatus === "call_back" && !body.callbackAt && !current.data.callback_at) {
