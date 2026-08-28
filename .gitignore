@@ -1,0 +1,11 @@
+.next
+node_modules
+.env
+.env.local
+.vercel
+coverage
+*.tsbuildinfo
+.env*
+!.env.example
+.DS_Store
+supabase/.temp/

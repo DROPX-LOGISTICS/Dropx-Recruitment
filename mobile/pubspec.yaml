@@ -1,0 +1,32 @@
+name: dropx_recruitment
+description: DropX workforce and HR recruitment mobile application.
+publish_to: none
+version: 1.4.1+131
+
+environment:
+  sdk: ">=3.4.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  http: ^1.2.2
+  flutter_secure_storage: ^9.2.2
+  google_sign_in: ^6.2.2
+  geolocator: ^13.0.2
+  flutter_map: ^7.0.2
+  latlong2: ^0.9.1
+  share_plus: ^10.1.4
+  url_launcher: ^6.3.0
+  image_picker: ^1.1.2
+  http_parser: ^4.0.2
+  path_provider: ^2.1.5
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/dropx-logo.png
