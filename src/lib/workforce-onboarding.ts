@@ -3,6 +3,7 @@ import { sendFieldExecutiveOnboardingWhatsApp } from "./field-executive-whatsapp
 import { isFieldExecutiveDesignation } from "./field-executive-designations";
 import { supabaseAdmin } from "./supabase-admin";
 import { onboardingApplicationSource } from "./workforce-onboarding-review";
+import { assertWorkforceDesignationRoute } from "./designation-register-routing";
 
 type OnboardingSession = {
   profileId: string;
@@ -215,6 +216,7 @@ export async function createWorkforceFieldExecutive(
   }
   if (selectedDesignation.error) throw new Error(selectedDesignation.error.message);
   if (!selectedDesignation.data) throw new Error("Selected designation is not available in the main dashboard.");
+  await assertWorkforceDesignationRoute(companyId, selectedDesignation.data.id);
   let workforceRoles = supabaseAdmin.from("recruitment_roles")
     .select("id,code,name")
     .eq("company_id", companyId)

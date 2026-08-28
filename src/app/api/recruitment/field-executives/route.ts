@@ -4,6 +4,7 @@ import { loadWorkforceConfig, workforceTeamProfileIds } from "@/lib/recruitment-
 import { createWorkforceFieldExecutive } from "@/lib/workforce-onboarding";
 import { isFieldExecutiveDesignation } from "@/lib/field-executive-designations";
 import { supabaseAdmin } from "@/lib/supabase-admin";
+import { assertWorkforceDesignationRoute, workforceDesignationIds } from "@/lib/designation-register-routing";
 import {
   canApproveWorkforceProfileChanges,
   canCloseWorkforceInvitation,
@@ -229,11 +230,12 @@ export async function GET(request: Request) {
       }
       stationsQuery = stationsQuery.in("station_code", permittedStationCodes);
     }
-    const [stations, designationMaster] = await Promise.all([
+    const [stations, designationMaster, routedDesignationIds] = await Promise.all([
       stationsQuery.order("station_code"),
       supabaseAdmin.from("designations")
         .select("id,code,name,model_ids,onboarding_categories,profile_field_rules")
-        .eq("company_id", companyId).eq("is_active", true).order("name")
+        .eq("company_id", companyId).eq("is_active", true).order("name"),
+      workforceDesignationIds(companyId)
     ]);
     if (stations.error || designationMaster.error) throw new Error(stations.error?.message || designationMaster.error?.message);
     const masterLocations = (stations.data ?? []).map((item) => ({
@@ -244,7 +246,7 @@ export async function GET(request: Request) {
       modelId: item.location_model_id
     }));
     const masterDesignations = (designationMaster.data ?? [])
-      .filter((item) => isFieldExecutiveDesignation(item, permittedRoleKeys))
+      .filter((item) => routedDesignationIds.has(item.id) && isFieldExecutiveDesignation(item, permittedRoleKeys))
       .map((item) => ({
         id: item.id,
         code: item.code,
@@ -353,6 +355,7 @@ async function requestedProfileValues(companyId: string, session: NonNullable<Aw
   if (!designation.data || !isFieldExecutiveDesignation(designation.data, permittedRoleKeys)) {
     throw new Error("Selected designation is not available for Workforce onboarding.");
   }
+  await assertWorkforceDesignationRoute(companyId, designation.data.id);
   const modelIds = Array.isArray(designation.data.model_ids) ? designation.data.model_ids.map(String) : [];
   if (modelIds.length && station.data.location_model_id && !modelIds.includes(String(station.data.location_model_id))) {
     throw new Error("Selected designation is not available for this location model.");
