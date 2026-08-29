@@ -29,7 +29,7 @@ function relation<T>(value: T | T[] | null | undefined) {
   return Array.isArray(value) ? value[0] ?? null : value ?? null;
 }
 
-function chunks<T>(rows: T[], size = 200) {
+function chunks<T>(rows: T[], size = 500) {
   const result: T[][] = [];
   for (let index = 0; index < rows.length; index += size) result.push(rows.slice(index, index + size));
   return result;
@@ -154,31 +154,20 @@ export async function POST(request: Request) {
     const companyId = requiredEnv("RECRUITMENT_COMPANY_ID");
     const eligible = await replayLeads(companyId);
     const leadIds = eligible.map((item) => item.lead.id);
-    const outboxRows: any[] = [];
-    const historyRows: any[] = [];
-    for (const ids of chunks(leadIds)) {
-      const [outbox, history] = await Promise.all([
-        supabaseAdmin.from("recruitment_whatsapp_outbox")
-          .select("id,lead_id,template_name,notification_trigger,notification_context,status,created_at")
-          .eq("company_id", companyId).in("lead_id", ids).order("created_at", { ascending: false }),
-        supabaseAdmin.from("recruitment_lead_history")
-          .select("lead_id,new_value,created_at")
-          .eq("company_id", companyId).in("lead_id", ids)
-          .in("event_type", ["status_change", "contact_attempt"])
-          .in("new_value", replayStatuses).order("created_at", { ascending: false })
-      ]);
-      if (outbox.error || history.error) throw new Error(outbox.error?.message || history.error?.message);
-      outboxRows.push(...(outbox.data ?? []));
-      historyRows.push(...(history.data ?? []));
-    }
+    const outboxPages = await Promise.all(chunks(leadIds).map((ids) =>
+      supabaseAdmin!.from("recruitment_whatsapp_outbox")
+        .select("id,lead_id,template_name,notification_trigger,notification_context,status,created_at")
+        .eq("company_id", companyId).in("lead_id", ids).order("created_at", { ascending: false })
+    ));
+    const failedPage = outboxPages.find((page) => page.error);
+    if (failedPage?.error) throw new Error(failedPage.error.message);
+    const outboxRows = outboxPages.flatMap((page) => page.data ?? []);
     const outboxByLead = new Map<string, any[]>();
     for (const row of outboxRows) outboxByLead.set(row.lead_id, [...(outboxByLead.get(row.lead_id) ?? []), row]);
-    const latestEventByLead = new Map<string, string>();
-    for (const row of historyRows) if (!latestEventByLead.has(row.lead_id)) latestEventByLead.set(row.lead_id, row.created_at);
 
     const actions = eligible.map((item) => {
       const matching = (outboxByLead.get(item.lead.id) ?? []).find((row) =>
-        outboxCoversReplayCandidate(row, item.candidate, latestEventByLead.get(item.lead.id)));
+        outboxCoversReplayCandidate(row, item.candidate));
       return { ...item, matching, action: matching ? (isRetryableNotificationStatus(matching.status) ? "retry" : "covered") : "queue" };
     });
     const maxActions = 50;
