@@ -181,58 +181,61 @@ export async function POST(request: Request) {
     let blocked = 0;
     const issues: Array<{ leadId: string; candidate: string; trigger: string; reason: string }> = [];
     if (apply) {
-      for (const item of actionable.slice(0, maxActions)) {
-        if (item.action === "retry") {
-          const saved = await supabaseAdmin.from("recruitment_whatsapp_outbox").update({
-            status: "retry",
-            attempt_count: 0,
-            next_attempt_at: new Date().toISOString(),
-            failed_at: null,
-            last_error: "Requeued by the Recruit WhatsApp message audit.",
-            updated_at: new Date().toISOString()
-          }).eq("company_id", companyId).eq("id", item.matching.id).in("status", ["failed", "skipped"]).select("id").maybeSingle();
-          if (saved.error) throw new Error(saved.error.message);
-          if (saved.data) {
-            retried++;
-            const audit = await supabaseAdmin.from("recruitment_lead_history").insert({
-              company_id: companyId,
-              lead_id: item.lead.id,
-              event_type: "whatsapp_notification_requeued",
-              remarks: `${item.matching.template_name} requeued by the Recruit message audit.`,
-              actor_email: "system:notification_audit",
-              metadata: {
-                outbox_id: item.matching.id,
-                trigger: item.candidate.trigger,
-                source: "recruit_whatsapp_log"
-              }
-            });
-            if (audit.error) throw new Error(audit.error.message);
+      const processItem = async (item: (typeof actionable)[number]) => {
+          if (item.action === "retry") {
+            const saved = await supabaseAdmin!.from("recruitment_whatsapp_outbox").update({
+              status: "retry",
+              attempt_count: 0,
+              next_attempt_at: new Date().toISOString(),
+              failed_at: null,
+              last_error: "Requeued by the Recruit WhatsApp message audit.",
+              updated_at: new Date().toISOString()
+            }).eq("company_id", companyId).eq("id", item.matching.id).in("status", ["failed", "skipped"]).select("id").maybeSingle();
+            if (saved.error) throw new Error(saved.error.message);
+            if (saved.data) {
+              retried++;
+              const audit = await supabaseAdmin!.from("recruitment_lead_history").insert({
+                company_id: companyId,
+                lead_id: item.lead.id,
+                event_type: "whatsapp_notification_requeued",
+                remarks: `${item.matching.template_name} requeued by the Recruit message audit.`,
+                actor_email: "system:notification_audit",
+                metadata: {
+                  outbox_id: item.matching.id,
+                  trigger: item.candidate.trigger,
+                  source: "recruit_whatsapp_log"
+                }
+              });
+              if (audit.error) throw new Error(audit.error.message);
+            }
+            return;
           }
-          continue;
-        }
-        const result = await enqueueLeadNotification({
-          companyId,
-          lead: {
-            id: item.lead.id,
-            phone: item.lead.phone,
-            full_name: item.lead.full_name,
-            stream: item.lead.stream,
-            location_id: item.lead.location_id,
-            recruitment_roles: relation(item.lead.recruitment_roles) as { name?: string | null } | null
-          },
-          trigger: item.candidate.trigger,
-          anchor: item.candidate.anchor
-        });
-        if (result.queued) queued++;
-        else {
-          blocked++;
-          issues.push({
-            leadId: item.lead.id,
-            candidate: item.lead.full_name || "Unknown candidate",
+          const result = await enqueueLeadNotification({
+            companyId,
+            lead: {
+              id: item.lead.id,
+              phone: item.lead.phone,
+              full_name: item.lead.full_name,
+              stream: item.lead.stream,
+              location_id: item.lead.location_id,
+              recruitment_roles: relation(item.lead.recruitment_roles) as { name?: string | null } | null
+            },
             trigger: item.candidate.trigger,
-            reason: result.reason || "Notification could not be queued."
+            anchor: item.candidate.anchor
           });
-        }
+          if (result.queued) queued++;
+          else {
+            blocked++;
+            issues.push({
+              leadId: item.lead.id,
+              candidate: item.lead.full_name || "Unknown candidate",
+              trigger: item.candidate.trigger,
+              reason: result.reason || "Notification could not be queued."
+            });
+          }
+      };
+      for (const batch of chunks(actionable.slice(0, maxActions), 10)) {
+        await Promise.all(batch.map(processItem));
       }
     }
     return NextResponse.json({
