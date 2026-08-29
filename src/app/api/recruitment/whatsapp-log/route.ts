@@ -132,14 +132,18 @@ export async function GET(request: Request) {
 
 async function replayLeads(companyId: string) {
   const leads: any[] = [];
-  for (let start = 0; ; start += 1000) {
-    const page = await supabaseAdmin!.from("recruitment_leads")
-      .select("id,phone,full_name,status,stream,location_id,no_response_attempts,follow_up_at,recruitment_roles(name)")
-      .eq("company_id", companyId).eq("archived", false).in("status", replayStatuses)
-      .order("id").range(start, start + 999);
-    if (page.error) throw new Error(page.error.message);
-    leads.push(...(page.data ?? []));
-    if ((page.data?.length ?? 0) < 1000) break;
+  for (const stream of ["workforce", "hr"]) {
+    for (const status of replayStatuses) {
+      for (let start = 0; ; start += 1000) {
+        const page = await supabaseAdmin!.from("recruitment_leads")
+          .select("id,phone,full_name,status,stream,location_id,no_response_attempts,follow_up_at,recruitment_roles(name)")
+          .eq("company_id", companyId).eq("stream", stream).eq("archived", false).eq("status", status)
+          .order("lead_created_at", { ascending: false }).range(start, start + 999);
+        if (page.error) throw new Error(page.error.message);
+        leads.push(...(page.data ?? []));
+        if ((page.data?.length ?? 0) < 1000) break;
+      }
+    }
   }
   return leads.map((lead) => ({ lead, candidate: replayCandidateForLead(lead) }))
     .filter((item): item is { lead: any; candidate: NonNullable<ReturnType<typeof replayCandidateForLead>> } => Boolean(item.candidate));
