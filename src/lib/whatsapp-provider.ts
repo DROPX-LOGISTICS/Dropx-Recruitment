@@ -1,6 +1,15 @@
 import { supabaseAdmin } from "./supabase-admin";
 import { getConnectionConfig } from "./connection-config";
 
+export function resolveWhatsAppWebhookSecret(
+  managedValue: unknown,
+  ...fallbacks: Array<unknown>
+) {
+  return [managedValue, ...fallbacks]
+    .map((item) => String(item ?? "").trim())
+    .find(Boolean) ?? "";
+}
+
 export async function whatsappConfig() {
   if (!supabaseAdmin) throw new Error("Supabase is not configured.");
   const managed = await getConnectionConfig("whatsapp");
