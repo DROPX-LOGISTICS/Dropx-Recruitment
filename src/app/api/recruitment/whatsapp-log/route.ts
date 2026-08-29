@@ -174,7 +174,7 @@ export async function POST(request: Request) {
         outboxCoversReplayCandidate(row, item.candidate));
       return { ...item, matching, action: matching ? (isRetryableNotificationStatus(matching.status) ? "retry" : "covered") : "queue" };
     });
-    const maxActions = 50;
+    const maxActions = 200;
     const actionable = actions.filter((item) => item.action !== "covered");
     let queued = 0;
     let retried = 0;
@@ -234,7 +234,7 @@ export async function POST(request: Request) {
             });
           }
       };
-      for (const batch of chunks(actionable.slice(0, maxActions), 10)) {
+      for (const batch of chunks(actionable.slice(0, maxActions), 25)) {
         await Promise.all(batch.map(processItem));
       }
     }

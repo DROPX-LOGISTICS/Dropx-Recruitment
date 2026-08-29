@@ -2351,8 +2351,8 @@ function WhatsAppMessageLog({ token, canReplay }: { token: string; canReplay: bo
   const [replayBusy, setReplayBusy] = useState(false);
   const [notice, setNotice] = useState("");
 
-  async function load(page=1, values=filters) {
-    setBusy(true); setNotice("");
+  async function load(page=1, values=filters, preserveNotice=false) {
+    setBusy(true); if (!preserveNotice) setNotice("");
     try {
       const params = new URLSearchParams({ page:String(page), limit:"50" });
       if (values.status) params.set("status", values.status);
@@ -2406,7 +2406,7 @@ function WhatsAppMessageLog({ token, canReplay }: { token: string; canReplay: bo
         if (!result.queued && !result.retried && remaining > 0) break;
       }
       setNotice(`${totals.queued.toLocaleString("en-IN")} missing messages queued · ${totals.retried.toLocaleString("en-IN")} failed messages requeued${totals.blocked?` · ${totals.blocked.toLocaleString("en-IN")} blocked by missing candidate or Master data`:""}.`);
-      await load(1);
+      await load(1, filters, true);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Unable to replay WhatsApp messages.");
     } finally { setReplayBusy(false); }
