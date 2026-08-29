@@ -55,9 +55,16 @@ export async function POST(request: Request) {
         update.failed_at = providerTime;
         update.last_error = JSON.stringify(status.errors ?? []).slice(0, 2000);
       }
-      const result = await supabaseAdmin.from("recruitment_whatsapp_outbox").update(update)
+      let result = await supabaseAdmin.from("recruitment_whatsapp_outbox").update(update)
         .eq("company_id", requiredEnv("RECRUITMENT_COMPANY_ID")).eq("provider_message_id", providerId)
         .select("id,lead_id,notification_trigger,recruitment_stream,notification_context");
+      if (result.error && value === "read" && /read_at|schema cache/i.test(result.error.message)) {
+        delete update.read_at;
+        update.delivered_at = providerTime;
+        result = await supabaseAdmin.from("recruitment_whatsapp_outbox").update(update)
+          .eq("company_id", requiredEnv("RECRUITMENT_COMPANY_ID")).eq("provider_message_id", providerId)
+          .select("id,lead_id,notification_trigger,recruitment_stream,notification_context");
+      }
       if (result.error) throw new Error(result.error.message);
       updated += result.data?.length ?? 0;
       for (const item of result.data ?? []) {

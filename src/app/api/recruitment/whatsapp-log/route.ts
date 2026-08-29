@@ -62,16 +62,21 @@ export async function GET(request: Request) {
     const from = Number.isFinite(fromDate.getTime()) ? fromDate.toISOString() : new Date(Date.now() - 30 * 24 * 60 * 60_000).toISOString();
     const to = Number.isFinite(toDate.getTime()) ? toDate.toISOString() : new Date().toISOString();
 
-    let query = applyWindow(supabaseAdmin.from("recruitment_whatsapp_outbox")
-      .select(`
+    const messageSelect = (includeReadAt: boolean) => `
         id,lead_id,phone,template_name,notification_trigger,recruitment_stream,status,attempt_count,
-        provider_message_id,created_at,updated_at,sent_at,delivered_at,read_at,failed_at,last_error,
+        provider_message_id,created_at,updated_at,sent_at,delivered_at,${includeReadAt ? "read_at," : ""}failed_at,last_error,
         recruitment_leads(full_name,status,recruitment_locations(code,name),recruitment_roles(code,name))
-      `, { count: "exact" })
-      .eq("company_id", companyId), from, to, trigger);
-    if (logStatuses.includes(status)) query = query.eq("status", status);
-    if (search) query = query.or(`phone.ilike.%${search}%,template_name.ilike.%${search}%`);
-    const rows = await query.order("created_at", { ascending: false }).range((page - 1) * limit, page * limit - 1);
+      `;
+    const loadRows = async (includeReadAt: boolean) => {
+      let query = applyWindow(supabaseAdmin!.from("recruitment_whatsapp_outbox")
+        .select(messageSelect(includeReadAt), { count: "exact" })
+        .eq("company_id", companyId), from, to, trigger);
+      if (logStatuses.includes(status)) query = query.eq("status", status);
+      if (search) query = query.or(`phone.ilike.%${search}%,template_name.ilike.%${search}%`);
+      return query.order("created_at", { ascending: false }).range((page - 1) * limit, page * limit - 1);
+    };
+    let rows = await loadRows(true);
+    if (rows.error && /read_at|schema cache/i.test(rows.error.message)) rows = await loadRows(false);
     if (rows.error) throw new Error(rows.error.message);
 
     const summaryEntries = await Promise.all(logStatuses.map(async (item) => {
@@ -104,7 +109,7 @@ export async function GET(request: Request) {
           createdAt: item.created_at,
           sentAt: item.sent_at,
           deliveredAt: item.delivered_at,
-          readAt: item.read_at,
+          readAt: item.read_at || (item.status === "read" ? item.updated_at : null),
           failedAt: item.failed_at,
           updatedAt: item.updated_at,
           lastError: item.last_error
