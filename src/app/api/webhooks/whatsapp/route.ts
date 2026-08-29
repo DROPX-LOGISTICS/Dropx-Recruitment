@@ -4,6 +4,7 @@ import { requiredEnv } from "@/lib/recruitment-api";
 import { providerDeliveryState } from "@/lib/recruitment-notification-delivery";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { getConnectionConfig } from "@/lib/connection-config";
+import { resolveWhatsAppWebhookSecret } from "@/lib/whatsapp-provider";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -11,9 +12,10 @@ export const runtime = "nodejs";
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const managed = await getConnectionConfig("whatsapp");
-  const verifyToken = managed?.isEnabled
-    ? managed.secrets.verify_token
-    : process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN;
+  const verifyToken = resolveWhatsAppWebhookSecret(
+    managed?.isEnabled ? managed.secrets.verify_token : "",
+    process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN
+  );
   const valid = url.searchParams.get("hub.mode") === "subscribe"
     && url.searchParams.get("hub.verify_token") === verifyToken
     && url.searchParams.get("hub.challenge");
@@ -25,9 +27,11 @@ export async function POST(request: Request) {
     if (!supabaseAdmin) throw new Error("Supabase is not configured.");
     const rawBody = await request.text();
     const managed = await getConnectionConfig("whatsapp");
-    const appSecret = managed?.isEnabled
-      ? managed.secrets.app_secret
-      : process.env.WHATSAPP_APP_SECRET?.trim() || process.env.META_APP_SECRET?.trim();
+    const appSecret = resolveWhatsAppWebhookSecret(
+      managed?.isEnabled ? managed.secrets.app_secret : "",
+      process.env.WHATSAPP_APP_SECRET,
+      process.env.META_APP_SECRET
+    );
     if (!appSecret) return NextResponse.json({ received: false, error: "Webhook signature is not configured." }, { status: 503 });
     if (!verifyMetaSignature(rawBody, request.headers.get("x-hub-signature-256"), appSecret)) {
       return NextResponse.json({ received: false, error: "Invalid signature." }, { status: 401 });
