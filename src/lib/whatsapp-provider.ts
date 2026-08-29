@@ -10,18 +10,24 @@ export async function whatsappConfig() {
     ? managed.publicConfig.graph_version || "v25.0"
     : process.env.META_GRAPH_VERSION?.trim() || "v25.0";
   if (!accessToken || !phoneNumberId) {
-    accessToken = process.env.WHATSAPP_ACCESS_TOKEN?.trim() ?? "";
-    phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID?.trim() ?? "";
+    accessToken = process.env.WHATSAPP_ACCESS_TOKEN?.trim() ?? accessToken;
+    phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID?.trim() ?? phoneNumberId;
+  }
+  if (!phoneNumberId && managed?.publicConfig.phone_number_id) {
+    phoneNumberId = managed.publicConfig.phone_number_id;
   }
   if (!accessToken || !phoneNumberId) {
     const result = await supabaseAdmin.rpc("recruitment_get_whatsapp_config");
-    if (result.error) throw new Error(result.error.message);
-    const row = result.data?.[0];
-    accessToken = row?.access_token ?? "";
-    phoneNumberId = row?.phone_number_id ?? "";
-    graphVersion = row?.graph_version ?? graphVersion;
+    if (!result.error) {
+      const row = result.data?.[0];
+      accessToken = row?.access_token ?? accessToken;
+      phoneNumberId = row?.phone_number_id ?? phoneNumberId;
+      graphVersion = row?.graph_version ?? graphVersion;
+    }
   }
-  if (!accessToken || !phoneNumberId) throw new Error("WhatsApp provider is not configured.");
+  if (!accessToken || !phoneNumberId) {
+    throw new Error("WhatsApp provider is not configured.");
+  }
   return { accessToken, phoneNumberId, graphVersion };
 }
 

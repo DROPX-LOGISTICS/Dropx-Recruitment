@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { getConnectionConfig } from "./connection-config";
 import { normalizePhone } from "./recruitment-routing";
 import { supabaseAdmin } from "./supabase-admin";
@@ -339,23 +339,36 @@ export async function enqueueLeadNotification(options: {
     await auditBlocked({ ...options, issues: error.issues });
     return { queued: false, reason: error.message };
   }
-  const result = await supabaseAdmin.from("recruitment_whatsapp_outbox").upsert({
+  const now = new Date().toISOString();
+  const basePayload = {
+    id: randomUUID(),
     company_id: options.companyId,
     lead_id: options.lead.id,
     idempotency_key: idempotency(options.companyId, options.lead.id, options.trigger, options.anchor),
     phone,
     template_name: template.name,
     template_parameters: template.parameters,
+    attempt_count: 0,
+    status: "queued",
+    next_attempt_at: now,
+    created_at: now,
+    updated_at: now
+  };
+  let result = await supabaseAdmin.from("recruitment_whatsapp_outbox").upsert({
+    ...basePayload,
     notification_trigger: options.trigger,
     recruitment_stream: template.rule.stream,
     notification_context: {
       anchor: options.anchor,
       contact_source: template.rule.contactSource
-    },
-    status: "queued",
-    next_attempt_at: new Date().toISOString(),
-    updated_at: new Date().toISOString()
+    }
   }, { onConflict: "company_id,idempotency_key", ignoreDuplicates: true }).select("id,status");
+  if (result.error && /notification_trigger|notification_context|recruitment_stream|schema cache/i.test(result.error.message)) {
+    result = await supabaseAdmin.from("recruitment_whatsapp_outbox").upsert(
+      basePayload,
+      { onConflict: "company_id,idempotency_key", ignoreDuplicates: true }
+    ).select("id,status");
+  }
   if (result.error) throw new Error(result.error.message);
   const inserted = Boolean(result.data?.length);
   if (inserted) {
