@@ -1,7 +1,13 @@
 import { NextResponse } from "next/server";
 import { canUseRecruitmentMenu, recruitmentSession, requiredEnv } from "@/lib/recruitment-api";
 import { getConnectionConfig } from "@/lib/connection-config";
-import { enqueueLeadNotification } from "@/lib/recruitment-notifications";
+import {
+  buildNotificationTemplate,
+  enqueueLeadNotification,
+  mergeNotificationContacts,
+  notificationRulesFromConfig
+} from "@/lib/recruitment-notifications";
+import { normalizePhone } from "@/lib/recruitment-routing";
 import {
   isRetryableNotificationStatus,
   maskRecruitmentPhone,
@@ -183,6 +189,50 @@ async function replayLeads(companyId: string, session: NonNullable<Awaited<Retur
     .filter((item): item is { lead: any; candidate: NonNullable<ReturnType<typeof replayCandidateForLead>> } => Boolean(item.candidate));
 }
 
+async function prepareReplayCandidates(companyId: string, eligible: Awaited<ReturnType<typeof replayLeads>>) {
+  const locationIds = [...new Set(eligible.map((item) => item.lead.location_id).filter(Boolean))] as string[];
+  const [connection, contacts, locations] = await Promise.all([
+    getConnectionConfig("whatsapp"),
+    locationIds.length
+      ? supabaseAdmin!.from("recruitment_location_contacts")
+          .select("location_id,address,latitude,longitude,poc_name,poc_mobile")
+          .eq("company_id", companyId).in("location_id", locationIds)
+      : Promise.resolve({ data: [], error: null }),
+    locationIds.length
+      ? supabaseAdmin!.from("recruitment_locations")
+          .select("id,address,latitude,longitude,poc_name,poc_mobile")
+          .eq("company_id", companyId).in("id", locationIds)
+      : Promise.resolve({ data: [], error: null })
+  ]);
+  if (contacts.error || locations.error) throw new Error(contacts.error?.message || locations.error?.message);
+  const rules = notificationRulesFromConfig(connection?.publicConfig ?? {});
+  const contactByLocation = new Map((contacts.data ?? []).map((item: any) => [item.location_id, item]));
+  const locationById = new Map((locations.data ?? []).map((item: any) => [item.id, item]));
+  return eligible.map((item) => {
+    try {
+      if (!normalizePhone(item.lead.phone)) throw new Error("Candidate mobile number is missing or invalid.");
+      const rule = rules.find((row) => row.stream === item.lead.stream && row.trigger === item.candidate.trigger);
+      if (!rule) throw new Error("Notification rule is missing in Master.");
+      const station = mergeNotificationContacts(
+        contactByLocation.get(item.lead.location_id),
+        locationById.get(item.lead.location_id)
+      );
+      const preparedTemplate = buildNotificationTemplate(item.candidate.trigger, {
+        ...item.lead,
+        recruitment_roles: relation(item.lead.recruitment_roles),
+        recruitment_locations: station
+      }, rule);
+      return { ...item, preparedTemplate, blockedReason: "" };
+    } catch (error) {
+      return {
+        ...item,
+        preparedTemplate: null,
+        blockedReason: error instanceof Error ? error.message : "Candidate or Master data is incomplete."
+      };
+    }
+  });
+}
+
 export async function POST(request: Request) {
   try {
     if (!supabaseAdmin) throw new Error("Supabase is not configured.");
@@ -192,6 +242,7 @@ export async function POST(request: Request) {
     const apply = body.action === "apply";
     const companyId = requiredEnv("RECRUITMENT_COMPANY_ID");
     const eligible = await replayLeads(companyId, session);
+    const prepared = await prepareReplayCandidates(companyId, eligible);
     const leadIds = eligible.map((item) => item.lead.id);
     // Keep every coverage slice comfortably below Supabase's default row cap.
     // A candidate can have several historical attempts, so 500 lead IDs can
@@ -207,13 +258,22 @@ export async function POST(request: Request) {
     const outboxByLead = new Map<string, any[]>();
     for (const row of outboxRows) outboxByLead.set(row.lead_id, [...(outboxByLead.get(row.lead_id) ?? []), row]);
 
-    const actions = eligible.map((item) => {
+    const actions = prepared.map((item) => {
       const matching = (outboxByLead.get(item.lead.id) ?? []).find((row) =>
         outboxCoversReplayCandidate(row, item.candidate));
-      return { ...item, matching, action: matching ? (isRetryableNotificationStatus(matching.status) ? "retry" : "covered") : "queue" };
+      const action = matching
+        ? (isRetryableNotificationStatus(matching.status) ? "retry" : "covered")
+        : item.preparedTemplate ? "queue" : "blocked";
+      return { ...item, matching, action };
     });
     const maxActions = 200;
-    const actionable = actions.filter((item) => item.action !== "covered");
+    const actionable = actions.filter((item) => item.action === "queue" || item.action === "retry");
+    const blockedActions = actions.filter((item) => item.action === "blocked");
+    const blockedReasons = Object.entries(blockedActions.reduce<Record<string, number>>((counts, item) => {
+      const reason = item.blockedReason || "Candidate or Master data is incomplete.";
+      counts[reason] = (counts[reason] ?? 0) + 1;
+      return counts;
+    }, {})).map(([reason, count]) => ({ reason, count }));
     let queued = 0;
     let retried = 0;
     let blocked = 0;
@@ -259,7 +319,8 @@ export async function POST(request: Request) {
               recruitment_roles: relation(item.lead.recruitment_roles) as { name?: string | null } | null
             },
             trigger: item.candidate.trigger,
-            anchor: item.candidate.anchor
+            anchor: item.candidate.anchor,
+            preparedTemplate: item.preparedTemplate ?? undefined
           });
           if (result.queued) queued++;
           else {
@@ -282,6 +343,8 @@ export async function POST(request: Request) {
       covered: actions.filter((item) => item.action === "covered").length,
       missing: actions.filter((item) => item.action === "queue").length,
       retryable: actions.filter((item) => item.action === "retry").length,
+      blockedCandidates: blockedActions.length,
+      blockedReasons,
       queued,
       retried,
       blocked,

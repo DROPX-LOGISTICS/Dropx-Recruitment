@@ -2398,10 +2398,14 @@ function WhatsAppMessageLog({ token, canReplay, stream, locations }: { token: st
       };
       const preview = await request("preview");
       if (!preview.remaining) {
-        setNotice(`${Number(preview.covered||0).toLocaleString("en-IN")} current candidates are already covered. Nothing is missing.`);
+        const blocked = Number(preview.blockedCandidates||0);
+        const reason = preview.blockedReasons?.[0]?.reason;
+        setNotice(blocked
+          ? `${Number(preview.covered||0).toLocaleString("en-IN")} current candidates are covered. ${blocked.toLocaleString("en-IN")} cannot be sent until candidate or Master data is fixed${reason?`: ${reason}`:"."}`
+          : `${Number(preview.covered||0).toLocaleString("en-IN")} current candidates are already covered. Nothing is missing.`);
         return;
       }
-      if (!confirm(`Queue ${Number(preview.missing||0).toLocaleString("en-IN")} missing and retry ${Number(preview.retryable||0).toLocaleString("en-IN")} failed WhatsApp messages? Only current No Response and upcoming Interview candidates are included.`)) return;
+      if (!confirm(`Queue ${Number(preview.missing||0).toLocaleString("en-IN")} missing and retry ${Number(preview.retryable||0).toLocaleString("en-IN")} failed WhatsApp messages? ${Number(preview.blockedCandidates||0).toLocaleString("en-IN")} candidates with incomplete data will remain blocked. Only current No Response and upcoming Interview candidates are included.`)) return;
       const totals = { queued:0, retried:0, blocked:0 };
       let remaining = Number(preview.remaining||0);
       let rounds = 0;
@@ -2414,7 +2418,9 @@ function WhatsAppMessageLog({ token, canReplay, stream, locations }: { token: st
         rounds++;
         if (!result.queued && !result.retried && remaining > 0) break;
       }
-      setNotice(`${totals.queued.toLocaleString("en-IN")} missing messages queued · ${totals.retried.toLocaleString("en-IN")} failed messages requeued${totals.blocked?` · ${totals.blocked.toLocaleString("en-IN")} blocked by missing candidate or Master data`:""}.`);
+      const blocked = Number(preview.blockedCandidates||0) + totals.blocked;
+      const reason = preview.blockedReasons?.[0]?.reason;
+      setNotice(`${totals.queued.toLocaleString("en-IN")} missing messages queued · ${totals.retried.toLocaleString("en-IN")} failed messages requeued${blocked?` · ${blocked.toLocaleString("en-IN")} blocked until candidate or Master data is fixed${reason?`: ${reason}`:""}`:""}.`);
       await load(1, filters, true);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Unable to replay WhatsApp messages.");

@@ -313,6 +313,7 @@ export async function enqueueLeadNotification(options: {
   lead: NotificationLead;
   trigger: LeadNotificationTrigger;
   anchor: string;
+  preparedTemplate?: Awaited<ReturnType<typeof leadNotificationTemplate>>;
 }) {
   if (!supabaseAdmin) return { queued: false, reason: "Supabase is not configured." };
   const phone = normalizePhone(options.lead.phone);
@@ -322,7 +323,8 @@ export async function enqueueLeadNotification(options: {
   }
   let template: Awaited<ReturnType<typeof leadNotificationTemplate>>;
   try {
-    template = await leadNotificationTemplate(options.companyId, options.trigger, options.lead);
+    template = options.preparedTemplate
+      ?? await leadNotificationTemplate(options.companyId, options.trigger, options.lead);
   } catch (error) {
     if (error instanceof NotificationRuleDisabledError) {
       await auditNotification({
