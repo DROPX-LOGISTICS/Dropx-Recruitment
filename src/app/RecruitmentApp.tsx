@@ -2336,7 +2336,109 @@ function ConnectionMaster({ data, token, canEdit, reload }: { data: any; token: 
     <div className="connection-grid">{Object.entries(connectionDefinitions).map(([provider, definition]) =>
       <ConnectionCard key={provider} provider={provider} definition={definition} current={rows[provider]} token={token} canEdit={canEdit} reload={reload} />
     )}</div>
+    <WhatsAppMessageLog token={token} canReplay={canEdit}/>
     <IndeedJobMappings token={token} canEdit={canEdit}/>
+  </section>;
+}
+
+function WhatsAppMessageLog({ token, canReplay }: { token: string; canReplay: boolean }) {
+  const initialFrom = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit"
+  }).format(new Date(Date.now() - 29 * 24 * 60 * 60_000));
+  const [filters, setFilters] = useState({ status:"", trigger:"", search:"", from:initialFrom, to:istDate() });
+  const [data, setData] = useState<any>({ messages:[], summary:{}, tracking:{}, pagination:{ page:1, total:0, limit:50 } });
+  const [busy, setBusy] = useState(true);
+  const [replayBusy, setReplayBusy] = useState(false);
+  const [notice, setNotice] = useState("");
+
+  async function load(page=1, values=filters) {
+    setBusy(true); setNotice("");
+    try {
+      const params = new URLSearchParams({ page:String(page), limit:"50" });
+      if (values.status) params.set("status", values.status);
+      if (values.trigger) params.set("trigger", values.trigger);
+      if (values.search.trim()) params.set("search", values.search.trim());
+      if (values.from) params.set("from", `${values.from}T00:00:00+05:30`);
+      if (values.to) params.set("to", `${values.to}T23:59:59.999+05:30`);
+      const response = await fetch(`/api/recruitment/whatsapp-log?${params}`, {
+        headers:headers(token), cache:"no-store"
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Unable to load WhatsApp messages.");
+      setData(payload);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Unable to load WhatsApp messages.");
+    } finally { setBusy(false); }
+  }
+
+  useEffect(()=>{void load(1);},[token]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function auditAndReplay() {
+    if (!canReplay) return;
+    setReplayBusy(true); setNotice("");
+    try {
+      const request = async (action:"preview"|"apply") => {
+        const response = await fetch("/api/recruitment/whatsapp-log", {
+          method:"POST",
+          headers:{...headers(token),"Content-Type":"application/json"},
+          body:JSON.stringify({action})
+        });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error || "Unable to audit WhatsApp messages.");
+        return payload;
+      };
+      const preview = await request("preview");
+      if (!preview.remaining) {
+        setNotice(`${Number(preview.covered||0).toLocaleString("en-IN")} current candidates are already covered. Nothing is missing.`);
+        return;
+      }
+      if (!confirm(`Queue ${Number(preview.missing||0).toLocaleString("en-IN")} missing and retry ${Number(preview.retryable||0).toLocaleString("en-IN")} failed WhatsApp messages? Only current No Response and upcoming Interview candidates are included.`)) return;
+      const totals = { queued:0, retried:0, blocked:0 };
+      let remaining = Number(preview.remaining||0);
+      let rounds = 0;
+      while (remaining > 0 && rounds < 20) {
+        const result = await request("apply");
+        totals.queued += Number(result.queued||0);
+        totals.retried += Number(result.retried||0);
+        totals.blocked += Number(result.blocked||0);
+        remaining = Number(result.remaining||0);
+        rounds++;
+        if (!result.queued && !result.retried && remaining > 0) break;
+      }
+      setNotice(`${totals.queued.toLocaleString("en-IN")} missing messages queued · ${totals.retried.toLocaleString("en-IN")} failed messages requeued${totals.blocked?` · ${totals.blocked.toLocaleString("en-IN")} blocked by missing candidate or Master data`:""}.`);
+      await load(1);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Unable to replay WhatsApp messages.");
+    } finally { setReplayBusy(false); }
+  }
+
+  const summary = data.summary ?? {};
+  const messages = data.messages ?? [];
+  const trackingReady = data.tracking?.appSecretConfigured && data.tracking?.verifyTokenConfigured;
+  const page = Number(data.pagination?.page||1);
+  const total = Number(data.pagination?.total||0);
+  const limit = Number(data.pagination?.limit||50);
+  const timestamp = (item:any) => item.readAt || item.deliveredAt || item.sentAt || item.failedAt || item.updatedAt || item.createdAt;
+  const timestampLabel = (item:any) => item.readAt ? "Read" : item.deliveredAt ? "Delivered" : item.sentAt ? "Accepted" : item.failedAt ? "Failed" : "Updated";
+  return <section className="content-card whatsapp-log-card">
+    <header className="whatsapp-log-head"><div><span>WHATSAPP OPERATIONS</span><h2>Candidate message log</h2><p>Provider lifecycle for every recruitment notification. “Sent” means WhatsApp accepted the request; Delivered and Read come from Meta callbacks.</p></div>{canReplay?<button className="primary-action" disabled={replayBusy} onClick={()=>void auditAndReplay()}>{replayBusy?"Auditing…":"Audit & queue missing"}</button>:null}</header>
+    <div className={`whatsapp-tracking-banner ${trackingReady?"ready":"warning"}`}><b>{trackingReady?"Meta delivery tracking is configured":"Delivery/read tracking needs Meta webhook credentials"}</b><span>{trackingReady?"Delivered and Read receipts will update automatically.":"Outbound messages can still be accepted, but App Secret and Verify Token are required to receive trusted delivery/read callbacks."}</span></div>
+    <div className="whatsapp-log-summary">
+      {["queued","retry","sending","sent","delivered","read","failed","skipped"].map((status)=><button type="button" className={filters.status===status?"selected":""} key={status} onClick={()=>{const next={...filters,status:filters.status===status?"":status};setFilters(next);void load(1,next);}}><span>{statusLabel(status)}</span><strong>{Number(summary[status]||0).toLocaleString("en-IN")}</strong></button>)}
+    </div>
+    <div className="whatsapp-log-filters">
+      <input aria-label="Search WhatsApp messages" placeholder="Phone ending or template…" value={filters.search} onChange={(event)=>setFilters({...filters,search:event.target.value})} onKeyDown={(event)=>{if(event.key==="Enter")void load(1);}}/>
+      <select aria-label="Filter message event" value={filters.trigger} onChange={(event)=>setFilters({...filters,trigger:event.target.value})}><option value="">All message events</option><option value="new_lead">Application received</option><option value="no_response">No response</option><option value="interview">Interview scheduled</option></select>
+      <label>From<input type="date" value={filters.from} onChange={(event)=>setFilters({...filters,from:event.target.value})}/></label>
+      <label>To<input type="date" value={filters.to} onChange={(event)=>setFilters({...filters,to:event.target.value})}/></label>
+      <button disabled={busy} onClick={()=>void load(1)}>{busy?"Loading…":"Apply"}</button>
+      <button disabled={busy} onClick={()=>{const next={status:"",trigger:"",search:"",from:initialFrom,to:istDate()};setFilters(next);void load(1,next);}}>Reset</button>
+    </div>
+    {notice?<p className="connection-notice">{notice}</p>:null}
+    <div className="table-scroll whatsapp-log-table"><table><thead><tr><th>Candidate</th><th>Message</th><th>Provider state</th><th>Attempts</th><th>Latest provider time</th><th>Reference / error</th></tr></thead><tbody>{messages.map((item:any)=><tr key={item.id}><td><b>{item.candidate}</b><small>{item.phone} · {item.station} / {item.role}</small></td><td><b>{statusLabel(item.trigger||item.templateName)}</b><small>{item.templateName}</small></td><td><span className={`whatsapp-state whatsapp-state-${item.status}`}>{statusLabel(item.status)}</span><small>Candidate: {statusLabel(item.candidateStatus)}</small></td><td>{Number(item.attemptCount||0).toLocaleString("en-IN")}</td><td><b>{timestampLabel(item)}</b><small>{timestamp(item)?new Date(timestamp(item)).toLocaleString("en-IN") : "—"}</small></td><td><b>{item.providerReference}</b><small className={item.lastError?"log-error":""}>{item.lastError||"No provider error"}</small></td></tr>)}</tbody></table></div>
+    <div className="whatsapp-log-mobile">{messages.map((item:any)=><details key={item.id}><summary><span><b>{item.candidate}</b><small>{statusLabel(item.trigger||item.templateName)} · {item.phone}</small></span><i className={`whatsapp-state whatsapp-state-${item.status}`}>{statusLabel(item.status)}</i></summary><dl><span><dt>Template</dt><dd>{item.templateName}</dd></span><span><dt>Station / role</dt><dd>{item.station} / {item.role}</dd></span><span><dt>Attempts</dt><dd>{item.attemptCount}</dd></span><span><dt>{timestampLabel(item)}</dt><dd>{timestamp(item)?new Date(timestamp(item)).toLocaleString("en-IN"):"—"}</dd></span><span><dt>Provider reference</dt><dd>{item.providerReference}</dd></span>{item.lastError?<span><dt>Error</dt><dd>{item.lastError}</dd></span>:null}</dl></details>)}</div>
+    {!busy&&!messages.length?<div className="empty">No WhatsApp messages match these filters.</div>:null}
+    <footer className="whatsapp-log-pager"><span>{total.toLocaleString("en-IN")} messages · Page {page} of {Math.max(1,Math.ceil(total/limit))}</span><div><button disabled={busy||page<=1} onClick={()=>void load(page-1)}>Previous</button><button disabled={busy||page*limit>=total} onClick={()=>void load(page+1)}>Next</button></div></footer>
   </section>;
 }
 

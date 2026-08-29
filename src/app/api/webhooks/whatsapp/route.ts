@@ -49,7 +49,8 @@ export async function POST(request: Request) {
         ? new Date(Number(status.timestamp) * 1000).toISOString()
         : new Date().toISOString();
       const update: Record<string, unknown> = { status: value, provider_response: payload, updated_at: new Date().toISOString() };
-      if (value === "delivered" || value === "read") update.delivered_at = providerTime;
+      if (value === "delivered") update.delivered_at = providerTime;
+      if (value === "read") update.read_at = providerTime;
       if (value === "failed") {
         update.failed_at = providerTime;
         update.last_error = JSON.stringify(status.errors ?? []).slice(0, 2000);
