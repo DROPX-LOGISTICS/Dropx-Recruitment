@@ -193,7 +193,10 @@ export async function POST(request: Request) {
     const companyId = requiredEnv("RECRUITMENT_COMPANY_ID");
     const eligible = await replayLeads(companyId, session);
     const leadIds = eligible.map((item) => item.lead.id);
-    const outboxPages = await Promise.all(chunks(leadIds).map((ids) =>
+    // Keep every coverage slice comfortably below Supabase's default row cap.
+    // A candidate can have several historical attempts, so 500 lead IDs can
+    // legitimately return more than 1,000 outbox rows and hide valid coverage.
+    const outboxPages = await Promise.all(chunks(leadIds, 100).map((ids) =>
       supabaseAdmin!.from("recruitment_whatsapp_outbox")
         .select("id,lead_id,template_name,notification_trigger,notification_context,status,created_at")
         .eq("company_id", companyId).in("lead_id", ids).order("created_at", { ascending: false })

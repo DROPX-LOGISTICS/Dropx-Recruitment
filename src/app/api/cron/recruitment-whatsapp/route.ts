@@ -110,7 +110,10 @@ export async function GET(request: Request) {
   const queued = await supabaseAdmin.from("recruitment_whatsapp_outbox")
     .select("id,lead_id,phone,template_name,template_parameters,attempt_count,notification_trigger,recruitment_stream,notification_context")
     .eq("company_id", companyId).in("status", ["queued","retry"])
-    .lte("next_attempt_at", now).order("next_attempt_at").limit(25);
+    // Older rows can have a blank retry timestamp. They are due immediately
+    // and must not remain stranded outside the worker's lte() predicate.
+    .or(`next_attempt_at.is.null,next_attempt_at.lte.${now}`)
+    .order("next_attempt_at", { nullsFirst: true }).limit(25);
   if (queued.error) return NextResponse.json({ error: queued.error.message }, { status: 500 });
   let sent = 0;
   let failed = 0;
