@@ -121,6 +121,11 @@ describe("canUseRecruitmentMenu", () => {
     expect(canUseRecruitmentMenu(session(), "Connections", "all", "hr")).toBe(true);
   });
 
+  it("lets recruitment users view the separate WhatsApp log without granting replay access", () => {
+    expect(canUseRecruitmentMenu(scoped, "WhatsApp Messages", "view", "workforce")).toBe(true);
+    expect(canUseRecruitmentMenu(scoped, "WhatsApp Messages", "edit", "workforce")).toBe(false);
+  });
+
   it("gives telecallers their personal performance view without a manual role-menu grant", () => {
     const telecaller = session({ isOwner: false, recruitmentFunction: "telecaller", menuAccess: { workforce: {}, hr: {} } });
     expect(canUseRecruitmentMenu(telecaller, "Recruiter Performance", "view", "workforce")).toBe(true);

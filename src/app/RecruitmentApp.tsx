@@ -519,6 +519,7 @@ export default function RecruitmentApp() {
   const workforceNav: Array<[string,string,string]> = [
     ["Overview","Command Center","Dashboard"],["Leads","All Leads","All Leads"],["Leads","No Response / Call Back","No Response / Call Back"],
     ["Leads","Interviews","Interviews"],["Leads","Archived Leads","Archived Leads"],["Leads","Unmapped","Unmapped"],["Leads","Reports","Reports"],
+    ["Communication","WhatsApp Messages","WhatsApp Messages"],
     ["Onboarding",user.recruitmentFunction==="influencer"?"Refer an Associate":"Workforce Onboarding","Field Executive Onboarding"],
     ["Onboarding","DA In-app Onboarding","DA In-app Onboarding"],
     ["Performance","Performance Center","Performance Center"],
@@ -539,6 +540,7 @@ export default function RecruitmentApp() {
     ["Hiring","AI Fit Review","AI Fit Review"],
     ["Advertising","Active Ads","Active Ads"],["Advertising","Ad Requests","Ad Requests"],
     ["Analytics","Recruitment Reports","Reports"],
+    ["Communication","WhatsApp Messages","WhatsApp Messages"],
     ["Master","Business Locations","Station Directory"],["Master","Positions & Designations","Roles"],
     ["Master","Candidate Statuses","Lead Status Master"],["Master","HR Lifecycle & Interview Rules","HR Lifecycle"],["Master","Notification Automation","Notification Rules"],["Master","Users & Access","Access Control"],["Master","User Roles","User Roles"],
     ["Administration","Executive Reports","Master Reports"],
@@ -555,6 +557,11 @@ export default function RecruitmentApp() {
     ].includes(menuId);
     if(workspace==="workforce"&&menuId==="Recruiter Performance"&&user.recruitmentFunction==="telecaller")return true;
     if(workspace==="workforce"&&menuId==="Field Recruitment"&&user.recruitmentFunction==="field_recruiter")return true;
+    if(menuId==="WhatsApp Messages"){
+      const leadGrant=user.menuActions?.[workspace]?.["All Leads"];
+      if(leadGrant)return Boolean(leadGrant.view||leadGrant.add||leadGrant.edit);
+      return menuLevel(workspace,"All Leads")!=="none";
+    }
     const grant=user.menuActions?.[workspace]?.[menuId];
     return grant ? Boolean(grant.view||grant.add||grant.edit) : menuLevel(workspace,menuId)!=="none";
   };
@@ -693,6 +700,7 @@ export default function RecruitmentApp() {
       {active === "Access Control" ? <TeamAccess data={moduleData} token={token} stream={stream} canEdit={canEditMenu(stream,"Access Control")} reload={load} /> : null}
       {active === "Master Reports" ? <MasterReports data={moduleData} /> : null}
       {active === "Connections" ? <ConnectionMaster data={moduleData} token={token} canEdit={canEditMenu(stream,"Connections")} reload={load} /> : null}
+      {active === "WhatsApp Messages" ? <WhatsAppMessageLog token={token} stream={stream} locations={options.locations??[]} canReplay={canEditMenu(stream,"WhatsApp Messages")||canEditMenu(stream,"Connections")} /> : null}
       {active === "System Health" ? <SystemHealth data={moduleData} token={token} canRepair={menuLevel(stream,"System Health")==="all"} reload={load} /> : null}
       {active === "Audit" ? <SystemLogs data={moduleData} /> : null}
       {active === "Reports" ? <Reports data={moduleData} busy={busy} token={token} options={options} stream={stream} /> : null}
@@ -2336,16 +2344,15 @@ function ConnectionMaster({ data, token, canEdit, reload }: { data: any; token: 
     <div className="connection-grid">{Object.entries(connectionDefinitions).map(([provider, definition]) =>
       <ConnectionCard key={provider} provider={provider} definition={definition} current={rows[provider]} token={token} canEdit={canEdit} reload={reload} />
     )}</div>
-    <WhatsAppMessageLog token={token} canReplay={canEdit}/>
     <IndeedJobMappings token={token} canEdit={canEdit}/>
   </section>;
 }
 
-function WhatsAppMessageLog({ token, canReplay }: { token: string; canReplay: boolean }) {
+function WhatsAppMessageLog({ token, canReplay, stream, locations }: { token: string; canReplay: boolean; stream:"workforce"|"hr"; locations:any[] }) {
   const initialFrom = new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit"
   }).format(new Date(Date.now() - 29 * 24 * 60 * 60_000));
-  const [filters, setFilters] = useState({ status:"", trigger:"", search:"", from:initialFrom, to:istDate() });
+  const [filters, setFilters] = useState({ status:"", trigger:"", search:"", locationId:"", from:initialFrom, to:istDate() });
   const [data, setData] = useState<any>({ messages:[], summary:{}, tracking:{}, pagination:{ page:1, total:0, limit:50 } });
   const [busy, setBusy] = useState(true);
   const [replayBusy, setReplayBusy] = useState(false);
@@ -2355,8 +2362,10 @@ function WhatsAppMessageLog({ token, canReplay }: { token: string; canReplay: bo
     setBusy(true); if (!preserveNotice) setNotice("");
     try {
       const params = new URLSearchParams({ page:String(page), limit:"50" });
+      params.set("stream", stream);
       if (values.status) params.set("status", values.status);
       if (values.trigger) params.set("trigger", values.trigger);
+      if (values.locationId) params.set("locationId", values.locationId);
       if (values.search.trim()) params.set("search", values.search.trim());
       if (values.from) params.set("from", `${values.from}T00:00:00+05:30`);
       if (values.to) params.set("to", `${values.to}T23:59:59.999+05:30`);
@@ -2371,7 +2380,7 @@ function WhatsAppMessageLog({ token, canReplay }: { token: string; canReplay: bo
     } finally { setBusy(false); }
   }
 
-  useEffect(()=>{void load(1);},[token]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(()=>{void load(1);},[token,stream]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function auditAndReplay() {
     if (!canReplay) return;
@@ -2429,10 +2438,11 @@ function WhatsAppMessageLog({ token, canReplay }: { token: string; canReplay: bo
     <div className="whatsapp-log-filters">
       <input aria-label="Search WhatsApp messages" placeholder="Phone ending or template…" value={filters.search} onChange={(event)=>setFilters({...filters,search:event.target.value})} onKeyDown={(event)=>{if(event.key==="Enter")void load(1);}}/>
       <select aria-label="Filter message event" value={filters.trigger} onChange={(event)=>setFilters({...filters,trigger:event.target.value})}><option value="">All message events</option><option value="new_lead">Application received</option><option value="no_response">No response</option><option value="interview">Interview scheduled</option></select>
+      <select aria-label="Filter message station" value={filters.locationId} onChange={(event)=>setFilters({...filters,locationId:event.target.value})}><option value="">All permitted stations</option>{locations.map((item:any)=><option value={item.id} key={item.id}>{item.code} — {item.name}</option>)}</select>
       <label>From<input type="date" value={filters.from} onChange={(event)=>setFilters({...filters,from:event.target.value})}/></label>
       <label>To<input type="date" value={filters.to} onChange={(event)=>setFilters({...filters,to:event.target.value})}/></label>
       <button disabled={busy} onClick={()=>void load(1)}>{busy?"Loading…":"Apply"}</button>
-      <button disabled={busy} onClick={()=>{const next={status:"",trigger:"",search:"",from:initialFrom,to:istDate()};setFilters(next);void load(1,next);}}>Reset</button>
+      <button disabled={busy} onClick={()=>{const next={status:"",trigger:"",search:"",locationId:"",from:initialFrom,to:istDate()};setFilters(next);void load(1,next);}}>Reset</button>
     </div>
     {notice?<p className="connection-notice">{notice}</p>:null}
     <div className="table-scroll whatsapp-log-table"><table><thead><tr><th>Candidate</th><th>Message</th><th>Provider state</th><th>Attempts</th><th>Latest provider time</th><th>Reference / error</th></tr></thead><tbody>{messages.map((item:any)=><tr key={item.id}><td><b>{item.candidate}</b><small>{item.phone} · {item.station} / {item.role}</small></td><td><b>{statusLabel(item.trigger||item.templateName)}</b><small>{item.templateName}</small></td><td><span className={`whatsapp-state whatsapp-state-${item.status}`}>{statusLabel(item.status)}</span><small>Candidate: {statusLabel(item.candidateStatus)}</small></td><td>{Number(item.attemptCount||0).toLocaleString("en-IN")}</td><td><b>{timestampLabel(item)}</b><small>{timestamp(item)?new Date(timestamp(item)).toLocaleString("en-IN") : "—"}</small></td><td><b>{item.providerReference}</b><small className={item.lastError?"log-error":""}>{item.lastError||"No provider error"}</small></td></tr>)}</tbody></table></div>

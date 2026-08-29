@@ -37,7 +37,31 @@ function chunks<T>(rows: T[], size = 500) {
 
 async function logSession(request: Request, required: "view" | "edit") {
   const session = await recruitmentSession(request);
-  return canUseRecruitmentMenu(session, "Connections", required) ? session : null;
+  const allowed = required === "view"
+    ? canUseRecruitmentMenu(session, "WhatsApp Messages", "view")
+    : canUseRecruitmentMenu(session, "WhatsApp Messages", "edit")
+      || canUseRecruitmentMenu(session, "Connections", "edit");
+  return allowed ? session : null;
+}
+
+function scopeMessageQuery(query: any, session: NonNullable<Awaited<ReturnType<typeof recruitmentSession>>>, stream: string, locationId: string) {
+  let scoped = query;
+  const impossibleId = "00000000-0000-0000-0000-000000000000";
+  if (stream === "workforce" || stream === "hr") {
+    scoped = session[stream] ? scoped.eq("recruitment_leads.stream", stream) : scoped.eq("lead_id", impossibleId);
+  }
+  if (!session.allLocations) {
+    scoped = session.locationIds.length
+      ? scoped.in("recruitment_leads.location_id", session.locationIds)
+      : scoped.eq("lead_id", impossibleId);
+  }
+  if (session.roleIds.length) scoped = scoped.in("recruitment_leads.role_id", session.roleIds);
+  if (locationId) {
+    scoped = !session.allLocations && !session.locationIds.includes(locationId)
+      ? scoped.eq("lead_id", impossibleId)
+      : scoped.eq("recruitment_leads.location_id", locationId);
+  }
+  return scoped;
 }
 
 function applyWindow(query: any, from: string, to: string, trigger: string) {
@@ -49,13 +73,16 @@ function applyWindow(query: any, from: string, to: string, trigger: string) {
 export async function GET(request: Request) {
   try {
     if (!supabaseAdmin) throw new Error("Supabase is not configured.");
-    if (!await logSession(request, "view")) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    const session = await logSession(request, "view");
+    if (!session) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     const companyId = requiredEnv("RECRUITMENT_COMPANY_ID");
     const url = new URL(request.url);
     const page = integer(url.searchParams.get("page"), 1, 1, 100_000);
     const limit = integer(url.searchParams.get("limit"), 50, 10, 100);
     const status = String(url.searchParams.get("status") ?? "").trim().toLowerCase();
     const trigger = String(url.searchParams.get("trigger") ?? "").trim().toLowerCase();
+    const stream = String(url.searchParams.get("stream") ?? "").trim().toLowerCase();
+    const locationId = String(url.searchParams.get("locationId") ?? "").trim();
     const search = cleanSearch(url.searchParams.get("search"));
     const fromDate = new Date(url.searchParams.get("from") || Date.now() - 30 * 24 * 60 * 60_000);
     const toDate = new Date(url.searchParams.get("to") || Date.now());
@@ -65,12 +92,12 @@ export async function GET(request: Request) {
     const messageSelect = (includeReadAt: boolean) => `
         id,lead_id,phone,template_name,notification_trigger,recruitment_stream,status,attempt_count,
         provider_message_id,created_at,updated_at,sent_at,delivered_at,${includeReadAt ? "read_at," : ""}failed_at,last_error,
-        recruitment_leads(full_name,status,recruitment_locations(code,name),recruitment_roles(code,name))
+        recruitment_leads!inner(full_name,status,stream,location_id,role_id,recruitment_locations(code,name),recruitment_roles(code,name))
       `;
     const loadRows = async (includeReadAt: boolean) => {
-      let query = applyWindow(supabaseAdmin!.from("recruitment_whatsapp_outbox")
+      let query = scopeMessageQuery(applyWindow(supabaseAdmin!.from("recruitment_whatsapp_outbox")
         .select(messageSelect(includeReadAt), { count: "exact" })
-        .eq("company_id", companyId), from, to, trigger);
+        .eq("company_id", companyId), from, to, trigger), session, stream, locationId);
       if (logStatuses.includes(status)) query = query.eq("status", status);
       if (search) query = query.or(`phone.ilike.%${search}%,template_name.ilike.%${search}%`);
       return query.order("created_at", { ascending: false }).range((page - 1) * limit, page * limit - 1);
@@ -80,9 +107,9 @@ export async function GET(request: Request) {
     if (rows.error) throw new Error(rows.error.message);
 
     const summaryEntries = await Promise.all(logStatuses.map(async (item) => {
-      const result = await applyWindow(supabaseAdmin!.from("recruitment_whatsapp_outbox")
-        .select("id", { count: "exact", head: true })
-        .eq("company_id", companyId).eq("status", item), from, to, trigger);
+      const result = await scopeMessageQuery(applyWindow(supabaseAdmin!.from("recruitment_whatsapp_outbox")
+        .select("id,recruitment_leads!inner(id,stream,location_id,role_id)", { count: "exact", head: true })
+        .eq("company_id", companyId).eq("status", item), from, to, trigger), session, stream, locationId);
       if (result.error) throw new Error(result.error.message);
       return [item, result.count ?? 0] as const;
     }));
@@ -130,15 +157,22 @@ export async function GET(request: Request) {
   }
 }
 
-async function replayLeads(companyId: string) {
+async function replayLeads(companyId: string, session: NonNullable<Awaited<ReturnType<typeof recruitmentSession>>>) {
   const leads: any[] = [];
   for (const stream of ["workforce", "hr"]) {
+    if (!session[stream as "workforce" | "hr"]) continue;
+    if (!session.allLocations && !session.locationIds.length) continue;
     for (const status of replayStatuses) {
       for (let start = 0; ; start += 1000) {
-        const page = await supabaseAdmin!.from("recruitment_leads")
+        let query = supabaseAdmin!.from("recruitment_leads")
           .select("id,phone,full_name,status,stream,location_id,no_response_attempts,follow_up_at,recruitment_roles(name)")
           .eq("company_id", companyId).eq("stream", stream).eq("archived", false).eq("status", status)
           .order("lead_created_at", { ascending: false }).range(start, start + 999);
+        if (!session.allLocations) {
+          query = query.in("location_id", session.locationIds);
+        }
+        if (session.roleIds.length) query = query.in("role_id", session.roleIds);
+        const page = await query;
         if (page.error) throw new Error(page.error.message);
         leads.push(...(page.data ?? []));
         if ((page.data?.length ?? 0) < 1000) break;
@@ -152,11 +186,12 @@ async function replayLeads(companyId: string) {
 export async function POST(request: Request) {
   try {
     if (!supabaseAdmin) throw new Error("Supabase is not configured.");
-    if (!await logSession(request, "edit")) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    const session = await logSession(request, "edit");
+    if (!session) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     const body = await request.json().catch(() => ({})) as Record<string, unknown>;
     const apply = body.action === "apply";
     const companyId = requiredEnv("RECRUITMENT_COMPANY_ID");
-    const eligible = await replayLeads(companyId);
+    const eligible = await replayLeads(companyId, session);
     const leadIds = eligible.map((item) => item.lead.id);
     const outboxPages = await Promise.all(chunks(leadIds).map((ids) =>
       supabaseAdmin!.from("recruitment_whatsapp_outbox")

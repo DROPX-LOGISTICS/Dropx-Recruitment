@@ -43,6 +43,9 @@ export function canUseRecruitmentMenu(
   if (workspace !== "hr" && menuId === "Field Recruitment"
     && session.recruitmentFunction === "field_recruiter"
     && ["view", "add", "edit"].includes(required)) return true;
+  if (menuId === "WhatsApp Messages" && required === "view") {
+    return canUseRecruitmentMenu(session, "All Leads", "view", workspace);
+  }
   const workspaces: RecruitmentWorkspace[] = workspace
     ? [workspace]
     : ["workforce", "hr"];

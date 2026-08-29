@@ -13,6 +13,7 @@ export const recruitmentMenuCatalog = [
   { id: "Hired", label: "HR Hired", group: "Leads & talent", workspaces: ["hr"] },
   { id: "Archived Leads", label: "Archived Leads", group: "Leads & talent", workspaces: ["workforce", "hr"] },
   { id: "Unmapped", label: "Unmapped Intake", group: "Leads & talent", workspaces: ["workforce", "hr"] },
+  { id: "WhatsApp Messages", label: "WhatsApp Messages", group: "Communication", workspaces: ["workforce", "hr"] },
   { id: "Reports", label: "Operational Reports", group: "Performance", workspaces: ["workforce", "hr"] },
   { id: "Performance Center", label: "Recruitment Performance Center", group: "Performance", workspaces: ["workforce"] },
   { id: "Recruiter Performance", label: "Telecaller Performance", group: "Performance", workspaces: ["workforce"] },
@@ -103,12 +104,12 @@ const allAdRequestActions = adRequestActionCatalog.map((item) => item.id);
 const accessRank: Record<RecruitmentAccessLevel, number> = { none: 0, view: 1, edit: 2, all: 3 };
 const workforceMenus: RecruitmentMenuId[] = [
   "Dashboard", "Workforce Plan", "All Leads", "No Response / Call Back", "Interviews",
-  "Archived Leads", "Reports", "Field Executive Onboarding", "DA In-app Onboarding",
+  "Archived Leads", "WhatsApp Messages", "Reports", "Field Executive Onboarding", "DA In-app Onboarding",
   "Recruiter Performance", "Ad Requests"
 ];
 const hrMenus: RecruitmentMenuId[] = [
   "Dashboard", "All Leads", "Screening", "My Interviews", "Interviews", "Documents", "Offers",
-  "Hired", "Archived Leads", "Reports", "Job Requisitions", "Resume Intake", "AI Fit Review",
+  "Hired", "Archived Leads", "WhatsApp Messages", "Reports", "Job Requisitions", "Resume Intake", "AI Fit Review",
   "Active Ads", "Ad Requests", "HR Lifecycle"
 ];
 
