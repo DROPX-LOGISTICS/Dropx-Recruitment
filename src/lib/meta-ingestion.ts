@@ -10,6 +10,7 @@ import {
 } from "./recruitment-routing";
 import { supabaseAdmin } from "./supabase-admin";
 import { resolveWorkforceLeadLocation } from "./workforce-pincode-routing";
+import { findMetaRouteMismatch, type MetaRouteMismatch } from "./meta-ad-reconciliation";
 
 export type LeadgenValue = {
   ad_id?: string;
@@ -127,12 +128,14 @@ export async function syncMetaAds(options: {
   accessToken: string;
   adAccountId: string;
   graphVersion: string;
+  reconcileMissing?: boolean;
 }) {
   if (!supabaseAdmin) throw new Error("Supabase is not configured.");
   const admin = supabaseAdmin;
   const account = options.adAccountId.replace(/^act_/, "");
   let next: string | null = `https://graph.facebook.com/${options.graphVersion}/act_${encodeURIComponent(account)}/ads`;
   const ads: MetaAdSyncRow[] = [];
+  const syncStartedAt = new Date().toISOString();
   for (let page = 0; next && page < 20; page++) {
     const endpoint = new URL(next);
     if (page === 0) {
@@ -158,6 +161,24 @@ export async function syncMetaAds(options: {
     ads.push(...(payload.data ?? []));
     next = payload.paging?.next ?? null;
   }
+
+  const locations = await admin.from("recruitment_locations")
+    .select("code")
+    .eq("company_id", companyId())
+    .eq("is_active", true);
+  if (locations.error) throw new Error(locations.error.message);
+  const stationCodes = (locations.data ?? []).map((item) => String(item.code || "")).filter(Boolean);
+  const mappingMismatches = ads.flatMap((ad) => {
+    if (!ad.id || !ad.name) return [];
+    const mismatch = findMetaRouteMismatch({
+      metaAdId: ad.id,
+      adName: ad.name,
+      campaignName: ad.campaign?.name,
+      adsetName: ad.adset?.name,
+      stationCodes
+    });
+    return mismatch ? [mismatch] : [];
+  });
 
   let synced = 0;
   let skipped = 0;
@@ -221,7 +242,41 @@ export async function syncMetaAds(options: {
       synced++;
     }
   }));
-  return { fetched: ads.length, synced, skipped };
+  let archivedMissing = 0;
+  const completeAccountListing = next === null;
+  if (options.reconcileMissing && completeAccountListing) {
+    const existing = await admin.from("recruitment_ads")
+      .select("id,meta_ad_id,status,last_synced_at")
+      .eq("company_id", companyId())
+      .not("meta_ad_id", "is", null);
+    if (existing.error) throw new Error(existing.error.message);
+    const liveMetaIds = new Set(ads.map((ad) => String(ad.id || "")).filter(Boolean));
+    const missingIds = (existing.data ?? []).filter((item) => {
+      const status = String(item.status || "").toUpperCase();
+      return item.meta_ad_id
+        && !liveMetaIds.has(String(item.meta_ad_id))
+        && !["ARCHIVED", "DELETED"].includes(status)
+        && (!item.last_synced_at || item.last_synced_at < syncStartedAt);
+    }).map((item) => item.id);
+    for (let index = 0; index < missingIds.length; index += 200) {
+      const batch = missingIds.slice(index, index + 200);
+      const saved = await admin.from("recruitment_ads").update({
+        status: "ARCHIVED",
+        last_synced_at: syncStartedAt,
+        updated_at: syncStartedAt
+      }).eq("company_id", companyId()).in("id", batch);
+      if (saved.error) throw new Error(saved.error.message);
+      archivedMissing += batch.length;
+    }
+  }
+  return {
+    fetched: ads.length,
+    synced,
+    skipped,
+    archivedMissing,
+    completeAccountListing,
+    mappingMismatches: mappingMismatches satisfies MetaRouteMismatch[]
+  };
 }
 
 type MetaLead = {
