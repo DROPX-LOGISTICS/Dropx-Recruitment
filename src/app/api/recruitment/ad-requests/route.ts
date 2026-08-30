@@ -24,7 +24,11 @@ export const runtime = "nodejs";
 
 type Session = NonNullable<Awaited<ReturnType<typeof recruitmentSession>>>;
 
-class AdChangeError extends Error {}
+class AdChangeError extends Error {
+  constructor(message: string, readonly metaCode?: number, readonly metaSubcode?: number) {
+    super(message);
+  }
+}
 
 type MetaErrorPayload = {
   success?: boolean;
@@ -99,7 +103,11 @@ function metaFailure(payload: MetaErrorPayload, status: number, target = "change
   const code = payload.error?.code
     ? ` (Meta code ${payload.error.code}${payload.error.error_subcode ? `/${payload.error.error_subcode}` : ""})`
     : "";
-  return new AdChangeError(`Meta could not apply the ${target}: ${detail}${code}`);
+  return new AdChangeError(
+    `Meta could not apply the ${target}: ${detail}${code}`,
+    payload.error?.code,
+    payload.error?.error_subcode
+  );
 }
 
 async function metaPost(path: string, values: Record<string, string>, target = "change") {
@@ -198,9 +206,11 @@ async function completeMetaChange(companyId: string, requestId: string) {
     ? ad.raw_payload as Record<string, unknown>
     : {};
   const liveBudget = await metaGet<{
-    campaign?: { id?: string; daily_budget?: string; lifetime_budget?: string };
-    adset?: { id?: string; daily_budget?: string; lifetime_budget?: string };
-  }>(ad.meta_ad_id, "campaign{id,daily_budget,lifetime_budget},adset{id,daily_budget,lifetime_budget}");
+    status?: string;
+    effective_status?: string;
+    campaign?: { id?: string; daily_budget?: string; lifetime_budget?: string; status?: string; effective_status?: string };
+    adset?: { id?: string; daily_budget?: string; lifetime_budget?: string; status?: string; effective_status?: string };
+  }>(ad.meta_ad_id, "status,effective_status,campaign{id,daily_budget,lifetime_budget,status,effective_status},adset{id,daily_budget,lifetime_budget,status,effective_status}");
   const resolution = resolveMetaDailyBudgetTarget({
     campaign: liveBudget.campaign,
     adset: liveBudget.adset,
@@ -216,12 +226,41 @@ async function completeMetaChange(companyId: string, requestId: string) {
   if (!resolution.target) {
     throw new AdChangeError("Meta did not return the campaign or ad-set budget owner for this ad.");
   }
+  const budgetOwner = resolution.target.source === "campaign" ? liveBudget.campaign : liveBudget.adset;
+  const liveState = String(
+    budgetOwner?.effective_status
+      || budgetOwner?.status
+      || liveBudget.effective_status
+      || liveBudget.status
+      || ""
+  ).toUpperCase();
+  const markUnavailable = async (status: "DELETED" | "ARCHIVED") => {
+    const unavailable = await supabaseAdmin!.from("recruitment_ads").update({
+      status,
+      last_synced_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    }).eq("company_id", companyId).eq("id", ad.id);
+    if (unavailable.error) throw new Error(unavailable.error.message);
+  };
+  if (["DELETED", "ARCHIVED"].includes(liveState)) {
+    const unavailableState = liveState as "DELETED" | "ARCHIVED";
+    await markUnavailable(unavailableState);
+    throw new AdChangeError(`This Meta ${resolution.target.source === "campaign" ? "campaign" : "ad set"} is ${unavailableState.toLowerCase()} and is no longer an active ad.`);
+  }
   const targetLabel = resolution.target.source === "campaign" ? "campaign daily budget" : "ad-set daily budget";
-  await metaPost(
-    resolution.target.id,
-    { daily_budget: String(Math.round(requestedBudget * 100)) },
-    targetLabel
-  );
+  try {
+    await metaPost(
+      resolution.target.id,
+      { daily_budget: String(Math.round(requestedBudget * 100)) },
+      targetLabel
+    );
+  } catch (error) {
+    if (error instanceof AdChangeError && error.metaCode === 100 && error.metaSubcode === 1487566) {
+      await markUnavailable("DELETED");
+      throw new AdChangeError("This Meta campaign has been deleted and is no longer an active ad.", error.metaCode, error.metaSubcode);
+    }
+    throw error;
+  }
   const saved = await supabaseAdmin.from("recruitment_ads").update({
     daily_budget: requestedBudget,
     last_synced_at: new Date().toISOString(),
