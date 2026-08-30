@@ -333,6 +333,15 @@ export async function setMetaObjectStatus(objectId: string, status: "ACTIVE" | "
   await graphRequest(connection, id, "POST", { status });
 }
 
+export async function setMetaObjectName(objectId: string, name: string) {
+  const id = String(objectId || "").trim();
+  const nextName = String(name || "").trim();
+  if (!id) throw new Error("Meta object ID is missing.");
+  if (!nextName) throw new Error("Meta object name is missing.");
+  const connection = await metaConnection();
+  await graphRequest(connection, id, "POST", { name: nextName });
+}
+
 async function graphGet(
   connection: Awaited<ReturnType<typeof metaConnection>>,
   path: string,

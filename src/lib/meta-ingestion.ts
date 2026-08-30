@@ -175,6 +175,8 @@ export async function syncMetaAds(options: {
       adName: ad.name,
       campaignName: ad.campaign?.name,
       adsetName: ad.adset?.name,
+      configuredStatus: ad.configured_status ?? ad.status,
+      effectiveStatus: ad.effective_status,
       stationCodes
     });
     return mismatch ? [mismatch] : [];

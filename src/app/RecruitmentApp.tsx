@@ -3394,7 +3394,7 @@ function ActiveAds({ data, token, stream, reload, request, canDirectPost, openPu
   const [insightAd,setInsightAd] = useState<any|null>(null);
   const [creativeTarget,setCreativeTarget] = useState<any|null>(null);
   const [reconcileBusy,setReconcileBusy] = useState(false);
-  const [reconcileNotice,setReconcileNotice] = useState<{tone:"success"|"warning"|"error";message:string}|null>(null);
+  const [reconcileNotice,setReconcileNotice] = useState<{tone:"success"|"warning"|"error";message:string;mismatches?:any[]}|null>(null);
   useEffect(()=>{
     const controller=new AbortController();
     setInsightState((current)=>({...current,loading:true,error:null}));
@@ -3495,13 +3495,13 @@ function ActiveAds({ data, token, stream, reload, request, canDirectPost, openPu
       setPosterBusy("");
     }
   }
-  async function reconcileMetaAds() {
+  async function reconcileMetaAds(repairMetaAdId?:string) {
     setReconcileBusy(true);setReconcileNotice(null);
     try {
       const response = await fetch("/api/recruitment/ads/reconcile", {
         method:"POST",
         headers:headers(token),
-        body:JSON.stringify({stream})
+        body:JSON.stringify({stream,repairMetaAdId})
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error||"Unable to reconcile Meta ads.");
@@ -3509,7 +3509,8 @@ function ActiveAds({ data, token, stream, reload, request, canDirectPost, openPu
       const mismatchNames = mismatches.slice(0,4).map((item:any)=>`${item.adName} (${item.adStation} vs ${item.adsetStation||item.campaignStation})`).join(", ");
       setReconcileNotice({
         tone:mismatches.length?"warning":"success",
-        message:`Checked ${Number(payload.fetched||0).toLocaleString("en-IN")} Meta ads; refreshed ${Number(payload.synced||0).toLocaleString("en-IN")} and archived ${Number(payload.archivedMissing||0).toLocaleString("en-IN")} unavailable dashboard record${Number(payload.archivedMissing||0)===1?"":"s"}.${mismatches.length?` Station mismatch${mismatches.length===1?"":"es"}: ${mismatchNames}${mismatches.length>4?` and ${mismatches.length-4} more`:""}.`:" No station mismatches found."}`
+        message:`Checked ${Number(payload.fetched||0).toLocaleString("en-IN")} Meta ads; refreshed ${Number(payload.synced||0).toLocaleString("en-IN")} and archived ${Number(payload.archivedMissing||0).toLocaleString("en-IN")} unavailable dashboard record${Number(payload.archivedMissing||0)===1?"":"s"}.${payload.repaired?` Renamed ${payload.repaired.oldName} to ${payload.repaired.newName}.`:""}${mismatches.length?` Station mismatch${mismatches.length===1?"":"es"}: ${mismatchNames}${mismatches.length>4?` and ${mismatches.length-4} more`:""}.`:" No station mismatches found."}`,
+        mismatches
       });
       await reload();
     } catch(error) {
@@ -3523,7 +3524,7 @@ function ActiveAds({ data, token, stream, reload, request, canDirectPost, openPu
       <div><span>LIVE META PERFORMANCE</span><h2>Active Ads</h2><p>Every metric below follows the selected filters. Daily performance is for {insightState.date?new Date(`${insightState.date}T12:00:00`).toLocaleDateString("en-IN"):"today"}.</p></div>
       <div className="ad-head-actions">{canRequestChange&&!canDirectPost?<button onClick={()=>request("new_ad")}>Request New Ad</button>:null}{canDirectPost?<button disabled={reconcileBusy} onClick={()=>void reconcileMetaAds()}>{reconcileBusy?"Reconciling…":"Reconcile Meta"}</button>:null}{canDirectPost?<button className="primary-action" onClick={openPublisher}>Create Meta Ad</button>:null}</div>
     </div>
-    {reconcileNotice?<div className={reconcileNotice.tone==="error"?"error-banner":reconcileNotice.tone==="warning"?"ad-insight-warning":"success-banner"}>{reconcileNotice.message}<button type="button" onClick={()=>setReconcileNotice(null)}>×</button></div>:null}
+    {reconcileNotice?<div className={reconcileNotice.tone==="error"?"error-banner":reconcileNotice.tone==="warning"?"ad-insight-warning":"success-banner"}>{reconcileNotice.message}{reconcileNotice.mismatches?.length===1?<button type="button" disabled={reconcileBusy} onClick={()=>void reconcileMetaAds(reconcileNotice.mismatches?.[0]?.metaAdId)}>Fix station mapping</button>:null}<button type="button" onClick={()=>setReconcileNotice(null)}>×</button></div>:null}
     <div className="ad-summary">
       <article className="ad-stat stat-risk"><span>Spend Guard</span><strong>{visible.filter((item:any)=>item.guard?.severity==="critical").length}</strong><small>critical actions</small></article>
       <article className="ad-stat stat-total"><span>Filtered Ads</span><strong>{visible.length.toLocaleString("en-IN")}</strong><small>{filtered.active} running</small></article>

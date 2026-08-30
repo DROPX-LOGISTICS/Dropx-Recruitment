@@ -6,6 +6,8 @@ export type MetaRouteMismatch = {
   campaignStation: string | null;
   adsetName: string | null;
   adsetStation: string | null;
+  configuredStatus: string | null;
+  effectiveStatus: string | null;
 };
 
 function normalized(value: unknown) {
@@ -33,6 +35,8 @@ export function findMetaRouteMismatch(input: {
   adName: string;
   campaignName?: string | null;
   adsetName?: string | null;
+  configuredStatus?: string | null;
+  effectiveStatus?: string | null;
   stationCodes: string[];
 }): MetaRouteMismatch | null {
   const adStation = leadingKnownStation(input.adName, input.stationCodes);
@@ -50,6 +54,8 @@ export function findMetaRouteMismatch(input: {
     campaignName: input.campaignName ?? null,
     campaignStation,
     adsetName: input.adsetName ?? null,
-    adsetStation
+    adsetStation,
+    configuredStatus: input.configuredStatus ?? null,
+    effectiveStatus: input.effectiveStatus ?? null
   };
 }
