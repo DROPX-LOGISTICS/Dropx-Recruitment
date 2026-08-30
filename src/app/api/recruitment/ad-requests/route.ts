@@ -17,11 +17,25 @@ import {
   normalizeAdRequestStatus,
   type AdRequestLifecycleAction
 } from "@/lib/ad-request-lifecycle";
+import { resolveMetaDailyBudgetTarget } from "@/lib/meta-budget";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 type Session = NonNullable<Awaited<ReturnType<typeof recruitmentSession>>>;
+
+class AdChangeError extends Error {}
+
+type MetaErrorPayload = {
+  success?: boolean;
+  error?: {
+    message?: string;
+    error_user_title?: string;
+    error_user_msg?: string;
+    code?: number;
+    error_subcode?: number;
+  };
+};
 
 function requestActor(session: Session) {
   return session.email || session.displayName || session.profileId;
@@ -77,26 +91,72 @@ function displayRequester(row: any) {
   ) || "Unknown requester");
 }
 
-async function metaPost(path: string, values: Record<string, string>) {
+function metaFailure(payload: MetaErrorPayload, status: number, target = "change") {
+  const detail = payload.error?.error_user_msg
+    || payload.error?.error_user_title
+    || payload.error?.message
+    || `Meta returned HTTP ${status}.`;
+  const code = payload.error?.code
+    ? ` (Meta code ${payload.error.code}${payload.error.error_subcode ? `/${payload.error.error_subcode}` : ""})`
+    : "";
+  return new AdChangeError(`Meta could not apply the ${target}: ${detail}${code}`);
+}
+
+async function metaPost(path: string, values: Record<string, string>, target = "change") {
   const config = await getConnectionConfig("meta");
   if (!config?.isEnabled || !config.secrets.access_token) {
-    throw new Error("Meta Lead Ads must be enabled and tested before completing this request.");
+    throw new AdChangeError("Meta Lead Ads must be enabled and tested before completing this change.");
   }
   const version = config.publicConfig.graph_version || "v25.0";
-  const response = await fetch(`https://graph.facebook.com/${version}/${encodeURIComponent(path)}`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${config.secrets.access_token}`,
-      "Content-Type": "application/x-www-form-urlencoded"
-    },
-    body: new URLSearchParams(values),
-    cache: "no-store",
-    signal: AbortSignal.timeout(25_000)
-  });
-  const payload = await response.json() as { success?: boolean; error?: { message?: string } };
-  if (!response.ok || payload.error || payload.success === false) {
-    throw new Error(payload.error?.message || `Meta returned HTTP ${response.status}.`);
+  let response: Response;
+  try {
+    response = await fetch(`https://graph.facebook.com/${version}/${encodeURIComponent(path)}`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${config.secrets.access_token}`,
+        "Content-Type": "application/x-www-form-urlencoded"
+      },
+      body: new URLSearchParams(values),
+      cache: "no-store",
+      signal: AbortSignal.timeout(25_000)
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "TimeoutError") {
+      throw new AdChangeError("Meta did not respond within 25 seconds. No local budget was changed; please try again.");
+    }
+    throw error;
   }
+  const payload = await response.json() as MetaErrorPayload;
+  if (!response.ok || payload.error || payload.success === false) {
+    throw metaFailure(payload, response.status, target);
+  }
+  return payload;
+}
+
+async function metaGet<T>(path: string, fields: string) {
+  const config = await getConnectionConfig("meta");
+  if (!config?.isEnabled || !config.secrets.access_token) {
+    throw new AdChangeError("Meta Lead Ads must be enabled and tested before completing this change.");
+  }
+  const version = config.publicConfig.graph_version || "v25.0";
+  let response: Response;
+  try {
+    response = await fetch(
+      `https://graph.facebook.com/${version}/${encodeURIComponent(path)}?fields=${encodeURIComponent(fields)}`,
+      {
+        headers: { Authorization: `Bearer ${config.secrets.access_token}` },
+        cache: "no-store",
+        signal: AbortSignal.timeout(25_000)
+      }
+    );
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "TimeoutError") {
+      throw new AdChangeError("Meta did not respond within 25 seconds. No local budget was changed; please try again.");
+    }
+    throw error;
+  }
+  const payload = await response.json() as T & MetaErrorPayload;
+  if (!response.ok || payload.error) throw metaFailure(payload, response.status, "budget lookup");
   return payload;
 }
 
@@ -111,7 +171,7 @@ async function completeMetaChange(companyId: string, requestId: string) {
   if (!pending.data) throw new Error("Advertising request was not found.");
   if (!["budget_change", "stop_ad", "resume_ad"].includes(pending.data.request_type)) return;
   const ad = pending.data.recruitment_ads as any;
-  if (!ad?.meta_ad_id) throw new Error("This ad has no Meta Ad ID, so the change cannot be completed automatically.");
+  if (!ad?.meta_ad_id) throw new AdChangeError("This ad has no Meta Ad ID, so the change cannot be completed automatically.");
   if (pending.data.request_type === "stop_ad") {
     await metaPost(ad.meta_ad_id, { status: "PAUSED" });
     const saved = await supabaseAdmin.from("recruitment_ads").update({
@@ -133,32 +193,35 @@ async function completeMetaChange(companyId: string, requestId: string) {
     return;
   }
   const requestedBudget = Number(pending.data.requested_budget || 0);
-  if (!(requestedBudget > 0)) throw new Error("The approved budget is invalid.");
+  if (!(requestedBudget > 0)) throw new AdChangeError("The approved budget is invalid.");
   const raw = ad.raw_payload && typeof ad.raw_payload === "object"
     ? ad.raw_payload as Record<string, unknown>
     : {};
-  const budgetSource = String(raw.budget_source || "adset");
-  let targetId = String(budgetSource === "campaign" ? raw.campaign_id : raw.adset_id || "");
-  if (!targetId) {
-    const config = await getConnectionConfig("meta");
-    if (!config?.isEnabled || !config.secrets.access_token) {
-      throw new Error("Meta Lead Ads must be enabled and tested before completing this request.");
+  const liveBudget = await metaGet<{
+    campaign?: { id?: string; daily_budget?: string; lifetime_budget?: string };
+    adset?: { id?: string; daily_budget?: string; lifetime_budget?: string };
+  }>(ad.meta_ad_id, "campaign{id,daily_budget,lifetime_budget},adset{id,daily_budget,lifetime_budget}");
+  const resolution = resolveMetaDailyBudgetTarget({
+    campaign: liveBudget.campaign,
+    adset: liveBudget.adset,
+    fallback: {
+      source: raw.budget_source,
+      campaignId: raw.campaign_id,
+      adsetId: raw.adset_id
     }
-    const version = config.publicConfig.graph_version || "v25.0";
-    const details = await fetch(
-      `https://graph.facebook.com/${version}/${encodeURIComponent(ad.meta_ad_id)}?fields=adset{id},campaign{id}`,
-      {
-        headers: { Authorization: `Bearer ${config.secrets.access_token}` },
-        cache: "no-store",
-        signal: AbortSignal.timeout(25_000)
-      }
-    );
-    const payload = await details.json() as { adset?: { id?: string }; campaign?: { id?: string }; error?: { message?: string } };
-    if (!details.ok || payload.error) throw new Error(payload.error?.message || `Meta returned HTTP ${details.status}.`);
-    targetId = budgetSource === "campaign" ? String(payload.campaign?.id || "") : String(payload.adset?.id || "");
+  });
+  if (!resolution.target && resolution.reason === "lifetime") {
+    throw new AdChangeError("This Meta ad uses a lifetime budget, not a daily budget. Change its lifetime schedule in Meta Ads Manager instead.");
   }
-  if (!targetId) throw new Error(`Meta ${budgetSource} ID is missing for this ad.`);
-  await metaPost(targetId, { daily_budget: String(Math.round(requestedBudget * 100)) });
+  if (!resolution.target) {
+    throw new AdChangeError("Meta did not return the campaign or ad-set budget owner for this ad.");
+  }
+  const targetLabel = resolution.target.source === "campaign" ? "campaign daily budget" : "ad-set daily budget";
+  await metaPost(
+    resolution.target.id,
+    { daily_budget: String(Math.round(requestedBudget * 100)) },
+    targetLabel
+  );
   const saved = await supabaseAdmin.from("recruitment_ads").update({
     daily_budget: requestedBudget,
     last_synced_at: new Date().toISOString(),
@@ -318,7 +381,33 @@ export async function POST(request: Request) {
     const canActDirectly = session.isOwner
       || (session.adRequestActions.includes("approve") && session.adRequestActions.includes("publish"));
     if (canActDirectly && requestType !== "new_ad") {
-      await completeMetaChange(companyId, saved.data.id);
+      try {
+        await completeMetaChange(companyId, saved.data.id);
+      } catch (error) {
+        const failedAt = new Date().toISOString();
+        const failedRaw = requestRaw(saved.data.raw_payload);
+        const failureMessage = error instanceof AdChangeError
+          ? error.message
+          : "The direct Meta change could not be completed.";
+        const failed = await supabaseAdmin.from("recruitment_ad_requests").update({
+          status: "cancelled",
+          admin_remarks: failureMessage,
+          raw_payload: {
+            ...failedRaw,
+            lifecycleHistory: [
+              ...(Array.isArray(failedRaw.lifecycleHistory) ? failedRaw.lifecycleHistory : []),
+              {
+                action: "direct_apply_failed", from: "requested", to: "cancelled", at: failedAt,
+                actorProfileId: session.profileId, actorName: session.displayName, actorEmail: session.email,
+                remarks: failureMessage
+              }
+            ]
+          },
+          updated_at: failedAt
+        }).eq("company_id", companyId).eq("id", saved.data.id);
+        if (failed.error) console.error("Unable to close failed direct ad request", failed.error);
+        throw error;
+      }
       const completedAt = new Date().toISOString();
       const completedRaw = requestRaw(saved.data.raw_payload);
       const completed = await supabaseAdmin.from("recruitment_ad_requests").update({
@@ -343,6 +432,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ request: saved.data }, { status: 201 });
   } catch (error) {
     console.error("Recruitment ad request create failed", error);
+    if (error instanceof AdChangeError) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
     return NextResponse.json({ error: "Unable to create ad request." }, { status: 500 });
   }
 }

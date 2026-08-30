@@ -713,7 +713,7 @@ export default function RecruitmentApp() {
       {active === "Incentive Master" && stream === "workforce" ? <IncentiveMaster data={moduleData} token={token} canEdit={canEditMenu("workforce","Incentive Master")} reload={load} /> : null}
     </section>
     {detailBusy && !selectedLead ? <div className="inline-loading"><div className="loader" /></div> : null}
-    {adRequest ? <AdRequestForm token={token} options={options} stream={stream} requestType={adRequest.type} ad={adRequest.ad} directMode={menuLevel(stream,"Active Ads")==="all"} close={() => setAdRequest(null)} afterSave={async () => { setAdRequest(null); setActive("Ad Requests"); await load(); }} /> : null}
+    {adRequest ? <AdRequestForm token={token} options={options} stream={stream} requestType={adRequest.type} ad={adRequest.ad} directMode={menuLevel(stream,"Active Ads")==="all"} close={() => setAdRequest(null)} afterSave={async () => { setAdRequest(null); await load(); }} /> : null}
     {directAdPublisher?<MetaAdPublisher token={token} stream={stream} options={options} close={()=>setDirectAdPublisher(false)} afterPublish={async()=>{await load();}}/>:null}
   </main>;
 }
@@ -3748,16 +3748,20 @@ function AdRequestForm({ token, options, stream, requestType, ad, directMode, cl
     paymentOffer: "", locationDetails: "", notes: "", reason: ""
   });
   const [saving, setSaving] = useState(false);
+  const [notice, setNotice] = useState("");
   const availableRoles=(options.roles??[]).filter((item:any)=>item.stream===stream);
   async function submit() {
-    setSaving(true);
+    setSaving(true); setNotice("");
     try {
       const response = await fetch("/api/recruitment/ad-requests", { method: "POST", headers: { ...headers(token), "Content-Type": "application/json" }, body: JSON.stringify({
         requestType, adId: ad?.id || null, oldBudget: ad?.daily_budget ?? null, ...form,
         requestedBudget: Number(form.requestedBudget) || null, daysRequired: Number(form.daysRequired) || null
       }) });
-      if (!response.ok) throw new Error((await response.json()).error);
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Unable to apply this ad change.");
       await afterSave();
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Unable to apply this ad change.");
     } finally { setSaving(false); }
   }
   const title = requestType === "new_ad" ? "Request New Ad" : requestType === "budget_change" ? (directMode ? "Change Daily Budget" : "Request Budget Change") : requestType === "resume_ad" ? (directMode ? "Resume Ad" : "Request Ad Resume") : (directMode ? "Pause Ad" : "Request Ad Pause");
@@ -3773,6 +3777,7 @@ function AdRequestForm({ token, options, stream, requestType, ad, directMode, cl
       {requestType==="budget_change"?<><label>Current daily budget<input value={String(ad?.daily_budget??"—")} disabled/></label><label>Requested daily budget<input type="number" value={form.requestedBudget} onChange={(event)=>setForm({...form,requestedBudget:event.target.value})}/></label></>:null}
       {requestType!=="new_ad"?<label className="wide">Reason<textarea value={form.reason} onChange={(event)=>setForm({...form,reason:event.target.value})}/></label>:null}
       <label className="wide">Notes<textarea value={form.notes} onChange={(event) => setForm({...form,notes:event.target.value})}/></label></div>
+    {notice?<div className="error-banner" role="alert">{notice}</div>:null}
     <footer><button onClick={close}>Cancel</button><button className="primary-action" disabled={saving || (requestType==="new_ad" && (!form.locationId || !form.roleId || Number(form.requestedBudget)<100 || Number(form.daysRequired)<1 || !form.posterUrl.trim())) || (requestType==="budget_change" && !Number(form.requestedBudget)) || (["stop_ad","resume_ad"].includes(requestType) && !form.reason.trim())} onClick={() => void submit()}>{saving ? (directMode ? "Applying…" : "Submitting…") : (directMode ? "Apply change" : "Submit request")}</button></footer>
   </section></div>;
 }
