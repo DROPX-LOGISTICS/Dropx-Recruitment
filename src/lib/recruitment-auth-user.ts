@@ -1,5 +1,4 @@
 import { normalizeIndianMobileE164 } from "./mobile-auth";
-import { isRecruitmentInfluencerRole } from "./recruitment-workforce-config";
 import { supabaseAdmin } from "./supabase-admin";
 
 export type RecruitmentAuthProfile = {
@@ -43,33 +42,33 @@ export async function activeProfileByMobile(companyId: string, mobileE164: strin
 
 export async function ensureRecruitmentAccess(companyId: string, profile: RecruitmentAuthProfile) {
   if (!supabaseAdmin) throw new Error("Supabase is not configured.");
-  const current = await supabaseAdmin.from("recruitment_user_access")
-    .select("id")
-    .eq("company_id", companyId)
-    .eq("profile_id", profile.id)
-    .eq("is_active", true)
-    .maybeSingle();
+  const [current, membership] = await Promise.all([
+    supabaseAdmin.from("recruitment_user_access")
+      .select("id")
+      .eq("company_id", companyId)
+      .eq("profile_id", profile.id)
+      .eq("is_active", true)
+      .maybeSingle(),
+    supabaseAdmin.from("company_product_memberships")
+      .select("id, role_id, role_code_snapshot, has_all_location_access")
+      .eq("company_id", companyId)
+      .eq("product_code", "recruit")
+      .eq("user_id", profile.id)
+      .eq("is_active", true)
+      .maybeSingle()
+  ]);
   if (current.error) throw new Error(current.error.message);
+  if (membership.error) throw new Error(membership.error.message);
+  if (!membership.data) return null;
   if (current.data) return current.data;
-  const universalRole = profile.role_id
-    ? await supabaseAdmin.from("user_roles").select("code,name")
-        .eq("company_id", companyId).eq("id", profile.role_id).eq("is_active", true).maybeSingle()
-    : { data: null, error: null };
-  if (universalRole.error) throw new Error(universalRole.error.message);
-  const roleCode = universalRole.data?.code ?? profile.role;
-  const influencer = isRecruitmentInfluencerRole(roleCode, universalRole.data?.name);
-  // Owners and RINF users are authoritative in the universal user master. A
-  // newly onboarded influencer can therefore use OTP immediately after the
-  // Main Dashboard profile/role is activated; no duplicate mobile user setup
-  // is required in Recruitment.
-  const owner = profile.is_master_owner === true || String(roleCode || "").trim().toUpperCase() === "OWNER";
-  if (!owner && !influencer) return null;
+  const roleCode = membership.data.role_code_snapshot ?? profile.role;
+  const owner = profile.is_master_owner === true || String(roleCode || "").trim().toUpperCase().endsWith("_OWNER");
   const repaired = await supabaseAdmin.from("recruitment_user_access").upsert({
     company_id: companyId,
     profile_id: profile.id,
     can_access_workforce: true,
     can_access_hr: owner,
-    can_access_all_locations: true,
+    can_access_all_locations: membership.data.has_all_location_access,
     can_manage_masters: owner,
     can_manage_ads: owner,
     can_manage_users: owner,

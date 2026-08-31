@@ -313,7 +313,7 @@ export async function POST(request: Request) {
         ? supabaseAdmin.from("recruitment_roles").select("id,stream").eq("company_id", companyId).in("id", roleIds)
         : Promise.resolve({ data: [], error: null }),
       universalProfile.role_id
-        ? supabaseAdmin.from("user_roles").select("location_access_mode")
+        ? supabaseAdmin.from("user_roles").select("id,code,location_access_mode")
             .eq("id", universalProfile.role_id).eq("is_active", true).maybeSingle()
         : Promise.resolve({ data: null, error: null }),
       loadMainDashboardStations(companyId)
@@ -407,6 +407,23 @@ export async function POST(request: Request) {
     if (persistedScope.data.can_access_all_locations !== inheritUniversalScope) {
       throw new Error("Recruitment station scope could not be saved.");
     }
+
+    const membership = await supabaseAdmin.from("company_product_memberships").upsert({
+      company_id: companyId,
+      product_code: "recruit",
+      user_id: universalProfile.id,
+      role_id: universalProfile.role_id,
+      role_code_snapshot: mainRole.data?.code ?? universalProfile.role,
+      source_system: "person_override",
+      has_all_location_access: universalAllLocations || inheritUniversalScope,
+      location_scope_ids: universalAllLocations || inheritUniversalScope
+        ? []
+        : Array.isArray(universalProfile.location_scope_ids) ? universalProfile.location_scope_ids : [],
+      is_active: body.isActive !== false,
+      assigned_by: session.profileId,
+      updated_at: new Date().toISOString()
+    }, { onConflict: "company_id,product_code,user_id" });
+    if (membership.error) throw membership.error;
 
     const [clearedLocations, clearedRoles] = await Promise.all([
       supabaseAdmin.from("recruitment_user_locations").delete().eq("user_access_id", access.data.id),

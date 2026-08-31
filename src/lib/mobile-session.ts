@@ -165,17 +165,22 @@ async function previewContext(
     .eq("company_id", companyId).eq("profile_id", profileId).eq("is_active", true).maybeSingle();
   if (access.error) throw new Error(access.error.message);
   if (!access.data) return null;
-  const [allowlist, locations, roles, workforceConfig, universalRole] = await Promise.all([
+  const [allowlist, locations, roles, workforceConfig, membership] = await Promise.all([
     profile.data.email ? supabaseAdmin.from("recruitment_login_allowlist").select("access_template")
       .eq("company_id", companyId).ilike("email", profile.data.email).eq("is_active", true).maybeSingle()
       : Promise.resolve({ data: null, error: null }),
     supabaseAdmin.from("recruitment_user_locations").select("location_id").eq("user_access_id", access.data.id),
     supabaseAdmin.from("recruitment_user_roles").select("role_id").eq("user_access_id", access.data.id),
     loadWorkforceConfig(companyId),
-    loadUniversalRole(companyId, profile.data.role_id, profile.data.role)
+    supabaseAdmin.from("company_product_memberships")
+      .select("role_id,role_code_snapshot,has_all_location_access,location_scope_ids")
+      .eq("company_id", companyId).eq("product_code", "recruit")
+      .eq("user_id", profileId).eq("is_active", true).maybeSingle()
   ]);
-  const failure = [allowlist, locations, roles].find((item) => item.error);
+  const failure = [allowlist, locations, roles, membership].find((item) => item.error);
   if (failure?.error) throw new Error(failure.error.message);
+  if (!membership.data) return null;
+  const universalRole = await loadUniversalRole(companyId, membership.data.role_id, membership.data.role_code_snapshot);
   const accessTemplate = (allowlist.data?.access_template || (
     access.data.can_manage_users ? "admin" :
     access.data.can_access_hr && !access.data.can_access_workforce ? "hr" :
@@ -207,9 +212,9 @@ async function previewContext(
   const locationScope = await effectiveLocationScope({
     companyId,
     isMasterOwner: isOwner,
-    roleLocationAccessMode: universalRole?.location_access_mode,
-    universalStationIds: Array.isArray(profile.data.location_scope_ids)
-      ? profile.data.location_scope_ids
+    roleLocationAccessMode: membership.data.has_all_location_access ? "all_locations" : universalRole?.location_access_mode,
+    universalStationIds: Array.isArray(membership.data.location_scope_ids)
+      ? membership.data.location_scope_ids
       : [],
     inheritUniversalScope: access.data.can_access_all_locations,
     selectedRecruitmentLocationIds: (locations.data ?? []).map((row) => row.location_id)
@@ -310,17 +315,22 @@ export async function resolveMobileSession(
   if (!displayName) displayName = profile.data?.full_name ?? null;
   email = profile.data?.email ?? null;
 
-  const access = await supabaseAdmin
-    .from("recruitment_user_access")
-    .select(
-      "id, can_access_workforce, can_access_hr, can_access_all_locations, can_manage_masters, can_manage_ads, can_manage_users"
-    )
-    .eq("company_id", companyId)
-    .eq("profile_id", session.data.profile_id)
-    .eq("is_active", true)
-    .maybeSingle();
+  const [access, membership] = await Promise.all([
+    supabaseAdmin
+      .from("recruitment_user_access")
+      .select("id, can_access_workforce, can_access_hr, can_access_all_locations, can_manage_masters, can_manage_ads, can_manage_users")
+      .eq("company_id", companyId)
+      .eq("profile_id", session.data.profile_id)
+      .eq("is_active", true)
+      .maybeSingle(),
+    supabaseAdmin.from("company_product_memberships")
+      .select("role_id,role_code_snapshot,has_all_location_access,location_scope_ids")
+      .eq("company_id", companyId).eq("product_code", "recruit")
+      .eq("user_id", session.data.profile_id).eq("is_active", true).maybeSingle()
+  ]);
   if (access.error) throw new Error(access.error.message);
-  if (!access.data) return null;
+  if (membership.error) throw new Error(membership.error.message);
+  if (!access.data || !membership.data) return null;
 
   const allowlist = email ? await supabaseAdmin.from("recruitment_login_allowlist")
     .select("access_template")
@@ -360,8 +370,8 @@ export async function resolveMobileSession(
 
   const universalRole = await loadUniversalRole(
     companyId,
-    profile.data.role_id,
-    profile.data.role
+    membership.data.role_id,
+    membership.data.role_code_snapshot
   );
   const workforceFunction = workforceFunctionFor(
     session.data.profile_id,
@@ -392,9 +402,9 @@ export async function resolveMobileSession(
   const locationScope = await effectiveLocationScope({
     companyId,
     isMasterOwner: isOwner,
-    roleLocationAccessMode: universalRole?.location_access_mode,
-    universalStationIds: Array.isArray(profile.data.location_scope_ids)
-      ? profile.data.location_scope_ids
+    roleLocationAccessMode: membership.data.has_all_location_access ? "all_locations" : universalRole?.location_access_mode,
+    universalStationIds: Array.isArray(membership.data.location_scope_ids)
+      ? membership.data.location_scope_ids
       : [],
     inheritUniversalScope: access.data.can_access_all_locations,
     selectedRecruitmentLocationIds: (locations.data ?? []).map((row) => row.location_id)
