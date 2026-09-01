@@ -1,5 +1,6 @@
 import type { MobileSessionContext } from "./mobile-session";
 import { supabaseAdmin } from "./supabase-admin";
+import { WORKFORCE_PROFILE_TABLE } from "./workforce-register";
 
 export const recruitmentManualPunchPrefix = "Recruitment field duty:";
 export const minimumFieldDutyPunchSeparationMs = 5 * 60 * 1000;
@@ -135,7 +136,7 @@ async function recruiterBiometricId(companyId: string, profileId: string) {
       .select("biometric_id").eq("company_id", companyId).ilike("email", email).maybeSingle();
     if (employee.error) throw employee.error;
     if (employee.data?.biometric_id) return String(employee.data.biometric_id);
-    const executive = await supabaseAdmin.from("field_executives")
+    const executive = await supabaseAdmin.from(WORKFORCE_PROFILE_TABLE)
       .select("biometric_id").eq("company_id", companyId).ilike("email", email).maybeSingle();
     if (executive.error) throw executive.error;
     if (executive.data?.biometric_id) return String(executive.data.biometric_id);

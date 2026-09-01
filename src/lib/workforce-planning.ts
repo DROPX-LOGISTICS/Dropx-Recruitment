@@ -1,4 +1,5 @@
 import { supabaseAdmin } from "./supabase-admin";
+import { WORKFORCE_PROFILE_TABLE } from "./workforce-register";
 
 export const WORKFORCE_TRAINING_DAYS = 14;
 export const WORKFORCE_COOLING_DAYS = 7;
@@ -144,7 +145,7 @@ export async function loadWorkforcePlanning(options: {
   }
 
   const executivePages = await Promise.all(chunks(stationIds, 100).map((ids) =>
-    supabaseAdmin!.from("field_executives")
+    supabaseAdmin!.from(WORKFORCE_PROFILE_TABLE)
       .select("id,full_name,dropx_id,biometric_id,date_of_join,location_id,onboarding_status,is_active,created_by,stations(station_code,station_name)")
       .eq("company_id", options.companyId)
       .in("location_id", ids)

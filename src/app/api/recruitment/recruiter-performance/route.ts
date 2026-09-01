@@ -12,6 +12,7 @@ import { supabaseAdmin } from "@/lib/supabase-admin";
 import { loadAllSupabaseRows } from "@/lib/supabase-pagination";
 import { loadWorkforceConfig, workforceFunctionFor } from "@/lib/recruitment-workforce-config";
 import { influencerCandidateStage, influencerMilestoneProgress } from "@/lib/influencer-program";
+import { WORKFORCE_PROFILE_TABLE } from "@/lib/workforce-register";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -160,7 +161,7 @@ export async function GET(request: Request) {
         .eq("company_id", companyId).eq("event_type", "workforce_joining_record")
         .order("created_at", { ascending:false }).order("id", { ascending:false })
         .range(pageFrom, pageTo) as any),
-      loadAllSupabaseRows<FieldExecutiveRow>((pageFrom, pageTo) => supabaseAdmin!.from("field_executives")
+      loadAllSupabaseRows<FieldExecutiveRow>((pageFrom, pageTo) => supabaseAdmin!.from(WORKFORCE_PROFILE_TABLE)
         .select("id,full_name,mobile,email,date_of_join,dropx_id,biometric_id,designation,onboarding_status,is_active,created_by,created_at,updated_at,stations(station_code)")
         .eq("company_id", companyId).order("id", { ascending:true }).range(pageFrom, pageTo) as any)
     ]);

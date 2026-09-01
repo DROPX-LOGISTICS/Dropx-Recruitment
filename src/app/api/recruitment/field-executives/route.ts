@@ -10,6 +10,7 @@ import {
   canCloseWorkforceInvitation,
   canRequestWorkforceProfileChange
 } from "@/lib/workforce-profile-changes";
+import { WORKFORCE_PROFILE_TABLE } from "@/lib/workforce-register";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -108,7 +109,7 @@ export async function GET(request: Request) {
       if (!stationIds.length) return NextResponse.json({ executives: [], total: 0, page, scope, facets: { statuses: [], stations: [], designations: [] } });
     }
 
-    let query = supabaseAdmin.from("field_executives")
+    let query = supabaseAdmin.from(WORKFORCE_PROFILE_TABLE)
       .select("id,full_name,mobile_country_code,mobile,email,date_of_join,dropx_id,biometric_id,designation,is_active,onboarding_status,onboarding_submitted_at,onboarding_reviewed_at,onboarding_reviewed_by,onboarding_review_remarks,profile_return_remarks,location_id,created_by,created_at,updated_at,stations(station_code,station_name,cluster)", { count: "exact" })
       .eq("company_id", companyId);
     if (creatorIds.length) query = query.in("created_by", creatorIds);
@@ -141,7 +142,7 @@ export async function GET(request: Request) {
     ]);
     const approvalExecutiveIds = [...new Set(approvalRequests.map((item: any) => item.field_executive_id).filter(Boolean))];
     const approvalExecutives = approvalExecutiveIds.length
-      ? await supabaseAdmin.from("field_executives")
+      ? await supabaseAdmin.from(WORKFORCE_PROFILE_TABLE)
           .select("id,full_name,mobile_country_code,mobile,email,date_of_join,dropx_id,biometric_id,designation,is_active,onboarding_status,location_id,stations(station_code,station_name,cluster)")
           .eq("company_id", companyId)
           .in("id", approvalExecutiveIds)
@@ -392,7 +393,7 @@ export async function PATCH(request: Request) {
       if (!fieldExecutiveId) throw new Error("Workforce invitation is required.");
       if (!category || !reasonCode) throw new Error("Choose why this invitation is being closed.");
 
-      const target = await supabaseAdmin.from("field_executives")
+      const target = await supabaseAdmin.from(WORKFORCE_PROFILE_TABLE)
         .select("id,created_by,location_id,is_active,onboarding_status,onboarding_submitted_at")
         .eq("company_id", companyId)
         .eq("id", fieldExecutiveId)
@@ -474,7 +475,7 @@ export async function PATCH(request: Request) {
     if (action !== "request_change") throw new Error("Profile change action is invalid.");
     const fieldExecutiveId = clean(body.id, 80);
     if (!fieldExecutiveId) throw new Error("Field Executive profile is required.");
-    const target = await supabaseAdmin.from("field_executives")
+    const target = await supabaseAdmin.from(WORKFORCE_PROFILE_TABLE)
       .select("id,full_name,mobile_country_code,mobile,email,date_of_join,location_id,designation,created_by,onboarding_status,stations(station_code)")
       .eq("company_id", companyId)
       .eq("id", fieldExecutiveId)
@@ -487,8 +488,8 @@ export async function PATCH(request: Request) {
 
     const proposed = await requestedProfileValues(companyId, session, body);
     const [mobileDuplicate, emailDuplicate, pendingRequest] = await Promise.all([
-      supabaseAdmin.from("field_executives").select("id").eq("company_id", companyId).eq("mobile", proposed.mobile).neq("id", fieldExecutiveId).limit(1),
-      supabaseAdmin.from("field_executives").select("id").eq("company_id", companyId).ilike("email", proposed.email).neq("id", fieldExecutiveId).limit(1),
+      supabaseAdmin.from(WORKFORCE_PROFILE_TABLE).select("id").eq("company_id", companyId).eq("mobile", proposed.mobile).neq("id", fieldExecutiveId).limit(1),
+      supabaseAdmin.from(WORKFORCE_PROFILE_TABLE).select("id").eq("company_id", companyId).ilike("email", proposed.email).neq("id", fieldExecutiveId).limit(1),
       supabaseAdmin.from("workforce_profile_change_requests").select("id").eq("company_id", companyId).eq("field_executive_id", fieldExecutiveId).eq("status", "pending").maybeSingle()
     ]);
     const duplicateError = mobileDuplicate.error || emailDuplicate.error || pendingRequest.error;

@@ -5,6 +5,7 @@ import { parseExpenseReceiptDataUrl } from "@/lib/field-expense";
 import { canSubmitFieldTravel, canSubmitTravelForDutyDay, fieldTravelStatus, maskBankAccount, validateTravelApprovalChain } from "@/lib/field-travel";
 import { canUseRecruitmentMenu, recruitmentSession, requiredEnv } from "@/lib/recruitment-api";
 import { supabaseAdmin } from "@/lib/supabase-admin";
+import { WORKFORCE_PROFILE_TABLE } from "@/lib/workforce-register";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -37,7 +38,7 @@ async function registeredBank(companyId: string, profileId: string, requestedAcc
   const recruiterProfile = profile.data;
 
   let source: any = null;
-  let profileType: "employee" | "field_executive" = "employee";
+  let profileType: "employee" | "field_executive" | "workforce" = "employee";
   if (recruiterProfile.employee_id) {
     const employee = await supabaseAdmin.from("employees")
       .select("id,full_name,bank_account_no,ifsc")
@@ -46,12 +47,15 @@ async function registeredBank(companyId: string, profileId: string, requestedAcc
     source = employee.data;
   }
   if (!source && recruiterProfile.email) {
-    const executive = await supabaseAdmin.from("field_executives")
-      .select("id,full_name,bank_account_no,ifsc_code")
+    const executive = await supabaseAdmin.from(WORKFORCE_PROFILE_TABLE)
+      .select("id,full_name,bank_account_no,ifsc_code,source_profile_type,compatibility_mode")
       .eq("company_id", companyId).ilike("email", recruiterProfile.email).maybeSingle();
     if (executive.error) throw executive.error;
     source = executive.data;
-    profileType = "field_executive";
+    profileType = executive.data?.compatibility_mode === true
+      && executive.data?.source_profile_type === "field_executive"
+      ? "field_executive"
+      : "workforce";
   }
   if (!source) throw new Error("No registered workforce bank profile is linked. Complete your profile in DropX One.");
   const account = String(source.bank_account_no ?? "").trim();

@@ -31,6 +31,7 @@ import {
 import { canUseRecruitmentMenu, recruitmentSession, requiredEnv } from "@/lib/recruitment-api";
 import { uploadRecruitmentDocument } from "@/lib/recruitment-documents";
 import { supabaseAdmin } from "@/lib/supabase-admin";
+import { WORKFORCE_PROFILE_TABLE } from "@/lib/workforce-register";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -139,7 +140,7 @@ async function latestRows(companyId: string) {
 }
 
 async function loadOwnershipMaps(companyId: string): Promise<DaOwnershipMaps> {
-  const executives = await supabaseAdmin!.from("field_executives")
+  const executives = await supabaseAdmin!.from(WORKFORCE_PROFILE_TABLE)
     .select("id,created_by,full_name,email,mobile,dropx_id,biometric_id,location_id,stations(station_code)")
     .eq("company_id", companyId);
   if (executives.error) throw new Error(executives.error.message);

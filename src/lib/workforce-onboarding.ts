@@ -1,9 +1,10 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { sendFieldExecutiveOnboardingWhatsApp } from "./field-executive-whatsapp";
 import { isFieldExecutiveDesignation } from "./field-executive-designations";
 import { supabaseAdmin } from "./supabase-admin";
 import { onboardingApplicationSource } from "./workforce-onboarding-review";
 import { assertWorkforceDesignationRoute } from "./designation-register-routing";
+import { canonicalWorkforceIdentity, WORKFORCE_PROFILE_TABLE } from "./workforce-register";
 
 type OnboardingSession = {
   profileId: string;
@@ -67,9 +68,9 @@ async function existingIdentity(companyId: string, mobile: string, email: string
   if (!supabaseAdmin) throw new Error("Supabase is not configured.");
   const columns = "id,mobile,email,dropx_id,biometric_id,onboarding_status,designation,location_id";
   const [mobileResult, emailResult] = await Promise.all([
-    supabaseAdmin.from("field_executives").select(columns)
+    supabaseAdmin.from(WORKFORCE_PROFILE_TABLE).select(columns)
       .eq("company_id", companyId).eq("mobile", mobile).limit(2),
-    supabaseAdmin.from("field_executives").select(columns)
+    supabaseAdmin.from(WORKFORCE_PROFILE_TABLE).select(columns)
       .eq("company_id", companyId).ilike("email", email).limit(2)
   ]);
   if (mobileResult.error || emailResult.error) {
@@ -108,7 +109,7 @@ function existingResult(existing: ExistingFieldExecutive) {
 async function nextBiometricId(companyId: string) {
   if (!supabaseAdmin) throw new Error("Supabase is not configured.");
   const result = await supabaseAdmin
-    .from("field_executives")
+    .from(WORKFORCE_PROFILE_TABLE)
     .select("biometric_id")
     .eq("company_id", companyId)
     .not("biometric_id", "is", null);
@@ -249,7 +250,9 @@ export async function createWorkforceFieldExecutive(
   const registrationToken = randomBytes(32).toString("base64url");
   const registrationTokenHash = createHash("sha256").update(registrationToken).digest("hex");
   const now = new Date().toISOString();
-  const inserted = await supabaseAdmin.from("field_executives").insert({
+  const workforceId = randomUUID();
+  const inserted = await supabaseAdmin.from(WORKFORCE_PROFILE_TABLE).insert({
+    ...canonicalWorkforceIdentity(workforceId, selectedDesignation.data.id),
     company_id: companyId,
     full_name: fullName,
     mobile_country_code: mobileCountryCode,
