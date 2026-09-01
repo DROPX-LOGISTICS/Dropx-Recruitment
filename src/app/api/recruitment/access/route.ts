@@ -23,18 +23,47 @@ export const dynamic = "force-dynamic";
 
 async function loadMainUserRoles(companyId: string) {
   if (!supabaseAdmin) throw new Error("Supabase is not configured.");
-  let result = await supabaseAdmin.from("user_roles")
+  return supabaseAdmin.from("user_roles")
     .select("id,code,name,location_access_mode,parent_role_id,is_system,is_active")
     .eq("company_id", companyId)
+    .eq("product_code", "recruit")
     .eq("is_active", true)
     .order("code");
-  if (!result.error && !(result.data ?? []).length) {
-    result = await supabaseAdmin.from("user_roles")
-      .select("id,code,name,location_access_mode,parent_role_id,is_system,is_active")
+}
+
+async function loadRecruitDesignationAccess(companyId: string) {
+  if (!supabaseAdmin) throw new Error("Supabase is not configured.");
+  const [designations, policies, roles] = await Promise.all([
+    supabaseAdmin.from("designations")
+      .select("id,code,name,designation_category:designation_categories!designations_designation_category_id_fkey!inner(people_module,is_active)")
+      .eq("company_id", companyId)
       .eq("is_active", true)
-      .order("code");
-  }
-  return result;
+      .eq("designation_category.people_module", "people_hr")
+      .eq("designation_category.is_active", true)
+      .order("name"),
+    supabaseAdmin.from("designation_product_access_policies")
+      .select("designation_id,is_enabled,default_role_id,location_access_mode")
+      .eq("company_id", companyId)
+      .eq("product_code", "recruit"),
+    loadMainUserRoles(companyId)
+  ]);
+  if (designations.error || policies.error || roles.error) throw new Error(designations.error?.message ?? policies.error?.message ?? roles.error?.message ?? "Recruit designation access could not be loaded.");
+  const policyByDesignation = new Map((policies.data ?? []).map((policy) => [policy.designation_id, policy]));
+  const roleById = new Map((roles.data ?? []).map((role) => [role.id, role]));
+  return {
+    rows: (designations.data ?? []).map((designation) => {
+      const policy = policyByDesignation.get(designation.id);
+      const role = policy?.default_role_id ? roleById.get(policy.default_role_id) ?? null : null;
+      return {
+        designationId: designation.id,
+        designationCode: designation.code,
+        designationName: designation.name,
+        enabled: Boolean(policy?.is_enabled),
+        role
+      };
+    }),
+    roles: roles.data ?? []
+  };
 }
 
 export async function GET(request: Request) {
@@ -45,7 +74,7 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
     const companyId = requiredEnv("RECRUITMENT_COMPANY_ID");
-    const [allowlist, access, mobile, locationScopes, roleScopes, locations, roles, registeredProfiles, mainUserRoles, workforceDesignations, mainStations, workforceConfig, universalPermissions] = await Promise.all([
+    const [allowlist, access, mobile, locationScopes, roleScopes, locations, roles, registeredProfiles, recruitDesignationAccess, productMemberships, workforceDesignations, mainStations, workforceConfig, universalPermissions] = await Promise.all([
       supabaseAdmin.from("recruitment_login_allowlist").select("email,display_name,access_template,is_active,created_at").eq("company_id", companyId).order("email"),
       supabaseAdmin.from("recruitment_user_access").select("id,profile_id,can_access_workforce,can_access_hr,can_access_all_locations,can_manage_masters,can_manage_ads,can_manage_users,is_active,profiles(full_name,email,mobile,phone,employee_id,role,role_id,location_scope_ids,is_active,is_master_owner)").eq("company_id", companyId),
       supabaseAdmin.from("recruitment_mobile_users").select("mobile_e164,display_name,is_active,profile_id").eq("company_id", companyId).order("display_name"),
@@ -55,15 +84,18 @@ export async function GET(request: Request) {
       supabaseAdmin.from("recruitment_roles").select("id,code,name,stream,is_active").eq("company_id", companyId).eq("is_active", true).order("code"),
       supabaseAdmin.from("profiles").select("id,full_name,email,mobile,phone,employee_id,role,role_id,reports_to_user_id,location_scope_ids,invite_method,is_active,is_master_owner")
         .eq("company_id", companyId).eq("is_active", true).order("full_name"),
-      loadMainUserRoles(companyId),
+      loadRecruitDesignationAccess(companyId),
+      supabaseAdmin.from("company_product_memberships").select("user_id,role_id,role_code_snapshot,has_all_location_access,location_scope_ids,is_active").eq("company_id", companyId).eq("product_code", "recruit").eq("is_active", true),
       supabaseAdmin.from("designations").select("code,name,is_active")
         .eq("company_id", companyId).eq("is_active", true).order("code"),
       loadMainDashboardStations(companyId),
       loadWorkforceConfig(companyId),
       loadUniversalRecruitmentPermissions(companyId)
     ]);
-    const failure = [allowlist, access, mobile, locationScopes, roleScopes, locations, roles, registeredProfiles, mainUserRoles, workforceDesignations].find((item) => item.error);
+    const failure = [allowlist, access, mobile, locationScopes, roleScopes, locations, roles, registeredProfiles, productMemberships, workforceDesignations].find((item) => item.error);
     if (failure?.error) throw failure.error;
+    const mainUserRoles = recruitDesignationAccess.roles;
+    const productMembershipByUser = new Map((productMemberships.data ?? []).map((membership) => [membership.user_id, membership]));
     const locationsByAccess = new Map<string, string[]>();
     for (const row of locationScopes.data ?? []) {
       locationsByAccess.set(row.user_access_id, [...(locationsByAccess.get(row.user_access_id) ?? []), row.location_id]);
@@ -75,9 +107,9 @@ export async function GET(request: Request) {
     const mappedAccess = (access.data ?? []).map((row) => {
       const profile = Array.isArray(row.profiles) ? row.profiles[0] : row.profiles;
       const mainRole = matchUniversalRole(
-        mainUserRoles.data ?? [],
-        profile?.role_id,
-        profile?.role
+        mainUserRoles,
+        productMembershipByUser.get(row.profile_id)?.role_id,
+        productMembershipByUser.get(row.profile_id)?.role_code_snapshot
       );
       const isOwner = profile?.is_master_owner === true
         || String(mainRole?.code ?? profile?.role ?? "").trim().toUpperCase() === "OWNER";
@@ -125,9 +157,9 @@ export async function GET(request: Request) {
       roles: roles.data ?? [],
       registeredProfiles: (registeredProfiles.data ?? []).map((profile) => {
         const mainRole = matchUniversalRole(
-          mainUserRoles.data ?? [],
-          profile.role_id,
-          profile.role
+          mainUserRoles,
+          productMembershipByUser.get(profile.id)?.role_id,
+          productMembershipByUser.get(profile.id)?.role_code_snapshot
         );
         const scopeIds = Array.isArray(profile.location_scope_ids) ? profile.location_scope_ids : [];
         return {
@@ -150,7 +182,8 @@ export async function GET(request: Request) {
                 .map((station) => ({ id: station.id, code: station.code, name: station.name }))
         };
       }),
-      mainUserRoles: mainUserRoles.data ?? [],
+      mainUserRoles,
+      designationAccess: recruitDesignationAccess.rows,
       workforceDesignations: [...new Map(
         [...(workforceDesignations.data ?? []), ...workforceConfig.recruitmentDesignations]
           .map((item) => [String(item.code).toUpperCase(), {
@@ -189,6 +222,35 @@ export async function POST(request: Request) {
     if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     const body = await request.json() as Record<string, unknown>;
     const companyId = requiredEnv("RECRUITMENT_COMPANY_ID");
+    if (body.action === "configure_designation_role") {
+      if (!canUseRecruitmentMenu(session, "User Roles", "edit")) return NextResponse.json({ error: "Edit access to User Roles is required." }, { status: 403 });
+      const designationId = String(body.designationId ?? "").trim();
+      if (!/^[0-9a-f-]{36}$/i.test(designationId)) return NextResponse.json({ error: "Select a valid People designation." }, { status: 400 });
+      const [designation, policy] = await Promise.all([
+        supabaseAdmin.from("designations").select("id,code,name,designation_category:designation_categories!designations_designation_category_id_fkey!inner(people_module,is_active)").eq("company_id", companyId).eq("id", designationId).eq("is_active", true).eq("designation_category.people_module", "people_hr").eq("designation_category.is_active", true).maybeSingle(),
+        supabaseAdmin.from("designation_product_access_policies").select("id,default_role_id,location_access_mode,is_enabled").eq("company_id", companyId).eq("designation_id", designationId).eq("product_code", "recruit").maybeSingle()
+      ]);
+      if (designation.error || !designation.data) return NextResponse.json({ error: designation.error?.message ?? "People designation was not found." }, { status: 400 });
+      if (policy.error || !policy.data?.is_enabled) return NextResponse.json({ error: policy.error?.message ?? "Enable Recruit in People Designation Master first." }, { status: 400 });
+      let roleId = policy.data.default_role_id as string | null;
+      if (!roleId) {
+        const normalized = String(designation.data.code ?? designation.data.name).toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 28);
+        const roleCode = `RECRUIT_${normalized}`;
+        const existing = await supabaseAdmin.from("user_roles").select("id").eq("company_id", companyId).eq("code", roleCode).maybeSingle();
+        if (existing.error) throw existing.error;
+        roleId = existing.data?.id ?? null;
+        if (!roleId) {
+          const created = await supabaseAdmin.from("user_roles").insert({ company_id: companyId, product_code: "recruit", code: roleCode, name: designation.data.name, parent_role_id: null, location_access_mode: policy.data.location_access_mode === "all_locations" ? "all_locations" : "role_based", is_system: false, is_active: true }).select("id").single();
+          if (created.error || !created.data) throw created.error ?? new Error("Recruit role could not be created.");
+          roleId = created.data.id;
+        }
+        const updated = await supabaseAdmin.from("designation_product_access_policies").update({ default_role_id: roleId, updated_by: session.profileId, updated_at: new Date().toISOString() }).eq("id", policy.data.id);
+        if (updated.error) throw updated.error;
+      }
+      const reconciled = await supabaseAdmin.rpc("reconcile_designation_product_memberships", { p_company_id: companyId, p_designation_id: designationId, p_actor_user_id: session.profileId });
+      if (reconciled.error) throw reconciled.error;
+      return NextResponse.json({ saved: true, roleId });
+    }
     if (body.action === "save_universal_role") {
       if (!canUseRecruitmentMenu(session, "User Roles", "edit")) return NextResponse.json({ error: "Edit access to User Roles is required." }, { status: 403 });
       const roleId = String(body.roleId ?? "").trim();
@@ -272,13 +334,25 @@ export async function POST(request: Request) {
     const inheritUniversalScope = universalProfile.is_master_owner === true
       ? true
       : requestedScopeMode === "inherit";
+    const currentProductMembership = await supabaseAdmin.from("company_product_memberships")
+      .select("role_id,role_code_snapshot,has_all_location_access,location_scope_ids,source_system")
+      .eq("company_id", companyId)
+      .eq("product_code", "recruit")
+      .eq("user_id", universalProfile.id)
+      .eq("is_active", true)
+      .maybeSingle();
+    if (currentProductMembership.error) throw currentProductMembership.error;
+    const recruitRoleId = currentProductMembership.data?.role_id ?? null;
+    if (!universalProfile.is_master_owner && !recruitRoleId) {
+      return NextResponse.json({ error: "Enable Recruit for this person's People designation before granting Recruit access." }, { status: 400 });
+    }
     const universalPermissionModel = await loadUniversalRecruitmentPermissions(companyId);
-    const rolePermission = universalProfile.role_id
-      ? universalPermissionModel.roles[universalProfile.role_id]
-        ?? universalPermissionModel.roles[String(universalProfile.role ?? "").trim().toUpperCase()]
-      : universalPermissionModel.roles[String(universalProfile.role ?? "").trim().toUpperCase()];
+    const rolePermission = recruitRoleId
+      ? universalPermissionModel.roles[recruitRoleId]
+        ?? universalPermissionModel.roles[String(currentProductMembership.data?.role_code_snapshot ?? "").trim().toUpperCase()]
+      : null;
     const isOwner = universalProfile.is_master_owner === true
-      || String(universalProfile.role ?? "").trim().toUpperCase() === "OWNER";
+      || String(currentProductMembership.data?.role_code_snapshot ?? "").trim().toUpperCase().endsWith("_OWNER");
     const effectiveWorkspaceFlags = isOwner
       ? { can_access_workforce: true, can_access_hr: true }
       : activateRecruitmentUserWorkspace(existingRecruitmentAccess.data, workspace);
@@ -312,9 +386,9 @@ export async function POST(request: Request) {
       roleIds.length
         ? supabaseAdmin.from("recruitment_roles").select("id,stream").eq("company_id", companyId).in("id", roleIds)
         : Promise.resolve({ data: [], error: null }),
-      universalProfile.role_id
+      recruitRoleId
         ? supabaseAdmin.from("user_roles").select("id,code,location_access_mode")
-            .eq("id", universalProfile.role_id).eq("is_active", true).maybeSingle()
+            .eq("company_id", companyId).eq("id", recruitRoleId).eq("product_code", "recruit").eq("is_active", true).maybeSingle()
         : Promise.resolve({ data: null, error: null }),
       loadMainDashboardStations(companyId)
     ]);
@@ -331,10 +405,13 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Workforce users can only be assigned blue-collar roles." }, { status: 400 });
     }
     const universalAllLocations = universalProfile.is_master_owner === true
+      || currentProductMembership.data?.has_all_location_access === true
       || mainRole.data?.location_access_mode === "all_locations";
     if (!inheritUniversalScope && !universalAllLocations && locationIds.length) {
       const universalStationIds = new Set(
-        Array.isArray(universalProfile.location_scope_ids) ? universalProfile.location_scope_ids : []
+        Array.isArray(currentProductMembership.data?.location_scope_ids)
+          ? currentProductMembership.data.location_scope_ids
+          : Array.isArray(universalProfile.location_scope_ids) ? universalProfile.location_scope_ids : []
       );
       const allowedCodes = new Set(mainStations
         .filter((station) => universalStationIds.has(station.id))
@@ -412,13 +489,15 @@ export async function POST(request: Request) {
       company_id: companyId,
       product_code: "recruit",
       user_id: universalProfile.id,
-      role_id: universalProfile.role_id,
-      role_code_snapshot: mainRole.data?.code ?? universalProfile.role,
+      role_id: recruitRoleId,
+      role_code_snapshot: mainRole.data?.code ?? currentProductMembership.data?.role_code_snapshot,
       source_system: "person_override",
       has_all_location_access: universalAllLocations || inheritUniversalScope,
       location_scope_ids: universalAllLocations || inheritUniversalScope
         ? []
-        : Array.isArray(universalProfile.location_scope_ids) ? universalProfile.location_scope_ids : [],
+        : Array.isArray(currentProductMembership.data?.location_scope_ids)
+          ? currentProductMembership.data.location_scope_ids
+          : Array.isArray(universalProfile.location_scope_ids) ? universalProfile.location_scope_ids : [],
       is_active: body.isActive !== false,
       assigned_by: session.profileId,
       updated_at: new Date().toISOString()

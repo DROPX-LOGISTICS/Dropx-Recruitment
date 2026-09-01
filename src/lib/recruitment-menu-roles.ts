@@ -628,9 +628,9 @@ export async function saveUniversalRecruitmentRolePermissions(
   if (!supabaseAdmin) throw new Error("Supabase is not configured.");
   const requestedWorkspaces = sanitizeWorkspaces(workspaces);
   const role = await supabaseAdmin.from("user_roles").select("id,code")
-    .eq("id", roleId).eq("is_active", true).maybeSingle();
+    .eq("company_id", companyId).eq("id", roleId).eq("product_code", "recruit").eq("is_active", true).maybeSingle();
   if (role.error) throw new Error(role.error.message);
-  if (!role.data) throw new Error("Choose an active universal company role.");
+  if (!role.data) throw new Error("Choose an active Recruit designation role.");
   let sanitizedMenuAccess = sanitizeMenuAccess(menuAccess);
   const sanitizedMenuActions = sanitizeMenuActions(menuActions, sanitizedMenuAccess);
   if (menuActions && typeof menuActions === "object") {
