@@ -16,7 +16,10 @@ describe("workforce onboarding profile changes", () => {
     expect(workforceOnboardingStage({ is_active: false, onboarding_status: "under_review" }).label).toBe("Under review");
   });
 
-  it("only grants approval to a Zonal Head or Owner", () => {
+  it("grants approval to the canonical Business Head or Owner", () => {
+    expect(canApproveWorkforceProfileChanges({ designationCode: "BH" })).toBe(true);
+    expect(canApproveWorkforceProfileChanges({ designationCode: "BUSINESS_HEAD" })).toBe(true);
+    // Existing sessions using the retired label remain valid during cutover.
     expect(canApproveWorkforceProfileChanges({ designationCode: "ZONAL_HEAD" })).toBe(true);
     expect(canApproveWorkforceProfileChanges({ isOwner: true, designationCode: "TELE_CALLER" })).toBe(true);
     expect(canApproveWorkforceProfileChanges({ designationCode: "TELE_CALLER" })).toBe(false);

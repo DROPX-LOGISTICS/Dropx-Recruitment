@@ -432,7 +432,7 @@ export async function PATCH(request: Request) {
 
     if (action === "review_change") {
       if (!canApproveWorkforceProfileChanges(session)) {
-        return NextResponse.json({ error: "Only a Zonal Head or Owner can approve profile corrections." }, { status: 403 });
+        return NextResponse.json({ error: "Only a Business Head or Owner can approve profile corrections." }, { status: 403 });
       }
       const requestId = clean(body.requestId, 80);
       const decision = clean(body.decision, 20).toLowerCase();
@@ -531,10 +531,10 @@ export async function PATCH(request: Request) {
       remarks: `Invitation-detail correction requested by ${session.displayName || session.email || "recruitment user"}.`,
       actor_user_id: session.profileId,
       source_portal: "recruit",
-      metadata: { change_request_id: inserted.data.id, approval_roles: ["ZONAL_HEAD", "OWNER"] }
+      metadata: { change_request_id: inserted.data.id, approval_roles: ["BH", "BUSINESS_HEAD", "OWNER"] }
     });
     if (event.error) throw new Error(event.error.message);
-    return NextResponse.json({ request: inserted.data, message: "Profile correction sent to the Zonal Head and Owner for approval." });
+    return NextResponse.json({ request: inserted.data, message: "Profile correction sent to the Business Head and Owner for approval." });
   } catch (error) {
     console.error("Field Executive profile change failed", error);
     return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to process the profile correction." }, { status: 400 });

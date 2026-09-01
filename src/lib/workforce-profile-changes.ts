@@ -39,7 +39,14 @@ export function workforceOnboardingStatusLabel(value: unknown) {
 
 export function canApproveWorkforceProfileChanges(actor: WorkforceProfileChangeActor) {
   const designation = String(actor.designationCode ?? "").trim().toUpperCase();
-  return actor.isOwner === true || ["ZONAL_HEAD", "ZONE_HEAD", "ZH"].includes(designation);
+  return actor.isOwner === true || [
+    "BH",
+    "BUSINESS_HEAD",
+    // Compatibility aliases remain accepted for already-issued sessions.
+    "ZONAL_HEAD",
+    "ZONE_HEAD",
+    "ZH"
+  ].includes(designation);
 }
 
 export function canRequestWorkforceProfileChange(profileId: string, createdBy: unknown) {
