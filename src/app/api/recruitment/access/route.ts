@@ -51,18 +51,20 @@ async function loadRecruitDesignationAccess(companyId: string) {
   const policyByDesignation = new Map((policies.data ?? []).map((policy) => [policy.designation_id, policy]));
   const roleById = new Map((roles.data ?? []).map((role) => [role.id, role]));
   return {
-    rows: (designations.data ?? []).map((designation) => {
+    rows: (designations.data ?? []).flatMap((designation) => {
       const policy = policyByDesignation.get(designation.id);
+      if (!policy?.is_enabled) return [];
       const role = policy?.default_role_id ? roleById.get(policy.default_role_id) ?? null : null;
-      return {
+      return [{
         designationId: designation.id,
         designationCode: designation.code,
         designationName: designation.name,
-        enabled: Boolean(policy?.is_enabled),
+        enabled: true,
         role
-      };
+      }];
     }),
-    roles: roles.data ?? []
+    roles: roles.data ?? [],
+    locationRole: (roles.data ?? []).find((role) => role.code === "RECRUIT_LOCATION") ?? null
   };
 }
 
@@ -184,6 +186,7 @@ export async function GET(request: Request) {
       }),
       mainUserRoles,
       designationAccess: recruitDesignationAccess.rows,
+      locationAccess: { role: recruitDesignationAccess.locationRole },
       workforceDesignations: [...new Map(
         [...(workforceDesignations.data ?? []), ...workforceConfig.recruitmentDesignations]
           .map((item) => [String(item.code).toUpperCase(), {
@@ -222,6 +225,18 @@ export async function POST(request: Request) {
     if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     const body = await request.json() as Record<string, unknown>;
     const companyId = requiredEnv("RECRUITMENT_COMPANY_ID");
+    if (body.action === "configure_location_role") {
+      if (!canUseRecruitmentMenu(session, "User Roles", "edit")) return NextResponse.json({ error: "Edit access to User Roles is required." }, { status: 403 });
+      const existing = await supabaseAdmin.from("user_roles").select("id").eq("company_id", companyId).eq("code", "RECRUIT_LOCATION").maybeSingle();
+      if (existing.error) throw existing.error;
+      let roleId = existing.data?.id ?? null;
+      if (!roleId) {
+        const created = await supabaseAdmin.from("user_roles").insert({ company_id: companyId, product_code: "recruit", code: "RECRUIT_LOCATION", name: "Location Account", parent_role_id: null, location_access_mode: "role_based", is_system: false, is_active: true }).select("id").single();
+        if (created.error || !created.data) throw created.error ?? new Error("Recruit location role could not be created.");
+        roleId = created.data.id;
+      }
+      return NextResponse.json({ saved: true, roleId });
+    }
     if (body.action === "configure_designation_role") {
       if (!canUseRecruitmentMenu(session, "User Roles", "edit")) return NextResponse.json({ error: "Edit access to User Roles is required." }, { status: 403 });
       const designationId = String(body.designationId ?? "").trim();

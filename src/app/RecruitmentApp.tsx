@@ -2715,9 +2715,11 @@ function UserRoleMaster({data,token,stream,canEdit,reload}:{data:any;token:strin
   const [page,setPage]=useState(1);
   const [openGroups,setOpenGroups]=useState<string[]>(["Overview","Leads & talent","Onboarding","Performance","Hiring & advertising","Master","Administration"]);
   const selectedRole=roles.find((role:any)=>role.id===roleId);
+  const selectedDesignation=designationRows.find((entry:any)=>entry.role?.id===roleId);
+  const locationRole=data?.locationAccess?.role??null;
+  const selectedLocation=Boolean(locationRole&&locationRole.id===roleId);
   const configured=data?.universalRolePermissions?.[roleId];
   const locked=String(selectedRole?.code||"").toUpperCase()==="OWNER";
-  const roleById=new Map(roles.map((role:any)=>[role.id,role]));
   const pageSize=10;
   const pageCount=Math.max(1,Math.ceil(designationRows.length/pageSize));
   const pageDesignations=designationRows.slice((page-1)*pageSize,page*pageSize);
@@ -2819,11 +2821,22 @@ function UserRoleMaster({data,token,stream,canEdit,reload}:{data:any;token:strin
     }catch(error){setNotice(error instanceof Error?error.message:"Unable to prepare Recruit access.");}
     finally{setSaving(false);}
   }
+  async function prepareLocationRole(){
+    setSaving(true);setNotice("");
+    try{
+      const response=await fetch("/api/recruitment/access",{method:"POST",headers:{...headers(token),"Content-Type":"application/json"},body:JSON.stringify({action:"configure_location_role"})});
+      const payload=await response.json();
+      if(!response.ok)throw new Error(payload.error||"Unable to prepare Location Account access.");
+      await reload();
+      if(payload.roleId)setRoleId(String(payload.roleId));
+    }catch(error){setNotice(error instanceof Error?error.message:"Unable to prepare Location Account access.");}
+    finally{setSaving(false);}
+  }
   return <section className="connections-view universal-access-view">
     <section className="content-card leads-card role-list-card">
-      <div className="access-section-head role-list-toolbar"><div><h2>Recruit designation access</h2><p>Every active People designation is visible. People controls Recruit eligibility; Recruit controls its Workforce and HR menus.</p></div><a className="universal-role-link" href="https://people.dropxlogistics.com/settings/designations" target="_blank" rel="noreferrer">People Designation Master ↗</a></div>
+      <div className="access-section-head role-list-toolbar"><div><h2>Recruit designation access</h2><p>Only People designations enabled for Recruit appear here. Recruit controls their Workforce and HR menus.</p></div><a className="universal-role-link" href="https://people.dropxlogistics.com/settings/designations" target="_blank" rel="noreferrer">People Designation Master ↗</a></div>
       {notice?<p className="scope-warning">{notice}</p>:null}
-      <div className="table-scroll"><table><thead><tr><th>Designation code</th><th>Designation</th><th>Eligibility</th><th>Location access</th><th>{stream==="hr"?"HR":"Workforce"} access</th><th>Permission summary</th><th>Action</th></tr></thead><tbody>{pageDesignations.map((entry:any)=>{
+      <div className="table-scroll"><table><thead><tr><th>Designation</th><th>Portal status</th><th>Location scope</th><th>{stream==="hr"?"HR":"Workforce"} access</th><th>Permission summary</th><th>Action</th></tr></thead><tbody>{pageDesignations.map((entry:any)=>{
         const role=entry.role;
         const permission=role?data?.universalRolePermissions?.[role.id]:null;
         const isOwner=role&&String(role.code).toUpperCase()==="OWNER";
@@ -2831,21 +2844,17 @@ function UserRoleMaster({data,token,stream,canEdit,reload}:{data:any;token:strin
         const currentCount=permission?Object.keys(permission.menuAccess?.[stream]??{}).length:0;
         const enabled=isOwner||currentCount>0;
         const summary=isOwner?`${menuCount} menus · All access`:permission?`${currentCount} configured menus`:"Not configured";
-        return <tr key={entry.designationId}><td><b>{entry.designationCode}</b></td><td>{entry.designationName}</td><td><span className={entry.enabled?"universal-state":"universal-state inactive"}>{entry.enabled?(role?"Configured":"Setup required"):"Not enabled"}</span></td><td>{role?locationText(role):"—"}</td><td><span className={enabled?"universal-state":"universal-state inactive"}>{enabled?"Enabled":"No access"}</span></td><td>{role?summary:"—"}</td><td>{!canEdit?<span className="locked-role">View only</span>:!entry.enabled?<a className="universal-role-link" href={`https://people.dropxlogistics.com/settings/designations?search=${encodeURIComponent(entry.designationCode)}`} target="_blank" rel="noreferrer">Enable in People ↗</a>:role?<button className="manage-access-button" onClick={()=>setRoleId(role.id)}>Manage</button>:<button className="manage-access-button" disabled={saving} onClick={()=>void prepareDesignationRole(entry.designationId)}>{saving?"Preparing…":"Set up"}</button>}</td></tr>;
+        return <tr key={entry.designationId}><td><b>{entry.designationName}</b><small>{entry.designationCode}</small></td><td><span className="universal-state">{role?"Configured":"Setup required"}</span></td><td>{role?locationText(role):"—"}</td><td><span className={enabled?"universal-state":"universal-state inactive"}>{enabled?"Enabled":"No access"}</span></td><td>{role?summary:"—"}</td><td>{!canEdit?<span className="locked-role">View only</span>:role?<button className="manage-access-button" onClick={()=>setRoleId(role.id)}>Configure menus</button>:<button className="manage-access-button" disabled={saving} onClick={()=>void prepareDesignationRole(entry.designationId)}>{saving?"Preparing…":"Set up menus"}</button>}</td></tr>;
       })}</tbody></table></div>
       <div className="role-list-pagination"><span>Showing {designationRows.length?((page-1)*pageSize)+1:0}–{Math.min(page*pageSize,designationRows.length)} of {designationRows.length}</span><div><button disabled={page<=1} onClick={()=>setPage((current)=>Math.max(1,current-1))}>Previous</button><span>Page {page} of {pageCount}</span><button disabled={page>=pageCount} onClick={()=>setPage((current)=>Math.min(pageCount,current+1))}>Next</button></div></div>
+      <div className="access-section-head role-list-toolbar"><div><h2>Location Account</h2><p>Dashboard grants Recruit to station mailboxes. Configure only which Recruit menus those mailboxes can use.</p></div></div>
+      <div className="table-scroll"><table><thead><tr><th>Account type</th><th>Portal status</th><th>Location scope</th><th>Permission summary</th><th>Action</th></tr></thead><tbody><tr><td><b>Location Account</b><small>Dashboard-managed station mailbox</small></td><td><span className="universal-state">{locationRole?"Configured":"Setup required"}</span></td><td>Dashboard-managed locations</td><td>{locationRole?(data?.universalRolePermissions?.[locationRole.id]?"Menus configured":"Not configured"):"—"}</td><td>{!canEdit?<span className="locked-role">View only</span>:locationRole?<button className="manage-access-button" onClick={()=>setRoleId(locationRole.id)}>Configure menus</button>:<button className="manage-access-button" disabled={saving} onClick={()=>void prepareLocationRole()}>{saving?"Preparing…":"Set up menus"}</button>}</td></tr></tbody></table></div>
     </section>
     {roleId&&selectedRole?<div className="modal-backdrop" onMouseDown={(event)=>{if(event.currentTarget===event.target&&!saving)closeEditor();}}>
-      <section className="modal role-permission-modal" role="dialog" aria-modal="true" aria-label={`Manage ${selectedRole.name}`}>
-        <header className="modal-header"><div><h2>Manage user role</h2><p>Universal role identity remains controlled by the main dashboard. Configure only Recruitment access below.</p></div><button aria-label="Close" disabled={saving} onClick={closeEditor}>×</button></header>
+      <section className="modal role-permission-modal" role="dialog" aria-modal="true" aria-label={`Configure ${selectedDesignation?.designationName||selectedRole.name} menus`}>
+        <header className="modal-header"><div><h2>{selectedDesignation?.designationName||selectedRole.name} menu access</h2><p>{selectedLocation?"Dashboard assigns the station mailbox. Configure only Recruit menus and actions below.":"This designation comes from People. Configure only Recruit menus and actions below."}</p></div><button aria-label="Close" disabled={saving} onClick={closeEditor}>×</button></header>
         <div className="role-modal-body">
-          <div className="role-identity-grid">
-            <label>Role code<input value={selectedRole.code||""} readOnly/></label>
-            <label>Role name<input value={selectedRole.name||""} readOnly/></label>
-            <label>Reporting role<select value={selectedRole.parent_role_id||"top"} disabled><option value={selectedRole.parent_role_id||"top"}>{(selectedRole.parent_role_id?(roleById.get(selectedRole.parent_role_id) as any)?.name:"Top level")||"Top level"}</option></select></label>
-            <label>Location access<select value={selectedRole.location_access_mode||"assigned_locations"} disabled><option value={selectedRole.location_access_mode||"assigned_locations"}>{locationText(selectedRole)}</option></select></label>
-            <label>Status<select value={selectedRole.is_active===false?"inactive":"active"} disabled><option value={selectedRole.is_active===false?"inactive":"active"}>{selectedRole.is_active===false?"Inactive":"Active"}</option></select></label>
-          </div>
+          <div className="access-inheritance-note"><b>{selectedDesignation?.designationName||selectedRole.name}</b> · {selectedLocation?"Location Account · station scope comes from Dashboard":`${selectedDesignation?.designationCode||"People designation"} · station scope comes from the person’s People profile.`}</div>
           <div className="permission-editor-head"><div><h3>{stream==="hr"?"HR":"Workforce"} menu access</h3><p>Set View, Add and Edit independently, then use Mobile to choose which permitted menus appear in the app. Enabling Mobile automatically includes View.</p></div><input className="master-search" placeholder="Search permissions…" value={search} onChange={(event)=>setSearch(event.target.value)}/></div>
           <div className="role-permission-table"><table><thead><tr><th>{stream==="hr"?"HR":"Workforce"} menu</th><th><label className="matrix-head-check"><span>All</span><input aria-label="All visible menus all access" checked={everyPermission(visibleMenus.map((item:any)=>item.id))} className={!everyPermission(visibleMenus.map((item:any)=>item.id))&&somePermission(visibleMenus.map((item:any)=>item.id))?"matrix-checkbox partial":"matrix-checkbox"} type="checkbox" onChange={(event)=>setAllActions(visibleMenus.map((item:any)=>item.id),event.target.checked)}/></label></th>{permissionActions.map((action)=><th key={action.key}><label className="matrix-head-check"><span>{action.label}</span><input aria-label={`All visible menus ${action.label}`} checked={everyAction(visibleMenus.map((item:any)=>item.id),action.key)} className={!everyAction(visibleMenus.map((item:any)=>item.id),action.key)&&someAction(visibleMenus.map((item:any)=>item.id),action.key)?"matrix-checkbox partial":"matrix-checkbox"} type="checkbox" onChange={(event)=>updateAction(visibleMenus.map((item:any)=>item.id),action.key,event.target.checked)}/></label></th>)}<th><label className="matrix-head-check"><span>Mobile</span><input aria-label="All visible menus Mobile" checked={everyMobile(visibleMenus.map((item:any)=>item.id))} className={!everyMobile(visibleMenus.map((item:any)=>item.id))&&someMobile(visibleMenus.map((item:any)=>item.id))?"matrix-checkbox partial":"matrix-checkbox"} type="checkbox" onChange={(event)=>setMobile(visibleMenus.map((item:any)=>item.id),event.target.checked)}/></label></th></tr></thead><tbody>
             <tr className="permission-all-row"><td><b>All visible menus</b><small>Tick a column to update the current filtered list.</small></td>{permissionCells(visibleMenus.map((item:any)=>item.id),"All visible menus")}</tr>
@@ -2859,7 +2868,7 @@ function UserRoleMaster({data,token,stream,canEdit,reload}:{data:any;token:strin
           {!configured?<p className="scope-warning">This universal role is still using legacy Recruitment access. Saving will activate this role-specific Web and Mobile matrix without changing its users.</p>:null}
           {notice?<p className="connection-notice">{notice}</p>:null}
         </div>
-        <footer className="role-modal-footer"><a href="https://dashboard.dropxlogistics.com/users?section=roles" target="_blank" rel="noreferrer">Edit universal role ↗</a><div><button disabled={saving} onClick={closeEditor}>Cancel</button><button className="primary-action" disabled={saving} onClick={()=>void save()}>{saving?"Saving…":"Save role"}</button></div></footer>
+        <footer className="role-modal-footer"><span>{selectedLocation?"Location identity and station scope are read-only here.":"People designation identity is read-only here."}</span><div><button disabled={saving} onClick={closeEditor}>Cancel</button><button className="primary-action" disabled={saving} onClick={()=>void save()}>{saving?"Saving…":"Save menu access"}</button></div></footer>
       </section>
     </div>:null}
   </section>;
