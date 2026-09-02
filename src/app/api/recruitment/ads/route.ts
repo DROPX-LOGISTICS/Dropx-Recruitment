@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { canUseRecruitmentMenu, recruitmentSession, requiredEnv } from "@/lib/recruitment-api";
+import { canAccessLead, canUseRecruitmentMenu, recruitmentSession, requiredEnv } from "@/lib/recruitment-api";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 
 export const dynamic = "force-dynamic";
@@ -11,11 +11,11 @@ function adWithinScope(session: NonNullable<Awaited<ReturnType<typeof recruitmen
   const location = Array.isArray(ad.recruitment_locations) ? ad.recruitment_locations[0] : ad.recruitment_locations;
   const adStream = String(role?.stream || "");
   if (stream && adStream !== stream) return false;
-  if (adStream === "workforce" && !session.workforce) return false;
-  if (adStream === "hr" && !session.hr) return false;
-  if (!session.allLocations && (!location?.id || !session.locationIds.includes(location.id))) return false;
-  if (session.roleIds.length && (!role?.id || !session.roleIds.includes(role.id))) return false;
-  return true;
+  return canAccessLead(session, {
+    stream: adStream,
+    location_id: location?.id ?? ad.location_id,
+    role_id: role?.id ?? ad.role_id
+  });
 }
 
 export async function GET(request: Request) {

@@ -9,6 +9,7 @@ import {
   recommendedMetaFormForDesignation
 } from "@/lib/meta-form-matching";
 import { activeCompanyUserOptions, isRecruitmentUserWorkspaceEnabled } from "@/lib/recruitment-user-workspaces";
+import { workspaceRoleCatalog } from "@/lib/recruitment-role-catalog";
 import { HR_PIPELINE_STAGES, candidateJourney, hrLifecycleFilterOptions, hrQueueStatusQuery } from "@/lib/hr-ats-product";
 import { allowedHrFirstCallOutcomeCodes } from "@/lib/hr-recruitment-lifecycle";
 import {
@@ -223,6 +224,16 @@ export default function RecruitmentApp() {
       .then((payload) => setPreviewUsers(payload.users ?? []))
       .catch(() => setPreviewUsers([]));
   }, [token, user?.canPreviewUsers]);
+
+  const refreshOptions = useCallback(async () => {
+    if (!token) return;
+    const response = await fetch("/api/recruitment/options", {
+      headers: headers(token),
+      cache: "no-store"
+    });
+    if (!response.ok) return;
+    setOptions(await response.json());
+  }, [token]);
 
   function changePreview(profileId: string) {
     if (profileId) localStorage.setItem("dropx_recruitment_preview_profile", profileId);
@@ -582,17 +593,16 @@ export default function RecruitmentApp() {
     return groups;
   }, []);
   const showLeads = ["All Leads","Archived Leads","No Response / Call Back","Interviews","Unmapped","Screening","Documents","Offers","Hired"].includes(active);
-  const streamRoles = (options.roles ?? []).filter((item:any) => item.stream === stream);
+  const streamRoles = workspaceRoleCatalog(options.roles ?? [], stream);
   const selectedStations = new Set(filters.station.split(",").filter(Boolean));
   const selectedClusters = new Set(filters.cluster.split(",").filter(Boolean));
-  const selectedRoles = new Set(filters.role.split(",").filter(Boolean));
   const facetLocationCounts = new Map((facets?.locations ?? []).map((item:any) => [item.value, item.count]));
   const facetClusterCounts = new Map((facets?.clusters ?? []).map((item:any) => [item.value, item.count]));
   const facetRoleCounts = new Map((facets?.roles ?? []).map((item:any) => [item.value, item.count]));
   const availableLocations = facets ? options.locations.filter((item:any) => facetLocationCounts.has(item.code) || selectedStations.has(item.code)) : options.locations;
   const allClusters = [...new Set<string>(options.locations.map((item:any)=>String(item.cluster||"")).filter(Boolean))];
   const availableClusters = facets ? allClusters.filter((value) => facetClusterCounts.has(value) || selectedClusters.has(value)) : allClusters;
-  const availableRoles = facets ? streamRoles.filter((item:any) => facetRoleCounts.has(item.code) || selectedRoles.has(item.code)) : streamRoles;
+  const availableRoles = streamRoles;
   const withCount = (label: string, count: unknown) => typeof count === "number" ? `${label} (${count.toLocaleString("en-IN")})` : label;
   const applyLeadFilters = () => { setPage(1); void load({ page: 1 }); };
   const resetLeadFilters = () => {
@@ -687,14 +697,14 @@ export default function RecruitmentApp() {
       </section> : null}
       {active === "Station Directory" ? <StationDirectory data={moduleData} /> : null}
       {active === "Station Contacts" ? <MasterManager kind="contact" data={moduleData} token={token} canEdit={canEditMenu(stream,"Station Contacts")} reload={load} /> : null}
-      {active === "Roles" ? <MasterManager key={`roles-${stream}`} kind="role" stream={stream} data={moduleData} token={token} canEdit={canEditMenu(stream,"Roles")} reload={load} /> : null}
-      {active === "Lead Status Master" ? <LeadStatusMaster data={moduleData} token={token} canEdit={canEditMenu(stream,"Lead Status Master")} reload={async()=>{await load();const response=await fetch("/api/recruitment/options",{headers:headers(token),cache:"no-store"});if(response.ok)setOptions(await response.json());}} /> : null}
+      {active === "Roles" ? <MasterManager key={`roles-${stream}`} kind="role" stream={stream} data={moduleData} token={token} canEdit={canEditMenu(stream,"Roles")} reload={async()=>{await load();await refreshOptions();}} /> : null}
+      {active === "Lead Status Master" ? <LeadStatusMaster data={moduleData} token={token} canEdit={canEditMenu(stream,"Lead Status Master")} reload={async()=>{await load();await refreshOptions();}} /> : null}
       {active === "HR Lifecycle" && stream === "hr" ? <HrLifecycleMaster data={moduleData} token={token} canEdit={canEditMenu("hr","HR Lifecycle")} reload={load} /> : null}
       {active === "Notification Rules" ? <NotificationRulesMaster data={moduleData} token={token} canEdit={canEditMenu(stream,"Notification Rules")} reload={load} /> : null}
       {active === "Job Requisitions" && stream === "hr" ? <JobRequisitionsWorkspace data={moduleData} token={token} options={options} canAdd={canAddMenu("hr","Job Requisitions")} canEdit={canEditMenu("hr","Job Requisitions")} canApprove={menuLevel("hr","Job Requisitions")==="all"} reload={load} /> : null}
       {active === "Resume Intake" && stream === "hr" ? <ResumeIntakeWorkspace data={moduleData} token={token} canAdd={canAddMenu("hr","Resume Intake")} canEdit={canEditMenu("hr","Resume Intake")} reload={load} openCandidate={(id)=>{pendingCandidateOpen.current=id;navigate("All Leads");}} /> : null}
       {active === "AI Fit Review" && stream === "hr" ? <AiFitReviewWorkspace data={moduleData} token={token} canAdd={canAddMenu("hr","AI Fit Review")} canEdit={canEditMenu("hr","AI Fit Review")} reload={load} /> : null}
-      {active === "Active Ads" ? <ActiveAds data={moduleData} token={token} stream={stream} reload={load} canDirectPost={menuLevel(stream,"Active Ads")==="all"} openPublisher={()=>setDirectAdPublisher(true)} request={(type, ad)=>setAdRequest({type,ad})} /> : null}
+      {active === "Active Ads" ? <ActiveAds data={moduleData} token={token} stream={stream} roleCatalog={streamRoles} reload={load} canDirectPost={menuLevel(stream,"Active Ads")==="all"} openPublisher={()=>setDirectAdPublisher(true)} request={(type, ad)=>setAdRequest({type,ad})} /> : null}
       {active === "Ad Requests" ? <AdRequests data={moduleData} token={token} reload={load} openForm={() => setAdRequest({type:"new_ad"})} /> : null}
       {active === "User Roles" ? <UserRoleMaster data={moduleData} token={token} stream={stream} canEdit={canEditMenu(stream,"User Roles")} reload={load} /> : null}
       {active === "Access Control" ? <TeamAccess data={moduleData} token={token} stream={stream} canEdit={canEditMenu(stream,"Access Control")} reload={load} /> : null}
@@ -3385,10 +3395,11 @@ function LeadProfile({ data, busy, options, canManage, close, save, notify }: {
   </section></div>;
 }
 
-function ActiveAds({ data, token, stream, reload, request, canDirectPost, openPublisher }: {
+function ActiveAds({ data, token, stream, roleCatalog, reload, request, canDirectPost, openPublisher }: {
   data: any;
   token: string;
   stream: "workforce" | "hr";
+  roleCatalog: Array<{ code: string; name: string; stream: "workforce" | "hr" }>;
   reload: () => Promise<void>;
   request: (type: "new_ad" | "budget_change" | "stop_ad" | "resume_ad", ad?: any) => void;
   canDirectPost: boolean;
@@ -3463,7 +3474,11 @@ function ActiveAds({ data, token, stream, reload, request, canDirectPost, openPu
     return [...merged.values()].sort((left, right) => left.code.localeCompare(right.code));
   }, [ads, data?.stationOptions]);
   const clusters = [...new Set(stationCatalog.map((item) => item.cluster).filter(Boolean))].sort() as string[];
-  const roles = [...new Set(ads.map((item:any)=>item.recruitment_roles?.code).filter(Boolean))].sort() as string[];
+  const roles = useMemo(() => workspaceRoleCatalog(
+    roleCatalog,
+    stream,
+    ads.map((item:any) => item.recruitment_roles).filter(Boolean)
+  ), [ads, roleCatalog, stream]);
   const states = [...new Set(ads.map((item:any)=>String(item.status||"unknown").toUpperCase()))].sort() as string[];
   const selectedAdStates = new Set(status.split(",").filter(Boolean));
   const selectedAdStations = new Set(station.split(",").filter(Boolean));
@@ -3557,7 +3572,7 @@ function ActiveAds({ data, token, stream, reload, request, canDirectPost, openPu
       <article className="ad-stat stat-total-spend"><span>Lifetime Spend</span><strong>₹{filtered.lifetimeSpend.toLocaleString("en-IN",{maximumFractionDigits:0})}</strong><small>historical total</small></article>
       <article className="ad-stat stat-leads"><span>Mapped Leads</span><strong>{filtered.leads.toLocaleString("en-IN")}</strong><small>unique dashboard leads</small></article>
     </div>
-    <div className="toolbar filter-toolbar ad-filter-toolbar"><input placeholder="Search ad, station or role…" value={search} onChange={(event)=>setSearch(event.target.value)}/><MultiFilter label="Status" value={status} options={states.map((item)=>[item,statusLabel(item)])} onChange={setStatus}/><MultiFilter label="Stations" value={station} options={stationCatalog.map((item)=>[item.code,`${item.code} — ${item.name}`])} onChange={setStation}/><MultiFilter label="Clusters" value={cluster} options={clusters.map((item)=>[item,item])} onChange={setCluster}/><MultiFilter label="Roles" value={role} options={roles.map((item)=>[item,item])} onChange={setRole}/><FilterSelect label="Sort" value={sort} options={[["today","Today spend"],["week","7-day spend"],["lifetime","Lifetime spend"],["budget","Daily budget"],["leads","Leads"],["newest","Newest"],["name","Ad name"],["station","Station"]]} onChange={setSort}/>{hasFilters?<button className="secondary-action" onClick={resetFilters}>Clear</button>:null}<span>{visible.length} of {ads.length}</span></div>
+    <div className="toolbar filter-toolbar ad-filter-toolbar"><input placeholder="Search ad, station or role…" value={search} onChange={(event)=>setSearch(event.target.value)}/><MultiFilter label="Status" value={status} options={states.map((item)=>[item,statusLabel(item)])} onChange={setStatus}/><MultiFilter label="Stations" value={station} options={stationCatalog.map((item)=>[item.code,`${item.code} — ${item.name}`])} onChange={setStation}/><MultiFilter label="Clusters" value={cluster} options={clusters.map((item)=>[item,item])} onChange={setCluster}/><MultiFilter label="Roles" value={role} options={roles.map((item)=>[item.code,`${item.code} — ${item.name}`])} onChange={setRole}/><FilterSelect label="Sort" value={sort} options={[["today","Today spend"],["week","7-day spend"],["lifetime","Lifetime spend"],["budget","Daily budget"],["leads","Leads"],["newest","Newest"],["name","Ad name"],["station","Station"]]} onChange={setSort}/>{hasFilters?<button className="secondary-action" onClick={resetFilters}>Clear</button>:null}<span>{visible.length} of {ads.length}</span></div>
     {insightState.loading?<div className="ad-insight-loading">Refreshing today and 7-day Meta insight in the background…</div>:insightState.available===false?<div className="ad-insight-warning">Daily Meta insight is temporarily unavailable. Lifetime values and saved budgets remain visible.{insightState.error?` ${insightState.error}`:""}</div>:null}
     {posterError?<div className="error-banner poster-error">{posterError}<button type="button" onClick={()=>setPosterError("")}>×</button></div>:null}
     <section className="spend-guard-panel"><header><div><span>AD SPEND WATCH</span><h3>Actions</h3></div><small>Click a line for analysis</small></header><div className="guard-list">{visible.filter((item:any)=>["critical","warning"].includes(item.guard?.severity)).sort((a:any,b:any)=>Number(b.guard?.score||0)-Number(a.guard?.score||0)).slice(0,10).map((item:any,index:number)=><details key={item.id} className={`guard-card guard-${item.guard.severity}`}><summary><span className="guard-rank">{index+1}</span><span className={`guard-level guard-${item.guard.severity}`}>{item.guard.severity}</span><span className="guard-ad"><b>{item.ad_name}</b><small>{item.recruitment_locations?.code||"Unmapped"} · {item.recruitment_roles?.code||"Unmapped"}</small></span><strong className="guard-action">{item.guard.title}</strong><span className="guard-facts"><b>{item.guard.evidence?.recentLeads||0}</b><small>7d leads</small></span><span className="guard-facts"><b>₹{Number(item.guard.evidence?.recentSpend||0).toLocaleString("en-IN")}</b><small>7d spend</small></span><em>Why?</em></summary><div className="guard-analysis"><p>{item.guard.explanation||item.guard.reason}</p><dl><span><dt>Previous week</dt><dd>{item.guard.evidence?.previousLeads||0} leads</dd></span><span><dt>Click → lead</dt><dd>{item.guard.evidence?.clickToLead||0}%</dd></span><span><dt>CTR</dt><dd>{item.guard.evidence?.ctr||0}%</dd></span><span><dt>CPL</dt><dd>₹{Number(item.guard.evidence?.cpl||0).toLocaleString("en-IN")}</dd></span><span><dt>SLA pending</dt><dd>{item.guard.evidence?.staleUnattempted||0}</dd></span></dl><button type="button" onClick={()=>setInsightAd(item)}>Full performance</button></div></details>)}</div>{!insightState.loading&&!visible.some((item:any)=>["critical","warning"].includes(item.guard?.severity))?<p className="guard-clear">No action needed from the current evidence.</p>:null}</section>

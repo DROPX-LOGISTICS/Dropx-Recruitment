@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { canUseRecruitmentMenu, recruitmentSession, requiredEnv } from "@/lib/recruitment-api";
+import { canUseRecruitmentMenu, hasFullLeadAccess, recruitmentSession, requiredEnv } from "@/lib/recruitment-api";
 import {
   defaultHiringManagerFor,
   loadMainDashboardHiringManagers,
@@ -18,12 +18,13 @@ export async function GET(request: Request) {
     const session = await recruitmentSession(request);
     if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     const companyId = requiredEnv("RECRUITMENT_COMPANY_ID");
+    const unrestrictedCatalog = hasFullLeadAccess(session);
     let locations = supabaseAdmin.from("recruitment_locations").select("id,code,name,cluster,state").eq("company_id", companyId).eq("is_active", true);
     let roles = supabaseAdmin.from("recruitment_roles").select("id,code,name,stream").eq("company_id", companyId).eq("is_active", true);
-    if (!session.allLocations) locations = locations.in("id", session.locationIds);
-    if (session.roleIds.length) roles = roles.in("id", session.roleIds);
-    else if (session.workforce && !session.hr) roles = roles.eq("stream", "workforce");
-    else if (session.hr && !session.workforce) roles = roles.eq("stream", "hr");
+    if (!unrestrictedCatalog && !session.allLocations) locations = locations.in("id", session.locationIds);
+    if (!unrestrictedCatalog && session.roleIds.length) roles = roles.in("id", session.roleIds);
+    else if (!unrestrictedCatalog && session.workforce && !session.hr) roles = roles.eq("stream", "workforce");
+    else if (!unrestrictedCatalog && session.hr && !session.workforce) roles = roles.eq("stream", "hr");
     const assignees = canUseRecruitmentMenu(session, "All Leads", "all")
       ? supabaseAdmin.from("recruitment_user_access")
           .select("profile_id,profiles(full_name,email)")

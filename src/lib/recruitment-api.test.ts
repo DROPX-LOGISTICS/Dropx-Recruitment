@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { applyLeadScope, canAccessLead, canUseRecruitmentMenu } from "./recruitment-api";
+import { applyLeadScope, canAccessLead, canUseRecruitmentMenu, hasFullLeadAccess } from "./recruitment-api";
 import type { MobileSessionContext } from "./mobile-session";
 
 function session(overrides: Partial<MobileSessionContext> = {}): MobileSessionContext {
@@ -38,6 +38,16 @@ function session(overrides: Partial<MobileSessionContext> = {}): MobileSessionCo
 }
 
 describe("applyLeadScope", () => {
+  it("treats Owner as unrestricted even when a stale access row has old role flags", () => {
+    const owner = session({ allLocations: false, workforce: false, hr: false });
+    expect(hasFullLeadAccess(owner)).toBe(true);
+    expect(canAccessLead(owner, {
+      stream: "workforce",
+      location_id: "new-station",
+      role_id: "new-master-role"
+    })).toBe(true);
+  });
+
   it("does not let historical role rows restrict Owner/Admin all-lead access", () => {
     const query = { in: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis() };
     applyLeadScope(query, session());
@@ -55,6 +65,7 @@ describe("applyLeadScope", () => {
   it("keeps location and role restrictions for scoped users", () => {
     const query = { in: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis() };
     applyLeadScope(query, session({
+      isOwner: false,
       allLocations: false,
       manageUsers: false,
       locationIds: ["station-2"],
@@ -74,6 +85,7 @@ describe("applyLeadScope", () => {
 
   it("enforces stream, location and role scope for non-admin users", () => {
     const scoped = session({
+      isOwner: false,
       manageUsers: false,
       allLocations: false,
       workforce: true,

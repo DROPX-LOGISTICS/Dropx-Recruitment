@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { applyLeadScope, canUseRecruitmentMenu, recruitmentSession, requiredEnv } from "@/lib/recruitment-api";
+import { applyLeadScope, canAccessLead, canUseRecruitmentMenu, recruitmentSession, requiredEnv } from "@/lib/recruitment-api";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { currentRequisitionStatuses, remainingRequisitionOpenings } from "@/lib/hr-recruitment-overview";
 
@@ -71,10 +71,11 @@ function adWithinScope(
   const location = related(ad.recruitment_locations);
   const adStream = String(role?.stream ?? "");
   if (stream && adStream !== stream) return false;
-  if (adStream === "workforce" && !session.workforce) return false;
-  if (adStream === "hr" && !session.hr) return false;
-  if (!session.allLocations && (!location?.id || !session.locationIds.includes(location.id))) return false;
-  if (session.roleIds.length && (!role?.id || !session.roleIds.includes(role.id))) return false;
+  if (!canAccessLead(session, {
+    stream: adStream,
+    location_id: location?.id ?? ad.location_id,
+    role_id: role?.id ?? ad.role_id
+  })) return false;
   if (locationIds && (!ad.location_id || !locationIds.includes(ad.location_id))) return false;
   if (roleIds && (!ad.role_id || !roleIds.includes(ad.role_id))) return false;
   return true;

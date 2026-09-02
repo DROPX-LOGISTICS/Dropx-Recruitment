@@ -70,11 +70,11 @@ function isOwnRequest(session: Session, row: any) {
 
 function withinRequestScope(session: Session, row: any) {
   const stream = requestStream(row);
-  if (stream === "workforce" && !session.workforce) return false;
-  if (stream === "hr" && !session.hr) return false;
-  if (!session.allLocations && (!row.location_id || !session.locationIds.includes(row.location_id))) return false;
-  if (session.roleIds.length && (!row.role_id || !session.roleIds.includes(row.role_id))) return false;
-  return true;
+  return canAccessLead(session, {
+    stream,
+    location_id: row.location_id,
+    role_id: row.role_id
+  });
 }
 
 function visibleRequest(session: Session, row: any) {

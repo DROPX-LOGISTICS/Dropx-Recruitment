@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { canUseRecruitmentMenu, recruitmentSession, requiredEnv } from "@/lib/recruitment-api";
+import { canAccessLead, canUseRecruitmentMenu, recruitmentSession, requiredEnv } from "@/lib/recruitment-api";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { fetchRecentMetaInsights, metaLeadActions } from "@/lib/meta-ad-insights";
 import { defaultGuardPolicy, evaluateAdGuard } from "@/lib/ad-spend-guard";
@@ -13,11 +13,11 @@ function adWithinScope(session: NonNullable<Awaited<ReturnType<typeof recruitmen
   const role = Array.isArray(ad.recruitment_roles) ? ad.recruitment_roles[0] : ad.recruitment_roles;
   const adStream = String(role?.stream || "");
   if (stream && adStream !== stream) return false;
-  if (adStream === "workforce" && !session.workforce) return false;
-  if (adStream === "hr" && !session.hr) return false;
-  if (!session.allLocations && (!ad.location_id || !session.locationIds.includes(ad.location_id))) return false;
-  if (session.roleIds.length && (!ad.role_id || !session.roleIds.includes(ad.role_id))) return false;
-  return true;
+  return canAccessLead(session, {
+    stream: adStream,
+    location_id: ad.location_id,
+    role_id: ad.role_id
+  });
 }
 
 export async function GET(request: Request) {

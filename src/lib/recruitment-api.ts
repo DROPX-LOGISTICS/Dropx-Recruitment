@@ -72,12 +72,13 @@ type LeadAccessTarget = {
 export function hasFullLeadAccess(
   session: Awaited<ReturnType<typeof recruitmentSession>>
 ) {
+  if (!session) return false;
+  // Owner is the company-wide escape hatch even when an older access row still
+  // carries historical station, role or workspace IDs.
+  if (session.isOwner) return true;
   return Boolean(
-    session &&
-    (session.isOwner || (
-      canUseRecruitmentMenu(session, "All Leads", "all", "workforce") &&
-      canUseRecruitmentMenu(session, "All Leads", "all", "hr")
-    )) &&
+    canUseRecruitmentMenu(session, "All Leads", "all", "workforce") &&
+    canUseRecruitmentMenu(session, "All Leads", "all", "hr") &&
     session.allLocations &&
     session.workforce &&
     session.hr

@@ -45,6 +45,19 @@ describe("recruitment routing", () => {
     });
   });
 
+  it("routes a new master designation code without adding it to application code", () => {
+    expect(parseAdRouteWithMasters(
+      "ERSE_RINF_01092026",
+      [{ code: "ERSE" }],
+      [{ code: "RINF", name: "Recruitment Influencer", stream: "workforce", aliases: [] }]
+    )).toEqual({
+      adName: "ERSE_RINF_01092026",
+      stationCode: "ERSE",
+      roleCode: "RINF",
+      stream: "workforce"
+    });
+  });
+
   it("does not invent a station from campaign-like words", () => {
     expect(parseAdRouteWithMasters(
       "Kerala Summer Hiring Delivery Associate",
