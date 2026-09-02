@@ -57,6 +57,8 @@ export async function GET(request: Request) {
           ...location,
           name: source?.name ?? location.name,
           cluster: source?.cluster ?? location.cluster,
+          clusterManager: source?.clusterManager ?? null,
+          clusterManagerStatus: source?.clusterManagerStatus ?? "unmapped",
           state: source?.state ?? location.state,
           mainDashboardStationId: source?.id ?? null,
           manager: source?.managerId ? {

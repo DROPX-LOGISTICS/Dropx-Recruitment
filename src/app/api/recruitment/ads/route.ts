@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { canAccessLead, canUseRecruitmentMenu, recruitmentSession, requiredEnv } from "@/lib/recruitment-api";
 import { supabaseAdmin } from "@/lib/supabase-admin";
+import { loadMainDashboardStations } from "@/lib/main-dashboard-masters";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -32,12 +33,15 @@ export async function GET(request: Request) {
     if (!canUseRecruitmentMenu(session, "Active Ads", "view", stream as "workforce" | "hr" | undefined)) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
-    const result = await supabaseAdmin
-      .from("recruitment_ads")
-      .select("id,meta_ad_id,ad_name,adset_name,campaign_name,location_id,role_id,route_status,status,daily_budget,total_spend,poster_url,created_on,last_synced_at,raw_payload,recruitment_locations(id,code,name,cluster),recruitment_roles(id,code,name,stream)")
-      .eq("company_id", companyId)
-      .order("last_synced_at", { ascending: false })
-      .limit(500);
+    const [result, mainStations] = await Promise.all([
+      supabaseAdmin
+        .from("recruitment_ads")
+        .select("id,meta_ad_id,ad_name,adset_name,campaign_name,location_id,role_id,route_status,status,daily_budget,total_spend,poster_url,created_on,last_synced_at,raw_payload,recruitment_locations(id,code,name,cluster),recruitment_roles(id,code,name,stream)")
+        .eq("company_id", companyId)
+        .order("last_synced_at", { ascending: false })
+        .limit(500),
+      loadMainDashboardStations(companyId)
+    ]);
     if (result.error) throw result.error;
     const ads = (result.data ?? []).filter((ad) => adWithinScope(session, ad, stream));
     const visibleAdIds = new Set(ads.map((ad) => ad.id));
@@ -73,13 +77,22 @@ export async function GET(request: Request) {
       return 0;
     };
     return NextResponse.json({
-      ads: ads.map((ad) => ({
+      ads: ads.map((ad) => {
+        const location = Array.isArray(ad.recruitment_locations) ? ad.recruitment_locations[0] : ad.recruitment_locations;
+        const mainStation = mainStations.find((station) => station.code === String(location?.code ?? "").trim().toUpperCase());
+        return ({
           ...ad,
+          recruitment_locations: location ? {
+            ...location,
+            cluster_manager: mainStation?.clusterManager ?? null,
+            cluster_manager_status: mainStation?.clusterManagerStatus ?? "unmapped"
+          } : location,
           lead_count: counts.get(ad.id) ?? 0,
           reach: numberFrom(ad.raw_payload, ["reach", "total_reach"]),
           impressions: numberFrom(ad.raw_payload, ["impressions", "total_impressions"]),
           raw_payload: undefined
-        })),
+        });
+      }),
       permissions: session.adRequestActions,
       stream
     });

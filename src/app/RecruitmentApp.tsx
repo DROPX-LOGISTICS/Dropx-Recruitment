@@ -3419,7 +3419,7 @@ function ActiveAds({ data, token, stream, roleCatalog, reload, request, canDirec
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("");
   const [station, setStation] = useState("");
-  const [cluster, setCluster] = useState("");
+  const [clusterManager, setClusterManager] = useState("");
   const [role, setRole] = useState("");
   const [sort, setSort] = useState("today");
   const [posterBusy, setPosterBusy] = useState("");
@@ -3457,10 +3457,10 @@ function ActiveAds({ data, token, stream, roleCatalog, reload, request, canDirec
     guard:item.meta_ad_id?insightState.recommendations[item.meta_ad_id]:null
   })),[baseAds,insightState.values,insightState.recommendations]);
   const stationCatalog = useMemo(() => {
-    const merged = new Map<string, { code: string; name: string; cluster: string | null }>();
+    const merged = new Map<string, { code: string; name: string; clusterManagerName: string | null }>();
     for (const item of data?.stationOptions ?? []) {
       if (!item?.code) continue;
-      merged.set(item.code, { code: item.code, name: item.name || item.code, cluster: item.cluster ?? null });
+      merged.set(item.code, { code: item.code, name: item.name || item.code, clusterManagerName: item.clusterManager?.name ?? null });
     }
     for (const item of ads) {
       const code = item.recruitment_locations?.code;
@@ -3468,12 +3468,12 @@ function ActiveAds({ data, token, stream, roleCatalog, reload, request, canDirec
       merged.set(code, {
         code,
         name: item.recruitment_locations?.name || code,
-        cluster: item.recruitment_locations?.cluster ?? null
+        clusterManagerName: item.recruitment_locations?.cluster_manager?.name ?? null
       });
     }
     return [...merged.values()].sort((left, right) => left.code.localeCompare(right.code));
   }, [ads, data?.stationOptions]);
-  const clusters = [...new Set(stationCatalog.map((item) => item.cluster).filter(Boolean))].sort() as string[];
+  const clusterManagers = [...new Set(stationCatalog.map((item) => item.clusterManagerName).filter(Boolean))].sort() as string[];
   const roles = useMemo(() => workspaceRoleCatalog(
     roleCatalog,
     stream,
@@ -3482,16 +3482,16 @@ function ActiveAds({ data, token, stream, roleCatalog, reload, request, canDirec
   const states = [...new Set(ads.map((item:any)=>String(item.status||"unknown").toUpperCase()))].sort() as string[];
   const selectedAdStates = new Set(status.split(",").filter(Boolean));
   const selectedAdStations = new Set(station.split(",").filter(Boolean));
-  const selectedAdClusters = new Set(cluster.split(",").filter(Boolean));
+  const selectedClusterManagers = new Set(clusterManager.split(",").filter(Boolean));
   const selectedAdRoles = new Set(role.split(",").filter(Boolean));
   const visible = useMemo(() => {
     const query = search.trim().toLowerCase();
     return ads.filter((item:any) => {
-      const haystack = [item.ad_name,item.campaign_name,item.adset_name,item.recruitment_locations?.code,item.recruitment_locations?.name,item.recruitment_roles?.code,item.recruitment_roles?.name].join(" ").toLowerCase();
+      const haystack = [item.ad_name,item.campaign_name,item.adset_name,item.recruitment_locations?.code,item.recruitment_locations?.name,item.recruitment_locations?.cluster_manager?.name,item.recruitment_roles?.code,item.recruitment_roles?.name].join(" ").toLowerCase();
       return (!query || haystack.includes(query))
         && (!selectedAdStates.size || selectedAdStates.has(String(item.status||"unknown").toUpperCase()))
         && (!selectedAdStations.size || selectedAdStations.has(item.recruitment_locations?.code))
-        && (!selectedAdClusters.size || selectedAdClusters.has(item.recruitment_locations?.cluster))
+        && (!selectedClusterManagers.size || selectedClusterManagers.has(item.recruitment_locations?.cluster_manager?.name))
         && (!selectedAdRoles.size || selectedAdRoles.has(item.recruitment_roles?.code));
     }).sort((a:any,b:any) => {
       if (sort === "budget") return Number(b.daily_budget||0)-Number(a.daily_budget||0);
@@ -3503,7 +3503,7 @@ function ActiveAds({ data, token, stream, roleCatalog, reload, request, canDirec
       if (sort === "station") return String(a.recruitment_locations?.code||"").localeCompare(String(b.recruitment_locations?.code||""));
       return Number(b.today_spend||0)-Number(a.today_spend||0);
     });
-  }, [ads, cluster, role, search, sort, station, status]);
+  }, [ads, clusterManager, role, search, sort, station, status]);
   const filtered = visible.reduce((summary:any,item:any)=>{
     summary.active += String(item.status||"").toUpperCase()==="ACTIVE" ? 1 : 0;
     summary.dailyBudget += String(item.status||"").toUpperCase()==="ACTIVE" ? Number(item.daily_budget||0) : 0;
@@ -3513,9 +3513,9 @@ function ActiveAds({ data, token, stream, roleCatalog, reload, request, canDirec
     summary.leads += Number(item.lead_count||0);
     return summary;
   },{active:0,dailyBudget:0,todaySpend:0,recentSpend:0,lifetimeSpend:0,leads:0});
-  const hasFilters = Boolean(search||status||station||cluster||role);
+  const hasFilters = Boolean(search||status||station||clusterManager||role);
   function resetFilters(){
-    setSearch("");setStatus("");setStation("");setCluster("");setRole("");
+    setSearch("");setStatus("");setStation("");setClusterManager("");setRole("");
   }
   async function viewPoster(item:any) {
     setPosterBusy(item.id); setPosterError("");
@@ -3572,7 +3572,7 @@ function ActiveAds({ data, token, stream, roleCatalog, reload, request, canDirec
       <article className="ad-stat stat-total-spend"><span>Lifetime Spend</span><strong>₹{filtered.lifetimeSpend.toLocaleString("en-IN",{maximumFractionDigits:0})}</strong><small>historical total</small></article>
       <article className="ad-stat stat-leads"><span>Mapped Leads</span><strong>{filtered.leads.toLocaleString("en-IN")}</strong><small>unique dashboard leads</small></article>
     </div>
-    <div className="toolbar filter-toolbar ad-filter-toolbar"><input placeholder="Search ad, station or role…" value={search} onChange={(event)=>setSearch(event.target.value)}/><MultiFilter label="Status" value={status} options={states.map((item)=>[item,statusLabel(item)])} onChange={setStatus}/><MultiFilter label="Stations" value={station} options={stationCatalog.map((item)=>[item.code,`${item.code} — ${item.name}`])} onChange={setStation}/><MultiFilter label="Clusters" value={cluster} options={clusters.map((item)=>[item,item])} onChange={setCluster}/><MultiFilter label="Roles" value={role} options={roles.map((item)=>[item.code,`${item.code} — ${item.name}`])} onChange={setRole}/><FilterSelect label="Sort" value={sort} options={[["today","Today spend"],["week","7-day spend"],["lifetime","Lifetime spend"],["budget","Daily budget"],["leads","Leads"],["newest","Newest"],["name","Ad name"],["station","Station"]]} onChange={setSort}/>{hasFilters?<button className="secondary-action" onClick={resetFilters}>Clear</button>:null}<span>{visible.length} of {ads.length}</span></div>
+    <div className="toolbar filter-toolbar ad-filter-toolbar"><input placeholder="Search ad, station, manager or role…" value={search} onChange={(event)=>setSearch(event.target.value)}/><MultiFilter label="Status" value={status} options={states.map((item)=>[item,statusLabel(item)])} onChange={setStatus}/><MultiFilter label="Stations" value={station} options={stationCatalog.map((item)=>[item.code,`${item.code} — ${item.name}`])} onChange={setStation}/><MultiFilter label="Cluster managers" value={clusterManager} options={clusterManagers.map((item)=>[item,item])} onChange={setClusterManager}/><MultiFilter label="Roles" value={role} options={roles.map((item)=>[item.code,`${item.code} — ${item.name}`])} onChange={setRole}/><FilterSelect label="Sort" value={sort} options={[["today","Today spend"],["week","7-day spend"],["lifetime","Lifetime spend"],["budget","Daily budget"],["leads","Leads"],["newest","Newest"],["name","Ad name"],["station","Station"]]} onChange={setSort}/>{hasFilters?<button className="secondary-action" onClick={resetFilters}>Clear</button>:null}<span>{visible.length} of {ads.length}</span></div>
     {insightState.loading?<div className="ad-insight-loading">Refreshing today and 7-day Meta insight in the background…</div>:insightState.available===false?<div className="ad-insight-warning">Daily Meta insight is temporarily unavailable. Lifetime values and saved budgets remain visible.{insightState.error?` ${insightState.error}`:""}</div>:null}
     {posterError?<div className="error-banner poster-error">{posterError}<button type="button" onClick={()=>setPosterError("")}>×</button></div>:null}
     <section className="spend-guard-panel"><header><div><span>AD SPEND WATCH</span><h3>Actions</h3></div><small>Click a line for analysis</small></header><div className="guard-list">{visible.filter((item:any)=>["critical","warning"].includes(item.guard?.severity)).sort((a:any,b:any)=>Number(b.guard?.score||0)-Number(a.guard?.score||0)).slice(0,10).map((item:any,index:number)=><details key={item.id} className={`guard-card guard-${item.guard.severity}`}><summary><span className="guard-rank">{index+1}</span><span className={`guard-level guard-${item.guard.severity}`}>{item.guard.severity}</span><span className="guard-ad"><b>{item.ad_name}</b><small>{item.recruitment_locations?.code||"Unmapped"} · {item.recruitment_roles?.code||"Unmapped"}</small></span><strong className="guard-action">{item.guard.title}</strong><span className="guard-facts"><b>{item.guard.evidence?.recentLeads||0}</b><small>7d leads</small></span><span className="guard-facts"><b>₹{Number(item.guard.evidence?.recentSpend||0).toLocaleString("en-IN")}</b><small>7d spend</small></span><em>Why?</em></summary><div className="guard-analysis"><p>{item.guard.explanation||item.guard.reason}</p><dl><span><dt>Previous week</dt><dd>{item.guard.evidence?.previousLeads||0} leads</dd></span><span><dt>Click → lead</dt><dd>{item.guard.evidence?.clickToLead||0}%</dd></span><span><dt>CTR</dt><dd>{item.guard.evidence?.ctr||0}%</dd></span><span><dt>CPL</dt><dd>₹{Number(item.guard.evidence?.cpl||0).toLocaleString("en-IN")}</dd></span><span><dt>SLA pending</dt><dd>{item.guard.evidence?.staleUnattempted||0}</dd></span></dl><button type="button" onClick={()=>setInsightAd(item)}>Full performance</button></div></details>)}</div>{!insightState.loading&&!visible.some((item:any)=>["critical","warning"].includes(item.guard?.severity))?<p className="guard-clear">No action needed from the current evidence.</p>:null}</section>
@@ -3580,7 +3580,9 @@ function ActiveAds({ data, token, stream, roleCatalog, reload, request, canDirec
       {visible.map((item:any)=>{
         const state=String(item.status||"unknown").toLowerCase();
         const canReplaceCreative=canDirectPost&&Boolean(item.meta_ad_id)&&["active","paused"].includes(state);
-        return <tr key={item.id} className={`ad-row ad-row-${state}`}><td><button className="ad-insight-link" onClick={()=>setInsightAd(item)}><b>{item.ad_name}</b><small>View insights →</small></button></td><td>{item.recruitment_locations?.code||"Unmapped"} / {item.recruitment_roles?.code||"Unmapped"}<small>{item.recruitment_locations?.cluster||item.route_status}</small></td><td><span className={`ad-state ad-state-${state}`}>{statusLabel(item.status||"unknown")}</span></td><td>{item.daily_budget==null?"—":`₹${Number(item.daily_budget).toLocaleString("en-IN")}`}</td><td><b className="ad-spend">₹{Number(item.today_spend||0).toLocaleString("en-IN",{maximumFractionDigits:0})}</b><small>{Number(item.today_impressions||0).toLocaleString("en-IN")} impressions</small></td><td>₹{Number(item.recent_spend||0).toLocaleString("en-IN",{maximumFractionDigits:0})}<small>{Number(item.recent_clicks||0).toLocaleString("en-IN")} clicks</small></td><td>₹{Number(item.total_spend||0).toLocaleString("en-IN",{maximumFractionDigits:0})}</td><td><b>{Number(item.lead_count||0).toLocaleString("en-IN")}</b><small>dashboard unique</small></td><td>{item.poster_url||item.meta_ad_id?<div className="creative-actions"><button type="button" className="poster-action" disabled={posterBusy===item.id} onClick={()=>void viewPoster(item)}>{posterBusy===item.id?"Loading…":"View Creative"}</button>{canReplaceCreative?<button type="button" className="creative-replace-action" onClick={()=>setCreativeTarget(item)}>Replace Creative</button>:null}</div>:"—"}</td><td>{canRequestChange?<div className="inline-actions"><button onClick={()=>request("budget_change",item)}>Change budget</button>{state==="active"?<button onClick={()=>request("stop_ad",item)}>{canDirectPost?"Pause ad":"Request pause"}</button>:null}{state==="paused"?<button className="resume-ad-action" onClick={()=>request("resume_ad",item)}>{canDirectPost?"Resume ad":"Request resume"}</button>:null}</div>:<span className="muted-action">View only</span>}</td></tr>;
+        const managerStatus=item.recruitment_locations?.cluster_manager_status;
+        const managerLabel=item.recruitment_locations?.cluster_manager?.name||(managerStatus==="ambiguous"?"Multiple mappings — fix in People":"Not mapped in People");
+        return <tr key={item.id} className={`ad-row ad-row-${state}`}><td><button className="ad-insight-link" onClick={()=>setInsightAd(item)}><b>{item.ad_name}</b><small>View insights →</small></button></td><td>{item.recruitment_locations?.code||"Unmapped"} / {item.recruitment_roles?.code||"Unmapped"}<small>Cluster Manager · {managerLabel}</small></td><td><span className={`ad-state ad-state-${state}`}>{statusLabel(item.status||"unknown")}</span></td><td>{item.daily_budget==null?"—":`₹${Number(item.daily_budget).toLocaleString("en-IN")}`}</td><td><b className="ad-spend">₹{Number(item.today_spend||0).toLocaleString("en-IN",{maximumFractionDigits:0})}</b><small>{Number(item.today_impressions||0).toLocaleString("en-IN")} impressions</small></td><td>₹{Number(item.recent_spend||0).toLocaleString("en-IN",{maximumFractionDigits:0})}<small>{Number(item.recent_clicks||0).toLocaleString("en-IN")} clicks</small></td><td>₹{Number(item.total_spend||0).toLocaleString("en-IN",{maximumFractionDigits:0})}</td><td><b>{Number(item.lead_count||0).toLocaleString("en-IN")}</b><small>dashboard unique</small></td><td>{item.poster_url||item.meta_ad_id?<div className="creative-actions"><button type="button" className="poster-action" disabled={posterBusy===item.id} onClick={()=>void viewPoster(item)}>{posterBusy===item.id?"Loading…":"View Creative"}</button>{canReplaceCreative?<button type="button" className="creative-replace-action" onClick={()=>setCreativeTarget(item)}>Replace Creative</button>:null}</div>:"—"}</td><td>{canRequestChange?<div className="inline-actions"><button onClick={()=>request("budget_change",item)}>Change budget</button>{state==="active"?<button onClick={()=>request("stop_ad",item)}>{canDirectPost?"Pause ad":"Request pause"}</button>:null}{state==="paused"?<button className="resume-ad-action" onClick={()=>request("resume_ad",item)}>{canDirectPost?"Resume ad":"Request resume"}</button>:null}</div>:<span className="muted-action">View only</span>}</td></tr>;
       })}
     </tbody></table></div>
     <div className="active-ads-mobile-list">{visible.map((item:any)=>{const state=String(item.status||"unknown").toLowerCase();const canReplaceCreative=canDirectPost&&Boolean(item.meta_ad_id)&&["active","paused"].includes(state);return <details key={item.id} className={`mobile-ad-card ad-row-${state}`}><summary><span><b>{item.ad_name}</b><small>{item.recruitment_locations?.code||"Unmapped"} / {item.recruitment_roles?.code||"Unmapped"}</small></span><span className="mobile-ad-glance"><em className={`ad-state ad-state-${state}`}>{statusLabel(item.status||"unknown")}</em><strong>₹{Number(item.today_spend||0).toLocaleString("en-IN",{maximumFractionDigits:0})}</strong></span></summary><div className="mobile-ad-details"><dl><span><dt>Daily budget</dt><dd>{item.daily_budget==null?"—":`₹${Number(item.daily_budget).toLocaleString("en-IN")}`}</dd></span><span><dt>7-day spend</dt><dd>₹{Number(item.recent_spend||0).toLocaleString("en-IN",{maximumFractionDigits:0})}</dd></span><span><dt>Lifetime</dt><dd>₹{Number(item.total_spend||0).toLocaleString("en-IN",{maximumFractionDigits:0})}</dd></span><span><dt>Leads</dt><dd>{Number(item.lead_count||0).toLocaleString("en-IN")}</dd></span></dl><div className="mobile-ad-actions"><button onClick={()=>setInsightAd(item)}>View insights</button>{item.poster_url||item.meta_ad_id?<button type="button" disabled={posterBusy===item.id} onClick={()=>void viewPoster(item)}>{posterBusy===item.id?"Loading…":"View creative"}</button>:null}{canReplaceCreative?<button type="button" className="creative-replace-action" onClick={()=>setCreativeTarget(item)}>Replace creative</button>:null}{canRequestChange?<><button onClick={()=>request("budget_change",item)}>Change budget</button>{state==="active"?<button onClick={()=>request("stop_ad",item)}>Request pause</button>:null}{state==="paused"?<button className="resume-ad-action" onClick={()=>request("resume_ad",item)}>Request resume</button>:null}</>:null}</div></div></details>;})}</div>
