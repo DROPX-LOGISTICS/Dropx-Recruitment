@@ -110,7 +110,7 @@ export async function GET(request: Request) {
     }
 
     let query = supabaseAdmin.from(WORKFORCE_PROFILE_TABLE)
-      .select("id,full_name,mobile_country_code,mobile,email,date_of_join,dropx_id,biometric_id,designation,is_active,onboarding_status,onboarding_submitted_at,onboarding_reviewed_at,onboarding_reviewed_by,onboarding_review_remarks,profile_return_remarks,location_id,created_by,created_at,updated_at,stations(station_code,station_name,cluster)", { count: "exact" })
+      .select("id,full_name,mobile_country_code,mobile,email,date_of_join,dropx_id,biometric_id,designation,is_active,onboarding_status,onboarding_submitted_at,onboarding_reviewed_at,onboarding_reviewed_by,onboarding_review_remarks,profile_return_remarks,location_id,created_by,created_at,updated_at,stations(station_code,station_name)", { count: "exact" })
       .eq("company_id", companyId);
     if (creatorIds.length) query = query.in("created_by", creatorIds);
     if (stationIds.length) query = query.in("location_id", stationIds);
@@ -143,7 +143,7 @@ export async function GET(request: Request) {
     const approvalExecutiveIds = [...new Set(approvalRequests.map((item: any) => item.field_executive_id).filter(Boolean))];
     const approvalExecutives = approvalExecutiveIds.length
       ? await supabaseAdmin.from(WORKFORCE_PROFILE_TABLE)
-          .select("id,full_name,mobile_country_code,mobile,email,date_of_join,dropx_id,biometric_id,designation,is_active,onboarding_status,location_id,stations(station_code,station_name,cluster)")
+          .select("id,full_name,mobile_country_code,mobile,email,date_of_join,dropx_id,biometric_id,designation,is_active,onboarding_status,location_id,stations(station_code,station_name)")
           .eq("company_id", companyId)
           .in("id", approvalExecutiveIds)
       : { data: [], error: null };
@@ -217,7 +217,7 @@ export async function GET(request: Request) {
       .flatMap((item) => [String(item.code ?? "").toLowerCase(), String(item.name ?? "").toLowerCase()])
       .filter(Boolean));
     let stationsQuery = supabaseAdmin.from("stations")
-      .select("id,station_code,station_name,cluster,location_model_id")
+      .select("id,station_code,station_name,location_model_id")
       .eq("company_id", companyId).eq("is_active", true);
     if (!session.allLocations) {
       if (!permittedStationCodes.length) {
@@ -243,7 +243,7 @@ export async function GET(request: Request) {
       id: item.id,
       code: item.station_code,
       name: item.station_name,
-      cluster: item.cluster,
+      cluster: null,
       modelId: item.location_model_id
     }));
     const masterDesignations = (designationMaster.data ?? [])

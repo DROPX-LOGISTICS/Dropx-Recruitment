@@ -29,7 +29,7 @@ export async function GET(request: Request) {
     }
     const companyId = requiredEnv("RECRUITMENT_COMPANY_ID");
     const [locations, roles, contacts, whatsapp, mainStations, workforceConfig, lifecycleRules, lifecycleSettings] = await Promise.all([
-      supabaseAdmin.from("recruitment_locations").select("id,code,name,state,region,cluster,address,latitude,longitude,poc_name,poc_mobile,is_active").eq("company_id", companyId).order("code"),
+      supabaseAdmin.from("recruitment_locations").select("id,code,name,state,region,address,latitude,longitude,poc_name,poc_mobile,is_active").eq("company_id", companyId).order("code"),
       supabaseAdmin.from("recruitment_roles").select("id,code,name,stream,aliases,required_fields,is_active").eq("company_id", companyId).order("code")
       ,supabaseAdmin.from("recruitment_location_contacts").select("id,location_id,address,latitude,longitude,poc_name,poc_mobile").eq("company_id", companyId),
       getConnectionConfig("whatsapp"),
@@ -50,7 +50,10 @@ export async function GET(request: Request) {
               name: mainStations.find((station) => station.code === location.code)!.name,
               state: mainStations.find((station) => station.code === location.code)!.state,
               region: mainStations.find((station) => station.code === location.code)!.region,
-              cluster: mainStations.find((station) => station.code === location.code)!.cluster,
+              cluster: mainStations.find((station) => station.code === location.code)!.operationalOwner?.name ?? null,
+              operationalOwner: mainStations.find((station) => station.code === location.code)!.operationalOwner,
+              operationalOwnerStatus: mainStations.find((station) => station.code === location.code)!.operationalOwnerStatus,
+              operationalOwnerDesignation: mainStations.find((station) => station.code === location.code)!.operationalOwnerDesignation,
               manager: {
                 id: mainStations.find((station) => station.code === location.code)!.managerId,
                 name: mainStations.find((station) => station.code === location.code)!.managerName,
@@ -58,7 +61,14 @@ export async function GET(request: Request) {
               },
               source: "main_dashboard"
             }
-          : { source: "recruitment_fallback", manager: null }),
+          : {
+              source: "recruitment_fallback",
+              manager: null,
+              cluster: null,
+              operationalOwner: null,
+              operationalOwnerStatus: "unmapped",
+              operationalOwnerDesignation: null
+            }),
         contact: contactByLocation.get(location.id) ?? null
       })),
       roles: (roles.data ?? []).map((role) => ({
@@ -155,7 +165,6 @@ export async function PUT(request: Request) {
         name,
         state: optional(body.state, 100),
         region: optional(body.region, 100),
-        cluster: optional(body.cluster, 100),
         is_active: body.isActive !== false,
         updated_at: now
       }, { onConflict: "company_id,code" }).select("id,code,name").single();
@@ -165,7 +174,7 @@ export async function PUT(request: Request) {
         actorProfileId: session.profileId,
         actorEmail: session.email
       });
-      await auditMasterChange({ companyId, action: "location_saved", changedFields: ["name", "state", "region", "cluster", "active"], message: `Station ${code} · ${name} saved.`, actorProfileId: session.profileId, actorEmail: session.email });
+      await auditMasterChange({ companyId, action: "location_saved", changedFields: ["name", "state", "region", "active"], message: `Station ${code} · ${name} saved. Operational ownership remains controlled in People.`, actorProfileId: session.profileId, actorEmail: session.email });
       return NextResponse.json({ saved: true, resource, item: saved.data, remapped });
     }
 

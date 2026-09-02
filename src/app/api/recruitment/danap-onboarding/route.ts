@@ -53,7 +53,7 @@ async function allowedStations(companyId: string, session: NonNullable<Awaited<R
 
 async function systemStationDetails(companyId: string) {
   const [locations, contacts, mainStations, managers] = await Promise.all([
-    supabaseAdmin!.from("recruitment_locations").select("id,code,name,cluster,poc_name,poc_mobile").eq("company_id", companyId).eq("is_active", true),
+    supabaseAdmin!.from("recruitment_locations").select("id,code,name,poc_name,poc_mobile").eq("company_id", companyId).eq("is_active", true),
     supabaseAdmin!.from("recruitment_location_contacts").select("location_id,poc_name,poc_mobile").eq("company_id", companyId),
     loadMainDashboardStations(companyId),
     loadMainDashboardHiringManagers(companyId)
@@ -74,9 +74,9 @@ async function systemStationDetails(companyId: string) {
     details.set(code, {
       code,
       name: clean(station.name || recruitment?.name || code),
-      cluster: clean(station.cluster || recruitment?.cluster),
-      crmName: clean(crm?.name || station.managerName),
-      crmEmail: clean(crm?.email || station.managerEmail),
+      cluster: clean(station.operationalOwner?.name),
+      crmName: clean(station.operationalOwner?.name || crm?.name || station.managerName),
+      crmEmail: clean(station.operationalOwner?.email || crm?.email || station.managerEmail),
       pocName: clean(contact?.poc_name || recruitment?.poc_name),
       pocMobile: clean(contact?.poc_mobile || recruitment?.poc_mobile)
     });
@@ -88,7 +88,7 @@ async function systemStationDetails(companyId: string) {
     details.set(code, {
       code,
       name: clean(recruitment.name || code),
-      cluster: clean(recruitment.cluster),
+      cluster: "",
       crmName: "",
       crmEmail: "",
       pocName: clean(contact?.poc_name || recruitment.poc_name),

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { applyLeadScope, canAccessLead, canUseRecruitmentMenu, recruitmentSession, requiredEnv } from "@/lib/recruitment-api";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { currentRequisitionStatuses, remainingRequisitionOpenings } from "@/lib/hr-recruitment-overview";
+import { loadMainDashboardStations } from "@/lib/main-dashboard-masters";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -21,7 +22,7 @@ type DashboardLead = {
   role_id: string | null;
   ad_id: string | null;
   assigned_profile_id: string | null;
-  recruitment_locations: { code: string; name: string; cluster: string | null; poc_name: string | null; poc_mobile: string | null } | null;
+  recruitment_locations: { code: string; name: string; poc_name: string | null; poc_mobile: string | null } | null;
   recruitment_roles: { code: string; name: string; stream: string | null } | null;
 };
 
@@ -33,7 +34,7 @@ type DashboardAd = {
   location_id: string | null;
   role_id: string | null;
   last_synced_at: string | null;
-  recruitment_locations: { id: string; code: string; name: string; cluster: string | null } | Array<{ id: string; code: string; name: string; cluster: string | null }> | null;
+  recruitment_locations: { id: string; code: string; name: string } | Array<{ id: string; code: string; name: string }> | null;
   recruitment_roles: { id: string; code: string; name: string; stream: string | null } | Array<{ id: string; code: string; name: string; stream: string | null }> | null;
 };
 
@@ -126,12 +127,26 @@ export async function GET(request: Request) {
     const roleCodes = csv(url.searchParams.get("role"));
     if (!canUseRecruitmentMenu(session, "Dashboard", "view", workspace)) return NextResponse.json({ error: "Dashboard view access is required." }, { status: 403 });
     const companyId = requiredEnv("RECRUITMENT_COMPANY_ID");
+    const mainStations = await loadMainDashboardStations(companyId);
+    const ownerByStationCode = new Map(mainStations.map((station) => [
+      station.code,
+      station.operationalOwner?.name ?? null
+    ]));
     let locationIds: string[] | null = null;
     let roleIds: string[] | null = null;
     if (stationCodes.length || clusters.length) {
       let locations = supabaseAdmin.from("recruitment_locations").select("id").eq("company_id", companyId);
-      if (stationCodes.length) locations = locations.in("code", stationCodes);
-      if (clusters.length) locations = locations.in("cluster", clusters);
+      const ownerStationCodes = clusters.length
+        ? mainStations
+            .filter((station) => station.operationalOwner && clusters.includes(station.operationalOwner.name))
+            .map((station) => station.code)
+        : null;
+      const resolvedStationCodes = ownerStationCodes
+        ? (stationCodes.length ? stationCodes.filter((code) => ownerStationCodes.includes(code)) : ownerStationCodes)
+        : stationCodes;
+      locations = resolvedStationCodes.length
+        ? locations.in("code", resolvedStationCodes)
+        : locations.eq("id", "00000000-0000-0000-0000-000000000000");
       const resolved = await locations;
       if (resolved.error) throw new Error(resolved.error.message);
       locationIds = (resolved.data ?? []).map((row) => row.id);
@@ -183,7 +198,7 @@ export async function GET(request: Request) {
     }
     const dashboardQuery = () => {
       let query: any = supabaseAdmin!.from("recruitment_leads")
-        .select("id,full_name,phone,status,final_status,lead_created_at,updated_at,callback_at,follow_up_at,location_id,role_id,ad_id,assigned_profile_id,recruitment_locations(code,name,cluster,poc_name,poc_mobile),recruitment_roles(code,name,stream)")
+        .select("id,full_name,phone,status,final_status,lead_created_at,updated_at,callback_at,follow_up_at,location_id,role_id,ad_id,assigned_profile_id,recruitment_locations(code,name,poc_name,poc_mobile),recruitment_roles(code,name,stream)")
         .eq("company_id", companyId).eq("archived", false);
       query = applyLeadScope(query, session, stream);
       if (locationIds) query = query.in("location_id", locationIds);
@@ -220,7 +235,7 @@ export async function GET(request: Request) {
       if (adCount.error) throw new Error(adCount.error.message);
       const adPages = await Promise.all(Array.from({ length: Math.ceil((adCount.count ?? 0) / 1000) }, (_, page) =>
         supabaseAdmin!.from("recruitment_ads")
-          .select("id,ad_name,status,route_status,location_id,role_id,last_synced_at,recruitment_locations(id,code,name,cluster),recruitment_roles(id,code,name,stream)")
+          .select("id,ad_name,status,route_status,location_id,role_id,last_synced_at,recruitment_locations(id,code,name),recruitment_roles(id,code,name,stream)")
           .eq("company_id", companyId)
           .order("last_synced_at", { ascending: false })
           .range(page * 1000, page * 1000 + 999)
@@ -333,7 +348,7 @@ export async function GET(request: Request) {
       byStatus.set(statusLabel, (byStatus.get(statusLabel) ?? 0) + 1);
       const location = lead.recruitment_locations?.code ?? "Unmapped";
       const role = lead.recruitment_roles?.code ?? "Unmapped";
-      const cluster = lead.recruitment_locations?.cluster ?? "Unmapped";
+      const cluster = ownerByStationCode.get(location) ?? "Unmapped";
       byLocation.set(location, (byLocation.get(location) ?? 0) + 1);
       byRole.set(role, (byRole.get(role) ?? 0) + 1);
       byCluster.set(cluster, (byCluster.get(cluster) ?? 0) + 1);

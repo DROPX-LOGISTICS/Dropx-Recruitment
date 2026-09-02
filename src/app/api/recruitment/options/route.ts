@@ -19,7 +19,7 @@ export async function GET(request: Request) {
     if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     const companyId = requiredEnv("RECRUITMENT_COMPANY_ID");
     const unrestrictedCatalog = hasFullLeadAccess(session);
-    let locations = supabaseAdmin.from("recruitment_locations").select("id,code,name,cluster,state").eq("company_id", companyId).eq("is_active", true);
+    let locations = supabaseAdmin.from("recruitment_locations").select("id,code,name,state").eq("company_id", companyId).eq("is_active", true);
     let roles = supabaseAdmin.from("recruitment_roles").select("id,code,name,stream").eq("company_id", companyId).eq("is_active", true);
     if (!unrestrictedCatalog && !session.allLocations) locations = locations.in("id", session.locationIds);
     if (!unrestrictedCatalog && session.roleIds.length) roles = roles.in("id", session.roleIds);
@@ -56,9 +56,14 @@ export async function GET(request: Request) {
         return {
           ...location,
           name: source?.name ?? location.name,
-          cluster: source?.cluster ?? location.cluster,
+          // Kept as `cluster` for older browser bundles; the value now comes
+          // only from the active People owner mapped to this station.
+          cluster: source?.operationalOwner?.name ?? null,
           clusterManager: source?.clusterManager ?? null,
           clusterManagerStatus: source?.clusterManagerStatus ?? "unmapped",
+          operationalOwner: source?.operationalOwner ?? null,
+          operationalOwnerStatus: source?.operationalOwnerStatus ?? "unmapped",
+          operationalOwnerDesignation: source?.operationalOwnerDesignation ?? null,
           state: source?.state ?? location.state,
           mainDashboardStationId: source?.id ?? null,
           manager: source?.managerId ? {

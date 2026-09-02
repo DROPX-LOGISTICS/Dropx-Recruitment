@@ -13,6 +13,9 @@ export type MainDashboardStation = {
   managerName: string | null;
   clusterManager: PeopleClusterManager | null;
   clusterManagerStatus: "mapped" | "unmapped" | "ambiguous";
+  operationalOwner: PeopleOperationalOwner | null;
+  operationalOwnerStatus: "mapped" | "unmapped" | "ambiguous";
+  operationalOwnerDesignation: string | null;
   isActive: boolean;
 };
 
@@ -25,6 +28,17 @@ export type PeopleClusterManager = {
 };
 
 export type PeopleClusterManagerCandidate = PeopleClusterManager & {
+  peopleActive: boolean;
+  profileActive: boolean;
+};
+
+export type PeopleOperationalOwner = PeopleClusterManager & {
+  designationCode: string;
+  designationName: string;
+  ownerType: "cluster_manager" | "area_ops_manager";
+};
+
+export type PeopleOperationalOwnerCandidate = PeopleOperationalOwner & {
   peopleActive: boolean;
   profileActive: boolean;
 };
@@ -66,7 +80,54 @@ export function resolvePeopleClusterManager(
   return { status: "unmapped" as const, manager: null };
 }
 
-async function loadPeopleClusterManagers(companyId: string) {
+function operationalOwnerType(designation: { code?: unknown; name?: unknown }) {
+  const code = normalized(designation.code);
+  const name = normalized(designation.name);
+  if (code === "clm" || name === "cluster manager") return "cluster_manager" as const;
+  if (code === "aom" || ["area ops manager", "area operations manager"].includes(name)) {
+    return "area_ops_manager" as const;
+  }
+  return null;
+}
+
+export function resolvePeopleOperationalOwner(
+  stationId: string,
+  candidates: PeopleOperationalOwnerCandidate[]
+) {
+  for (const ownerType of ["cluster_manager", "area_ops_manager"] as const) {
+    const unique = new Map<string, PeopleOperationalOwner>();
+    for (const candidate of candidates) {
+      if (candidate.ownerType !== ownerType
+        || !candidate.peopleActive
+        || !candidate.profileActive
+        || !candidate.locationScopeIds.includes(stationId)) continue;
+      unique.set(candidate.profileId, {
+        profileId: candidate.profileId,
+        peopleCode: candidate.peopleCode,
+        name: candidate.name,
+        email: candidate.email,
+        locationScopeIds: candidate.locationScopeIds,
+        designationCode: candidate.designationCode,
+        designationName: candidate.designationName,
+        ownerType: candidate.ownerType
+      });
+    }
+    const matches = [...unique.values()];
+    if (matches.length === 1) return {
+      status: "mapped" as const,
+      owner: matches[0],
+      designationName: matches[0].designationName
+    };
+    if (matches.length > 1) return {
+      status: "ambiguous" as const,
+      owner: null,
+      designationName: matches[0]?.designationName ?? null
+    };
+  }
+  return { status: "unmapped" as const, owner: null, designationName: null };
+}
+
+async function loadPeopleOperationalOwners(companyId: string) {
   if (!supabaseAdmin) throw new Error("Supabase is not configured.");
   const designations = await supabaseAdmin
     .from("designations")
@@ -75,17 +136,15 @@ async function loadPeopleClusterManagers(companyId: string) {
     .eq("is_active", true);
   if (designations.error) throw new Error(designations.error.message);
 
-  const clusterManagerDesignations = (designations.data ?? []).filter((designation) =>
-    normalized(designation.code) === "clm" || normalized(designation.name) === "cluster manager"
-  );
-  if (!clusterManagerDesignations.length) return [];
+  const ownerDesignations = (designations.data ?? []).flatMap((designation) => {
+    const ownerType = operationalOwnerType(designation);
+    return ownerType ? [{ ...designation, ownerType }] : [];
+  });
+  if (!ownerDesignations.length) return [];
 
-  const designationIds = clusterManagerDesignations.map((designation) => designation.id);
-  const designationLabels = new Set(clusterManagerDesignations.flatMap((designation) => [
-    normalized(designation.code),
-    normalized(designation.name)
-  ]));
-  const designationValues = [...new Set(clusterManagerDesignations.flatMap((designation) => [
+  const designationIds = ownerDesignations.map((designation) => designation.id);
+  const designationValues = [...new Set(ownerDesignations.flatMap((designation) => [
+    String(designation.id ?? "").trim(),
     String(designation.code ?? "").trim(),
     String(designation.name ?? "").trim()
   ]).filter(Boolean))];
@@ -112,26 +171,47 @@ async function loadPeopleClusterManagers(companyId: string) {
   if (contractors.error) throw new Error(contractors.error.message);
   if (profiles.error) throw new Error(profiles.error.message);
 
-  const peopleByCode = new Map<string, { peopleCode: string; name: string; email: string | null; peopleActive: boolean }>();
+  const designationById = new Map(ownerDesignations.map((designation) => [designation.id, designation]));
+  const designationByLabel = new Map(ownerDesignations.flatMap((designation) => [
+    [normalized(designation.id), designation] as const,
+    [normalized(designation.code), designation] as const,
+    [normalized(designation.name), designation] as const
+  ]));
+  const peopleByCode = new Map<string, {
+    peopleCode: string;
+    name: string;
+    email: string | null;
+    peopleActive: boolean;
+    designationCode: string;
+    designationName: string;
+    ownerType: "cluster_manager" | "area_ops_manager";
+  }>();
   for (const employee of employees.data ?? []) {
     const peopleCode = String(employee.employee_code ?? "").trim();
-    if (!peopleCode) continue;
+    const designation = designationById.get(employee.designation_id);
+    if (!peopleCode || !designation) continue;
     peopleByCode.set(normalized(peopleCode), {
       peopleCode,
       name: employee.full_name || peopleCode,
       email: employee.email,
-      peopleActive: employee.is_active !== false
+      peopleActive: employee.is_active !== false,
+      designationCode: String(designation.code ?? "").trim().toUpperCase(),
+      designationName: designation.name || designation.code || "Operational owner",
+      ownerType: designation.ownerType
     });
   }
   for (const contractor of contractors.data ?? []) {
-    if (!designationLabels.has(normalized(contractor.designation))) continue;
+    const designation = designationByLabel.get(normalized(contractor.designation));
     const peopleCode = String(contractor.dropx_id ?? "").trim();
-    if (!peopleCode) continue;
+    if (!peopleCode || !designation) continue;
     peopleByCode.set(normalized(peopleCode), {
       peopleCode,
       name: contractor.full_name || peopleCode,
       email: contractor.email,
-      peopleActive: contractor.is_active !== false
+      peopleActive: contractor.is_active !== false,
+      designationCode: String(designation.code ?? "").trim().toUpperCase(),
+      designationName: designation.name || designation.code || "Operational owner",
+      ownerType: designation.ownerType
     });
   }
 
@@ -145,8 +225,11 @@ async function loadPeopleClusterManagers(companyId: string) {
       email: profile.email || person.email,
       locationScopeIds: Array.isArray(profile.location_scope_ids) ? profile.location_scope_ids : [],
       peopleActive: person.peopleActive,
-      profileActive: profile.is_active !== false
-    } satisfies PeopleClusterManagerCandidate];
+      profileActive: profile.is_active !== false,
+      designationCode: person.designationCode,
+      designationName: person.designationName,
+      ownerType: person.ownerType
+    } satisfies PeopleOperationalOwnerCandidate];
   });
 }
 
@@ -186,10 +269,10 @@ export async function loadMainDashboardHiringManagers(companyId: string) {
 
 export async function loadMainDashboardStations(companyId: string) {
   if (!supabaseAdmin) throw new Error("Supabase is not configured.");
-  const [stations, profiles, clusterManagers] = await Promise.all([
+  const [stations, profiles, operationalOwners] = await Promise.all([
     supabaseAdmin
       .from("stations")
-      .select("id,station_code,station_name,address,address_line1,address_line2,state,region,cluster,station_manager_email,is_active,hide_from_location_list")
+      .select("id,station_code,station_name,address,address_line1,address_line2,state,region,station_manager_email,is_active,hide_from_location_list")
       .eq("company_id", companyId)
       .eq("is_active", true)
       .eq("hide_from_location_list", false)
@@ -199,7 +282,7 @@ export async function loadMainDashboardStations(companyId: string) {
       .select("id,full_name,email,employee_id,role,is_active")
       .eq("company_id", companyId)
       .eq("is_active", true),
-    loadPeopleClusterManagers(companyId)
+    loadPeopleOperationalOwners(companyId)
   ]);
   if (stations.error) throw new Error(stations.error.message);
   if (profiles.error) throw new Error(profiles.error.message);
@@ -208,20 +291,33 @@ export async function loadMainDashboardStations(companyId: string) {
   );
   return (stations.data ?? []).map((station) => {
     const manager = profileByEmail.get(normalized(station.station_manager_email));
-    const clusterManagerResolution = resolvePeopleClusterManager(station.id, clusterManagers);
+    const ownerResolution = resolvePeopleOperationalOwner(station.id, operationalOwners);
+    const clusterManager = ownerResolution.owner?.ownerType === "cluster_manager"
+      ? ownerResolution.owner
+      : null;
     return {
       id: station.id,
       code: String(station.station_code ?? "").trim().toUpperCase(),
       name: station.station_name || station.station_code || "Station",
       state: station.state,
       region: station.region,
-      cluster: station.cluster,
+      // Compatibility field for older Recruit clients. Its value is now the
+      // current People operational owner, never the legacy station text.
+      cluster: ownerResolution.owner?.name ?? null,
       address: [station.address_line1, station.address_line2].filter(Boolean).join(", ") || station.address,
       managerEmail: station.station_manager_email,
       managerId: manager?.id ?? null,
       managerName: manager?.full_name ?? station.station_manager_email ?? null,
-      clusterManager: clusterManagerResolution.manager,
-      clusterManagerStatus: clusterManagerResolution.status,
+      clusterManager,
+      clusterManagerStatus: clusterManager
+        ? "mapped"
+        : ownerResolution.status === "ambiguous"
+          && normalized(ownerResolution.designationName) === "cluster manager"
+          ? "ambiguous"
+          : "unmapped",
+      operationalOwner: ownerResolution.owner,
+      operationalOwnerStatus: ownerResolution.status,
+      operationalOwnerDesignation: ownerResolution.designationName,
       isActive: station.is_active !== false
     } satisfies MainDashboardStation;
   }).filter((station) => station.code);

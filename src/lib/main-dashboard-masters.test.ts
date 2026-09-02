@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   defaultHiringManagerFor,
   resolvePeopleClusterManager,
+  resolvePeopleOperationalOwner,
   type MainDashboardHiringManager,
   type MainDashboardStation
 } from "./main-dashboard-masters";
@@ -19,6 +20,9 @@ const station: MainDashboardStation = {
   managerName: "Station Manager",
   clusterManager: null,
   clusterManagerStatus: "unmapped",
+  operationalOwner: null,
+  operationalOwnerStatus: "unmapped",
+  operationalOwnerDesignation: null,
   isActive: true
 };
 
@@ -87,5 +91,61 @@ describe("resolvePeopleClusterManager", () => {
       activeManager,
       { ...activeManager, profileId: "profile-2", peopleCode: "D101", name: "Another Cluster Manager" }
     ])).toEqual({ status: "ambiguous", manager: null });
+  });
+});
+
+describe("resolvePeopleOperationalOwner", () => {
+  const clusterManager = {
+    profileId: "cm-profile",
+    peopleCode: "D100",
+    name: "Current Cluster Manager",
+    email: "cm@dropx.test",
+    locationScopeIds: ["station-1"],
+    peopleActive: true,
+    profileActive: true,
+    designationCode: "CLM",
+    designationName: "Cluster Manager",
+    ownerType: "cluster_manager" as const
+  };
+  const areaOpsManager = {
+    ...clusterManager,
+    profileId: "aom-profile",
+    peopleCode: "D200",
+    name: "Current Area Ops Manager",
+    email: "aom@dropx.test",
+    designationCode: "AOM",
+    designationName: "Area Operations Manager",
+    ownerType: "area_ops_manager" as const
+  };
+
+  it("uses the Cluster Manager when both People mappings exist", () => {
+    expect(resolvePeopleOperationalOwner("station-1", [areaOpsManager, clusterManager])).toEqual({
+      status: "mapped",
+      owner: expect.objectContaining({ name: "Current Cluster Manager", ownerType: "cluster_manager" }),
+      designationName: "Cluster Manager"
+    });
+  });
+
+  it("falls back to the Area Ops Manager when no Cluster Manager is mapped", () => {
+    expect(resolvePeopleOperationalOwner("station-1", [areaOpsManager])).toEqual({
+      status: "mapped",
+      owner: expect.objectContaining({ name: "Current Area Ops Manager", ownerType: "area_ops_manager" }),
+      designationName: "Area Operations Manager"
+    });
+  });
+
+  it("does not hide an ambiguous Cluster Manager mapping behind the AOM fallback", () => {
+    expect(resolvePeopleOperationalOwner("station-1", [
+      clusterManager,
+      { ...clusterManager, profileId: "other-cm", peopleCode: "D101" },
+      areaOpsManager
+    ])).toEqual({ status: "ambiguous", owner: null, designationName: "Cluster Manager" });
+  });
+
+  it("ignores inactive owners and out-of-scope profiles", () => {
+    expect(resolvePeopleOperationalOwner("station-1", [
+      { ...clusterManager, peopleActive: false },
+      { ...areaOpsManager, locationScopeIds: ["station-2"] }
+    ])).toEqual({ status: "unmapped", owner: null, designationName: null });
   });
 });

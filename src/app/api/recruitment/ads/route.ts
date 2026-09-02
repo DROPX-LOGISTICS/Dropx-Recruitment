@@ -36,7 +36,7 @@ export async function GET(request: Request) {
     const [result, mainStations] = await Promise.all([
       supabaseAdmin
         .from("recruitment_ads")
-        .select("id,meta_ad_id,ad_name,adset_name,campaign_name,location_id,role_id,route_status,status,daily_budget,total_spend,poster_url,created_on,last_synced_at,raw_payload,recruitment_locations(id,code,name,cluster),recruitment_roles(id,code,name,stream)")
+        .select("id,meta_ad_id,ad_name,adset_name,campaign_name,location_id,role_id,route_status,status,daily_budget,total_spend,poster_url,created_on,last_synced_at,raw_payload,recruitment_locations(id,code,name),recruitment_roles(id,code,name,stream)")
         .eq("company_id", companyId)
         .order("last_synced_at", { ascending: false })
         .limit(500),
@@ -85,7 +85,10 @@ export async function GET(request: Request) {
           recruitment_locations: location ? {
             ...location,
             cluster_manager: mainStation?.clusterManager ?? null,
-            cluster_manager_status: mainStation?.clusterManagerStatus ?? "unmapped"
+            cluster_manager_status: mainStation?.clusterManagerStatus ?? "unmapped",
+            operational_owner: mainStation?.operationalOwner ?? null,
+            operational_owner_status: mainStation?.operationalOwnerStatus ?? "unmapped",
+            operational_owner_designation: mainStation?.operationalOwnerDesignation ?? null
           } : location,
           lead_count: counts.get(ad.id) ?? 0,
           reach: numberFrom(ad.raw_payload, ["reach", "total_reach"]),

@@ -82,7 +82,7 @@ export async function GET(request: Request) {
       supabaseAdmin.from("recruitment_mobile_users").select("mobile_e164,display_name,is_active,profile_id").eq("company_id", companyId).order("display_name"),
       supabaseAdmin.from("recruitment_user_locations").select("user_access_id,location_id"),
       supabaseAdmin.from("recruitment_user_roles").select("user_access_id,role_id"),
-      supabaseAdmin.from("recruitment_locations").select("id,code,name,cluster,is_active").eq("company_id", companyId).eq("is_active", true).order("code"),
+      supabaseAdmin.from("recruitment_locations").select("id,code,name,is_active").eq("company_id", companyId).eq("is_active", true).order("code"),
       supabaseAdmin.from("recruitment_roles").select("id,code,name,stream,is_active").eq("company_id", companyId).eq("is_active", true).order("code"),
       supabaseAdmin.from("profiles").select("id,full_name,email,mobile,phone,employee_id,role,role_id,reports_to_user_id,location_scope_ids,invite_method,is_active,is_master_owner")
         .eq("company_id", companyId).eq("is_active", true).order("full_name"),
@@ -152,7 +152,10 @@ export async function GET(request: Request) {
         return {
           ...location,
           name: source?.name ?? location.name,
-          cluster: source?.cluster ?? location.cluster,
+          cluster: source?.operationalOwner?.name ?? null,
+          operationalOwner: source?.operationalOwner ?? null,
+          operationalOwnerStatus: source?.operationalOwnerStatus ?? "unmapped",
+          operationalOwnerDesignation: source?.operationalOwnerDesignation ?? null,
           managerName: source?.managerName ?? null
         };
       }),

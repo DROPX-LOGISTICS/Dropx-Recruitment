@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { applyLeadScope, canUseRecruitmentMenu, recruitmentSession, requiredEnv } from "@/lib/recruitment-api";
 import type { RecruitmentMenuId } from "@/lib/recruitment-menu-roles";
 import { buildLeadFacets } from "@/lib/lead-facets";
+import { loadMainDashboardStations } from "@/lib/main-dashboard-masters";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { WORKFORCE_ACTIVE_INTERVIEW_STATUS_QUERY } from "@/lib/workforce-interview-lifecycle";
 
@@ -83,6 +84,13 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "View access to this Recruitment queue is required." }, { status: 403 });
     }
     const companyId = requiredEnv("RECRUITMENT_COMPANY_ID");
+    const mainStations = clusters.length || includeFacets
+      ? await loadMainDashboardStations(companyId)
+      : [];
+    const operationalOwnerByStationCode = new Map(mainStations.map((station) => [
+      station.code,
+      station.operationalOwner?.name ?? null
+    ]));
     let structuredInterviewIds: string[] | null = null;
     if (stream === "hr" && menu === "Interviews") {
       // Only first-class interview assignments belong in the HR interview
@@ -136,8 +144,17 @@ export async function GET(request: Request) {
     if (stationCodes.length || clusters.length) {
       let locations = supabaseAdmin.from("recruitment_locations").select("id")
         .eq("company_id", requiredEnv("RECRUITMENT_COMPANY_ID"));
-      if (stationCodes.length) locations = locations.in("code", stationCodes);
-      if (clusters.length) locations = locations.in("cluster", clusters);
+      const ownerStationCodes = clusters.length
+        ? mainStations
+            .filter((station) => station.operationalOwner && clusters.includes(station.operationalOwner.name))
+            .map((station) => station.code)
+        : null;
+      const resolvedStationCodes = ownerStationCodes
+        ? (stationCodes.length ? stationCodes.filter((code) => ownerStationCodes.includes(code)) : ownerStationCodes)
+        : stationCodes;
+      locations = resolvedStationCodes.length
+        ? locations.in("code", resolvedStationCodes)
+        : locations.eq("id", "00000000-0000-0000-0000-000000000000");
       const resolved = await locations;
       if (resolved.error) throw new Error(resolved.error.message);
       const ids = (resolved.data ?? []).map((row) => row.id);
@@ -196,7 +213,7 @@ export async function GET(request: Request) {
       const facetQuery = () => {
         let scoped: any = supabaseAdmin!
           .from("recruitment_leads")
-          .select("id,status,final_status,full_name,phone,email,city,post_code,ad_name,updated_at,lead_created_at,follow_up_at,location_id,role_id,recruitment_locations(code,cluster),recruitment_roles(code)")
+          .select("id,status,final_status,full_name,phone,email,city,post_code,ad_name,updated_at,lead_created_at,follow_up_at,location_id,role_id,recruitment_locations(code),recruitment_roles(code)")
           .eq("company_id", companyId);
         if (archive === "archived") scoped = scoped.eq("archived", true);
         else if (archive !== "all") scoped = scoped.eq("archived", false);
@@ -267,11 +284,11 @@ export async function GET(request: Request) {
         }
         return true;
       }).map((row: any) => {
-        const location = relation(row.recruitment_locations) as { code?: string; cluster?: string } | null;
+        const location = relation(row.recruitment_locations) as { code?: string } | null;
         const role = relation(row.recruitment_roles) as { code?: string } | null;
         return {
           locationCode: location?.code ?? null,
-          cluster: location?.cluster ?? null,
+          cluster: location?.code ? operationalOwnerByStationCode.get(location.code) ?? null : null,
           roleCode: role?.code ?? null
         };
       });

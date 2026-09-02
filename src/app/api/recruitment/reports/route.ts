@@ -5,6 +5,7 @@ import { supabaseAdmin } from "@/lib/supabase-admin";
 import { getConnectionConfig } from "@/lib/connection-config";
 import { buildHrUserPerformance } from "@/lib/hr-ats-product";
 import { buildLeadAttemptRows, type LeadAttemptEvent, type LeadAttemptLead } from "@/lib/lead-attempt-report";
+import { loadMainDashboardStations } from "@/lib/main-dashboard-masters";
 
 export const dynamic = "force-dynamic";
 
@@ -44,7 +45,7 @@ type LeadRow = {
   lead_created_at: string | null;
   updated_at: string;
   ad_id: string | null;
-  recruitment_locations: { code: string; name: string; cluster: string | null; region: string | null; state: string | null; poc_name: string | null; poc_mobile: string | null } | null;
+  recruitment_locations: { code: string; name: string; region: string | null; state: string | null; poc_name: string | null; poc_mobile: string | null } | null;
   recruitment_roles: { code: string; name: string } | null;
 };
 
@@ -240,13 +241,28 @@ export async function GET(request: Request) {
     const adStatus = csv(url.searchParams.get("adStatus")).map((item) => item.toUpperCase());
     const spendFrom = url.searchParams.get("spendFrom");
     const spendTo = url.searchParams.get("spendTo");
+    const mainStations = await loadMainDashboardStations(companyId);
+    const ownerByStationCode = new Map(mainStations.map((station) => [
+      station.code,
+      station.operationalOwner?.name ?? null
+    ]));
+    const ownerNameFor = (stationCode: unknown) => ownerByStationCode.get(String(stationCode ?? "").trim().toUpperCase()) ?? "";
     let locationIds: string[] | null = null;
     let roleIds: string[] | null = null;
     let adIds: string[] | null = null;
     if (stationCodes.length || clusters.length) {
       let locations = supabaseAdmin.from("recruitment_locations").select("id").eq("company_id", companyId);
-      if (stationCodes.length) locations = locations.in("code", stationCodes);
-      if (clusters.length) locations = locations.in("cluster", clusters);
+      const ownerStationCodes = clusters.length
+        ? mainStations
+            .filter((station) => station.operationalOwner && clusters.includes(station.operationalOwner.name))
+            .map((station) => station.code)
+        : null;
+      const resolvedStationCodes = ownerStationCodes
+        ? (stationCodes.length ? stationCodes.filter((code) => ownerStationCodes.includes(code)) : ownerStationCodes)
+        : stationCodes;
+      locations = resolvedStationCodes.length
+        ? locations.in("code", resolvedStationCodes)
+        : locations.eq("id", "00000000-0000-0000-0000-000000000000");
       const resolved = await locations;
       if (resolved.error) throw new Error(resolved.error.message);
       locationIds = (resolved.data ?? []).map((row) => row.id);
@@ -306,7 +322,7 @@ export async function GET(request: Request) {
     for (let start = 0; ; start += 1000) {
       let query: any = supabaseAdmin
         .from("recruitment_leads")
-        .select("id,meta_lead_id,full_name,phone,email,city,post_code,status,final_status,remarks,final_remarks,work_email,follow_up_at,callback_at,total_attempts,no_response_attempts,call_back_attempts,archived,stream,ad_id,ad_name,normalized_phone,duplicate_count,lead_created_at,updated_at,recruitment_locations(code,name,cluster,region,state,poc_name,poc_mobile),recruitment_roles(code,name)")
+        .select("id,meta_lead_id,full_name,phone,email,city,post_code,status,final_status,remarks,final_remarks,work_email,follow_up_at,callback_at,total_attempts,no_response_attempts,call_back_attempts,archived,stream,ad_id,ad_name,normalized_phone,duplicate_count,lead_created_at,updated_at,recruitment_locations(code,name,region,state,poc_name,poc_mobile),recruitment_roles(code,name)")
         .eq("company_id", companyId)
         .eq("archived", false);
       query = applyLeadScope(query, session, stream);
@@ -342,10 +358,10 @@ export async function GET(request: Request) {
     }
 
     if (report && format === "xlsx") {
-      const header = ["Lead ID","Meta Lead ID","Lead Received","Name","Phone","Email","City","Post Code","Station Code","Station","Cluster","State","Role Code","Role","Stream","Status","Final Status","Remarks","Final Remarks","Interview / Follow-up","Callback","Work Email","Ad Name","Total Attempts","No Response Attempts","Call Back Attempts","Duplicate Sources","Last Updated"];
+      const header = ["Lead ID","Meta Lead ID","Lead Received","Name","Phone","Email","City","Post Code","Station Code","Station","Operational Owner","State","Role Code","Role","Stream","Status","Final Status","Remarks","Final Remarks","Interview / Follow-up","Callback","Work Email","Ad Name","Total Attempts","No Response Attempts","Call Back Attempts","Duplicate Sources","Last Updated"];
       const leadValues = (source: LeadRow[]) => source.map((lead) => [
         lead.id, lead.meta_lead_id ?? "", dateTime(lead.lead_created_at), lead.full_name ?? "", lead.phone ?? "", lead.email ?? "", lead.city ?? "", lead.post_code ?? "",
-        lead.recruitment_locations?.code ?? "", lead.recruitment_locations?.name ?? "", lead.recruitment_locations?.cluster ?? "", lead.recruitment_locations?.state ?? "",
+        lead.recruitment_locations?.code ?? "", lead.recruitment_locations?.name ?? "", ownerNameFor(lead.recruitment_locations?.code), lead.recruitment_locations?.state ?? "",
         lead.recruitment_roles?.code ?? "", lead.recruitment_roles?.name ?? "", lead.stream ?? "", lead.status || "No Status", lead.final_status ?? "",
         lead.remarks ?? "", lead.final_remarks ?? "", dateTime(lead.follow_up_at), dateTime(lead.callback_at), lead.work_email ?? "", lead.ad_name ?? "",
         lead.total_attempts, lead.no_response_attempts, lead.call_back_attempts, lead.duplicate_count, dateTime(lead.updated_at)
@@ -395,14 +411,14 @@ export async function GET(request: Request) {
           return workbookResponse([["Date","Total Leads","No Status","No Response","Call Back","Interviews","Joined"], ...[...dailyMap.entries()].sort().map(([day,item])=>[day,item.total,item.noStatus,item.noResponse,item.callback,item.interviews,item.joined])], "DropX_Daily_Lead_Generation");
         }
         let adsQuery: any = supabaseAdmin.from("recruitment_ads")
-          .select("id,meta_ad_id,ad_name,status,daily_budget,total_spend,created_on,last_synced_at,location_id,role_id,recruitment_locations(code,name,cluster,region),recruitment_roles(code,name)")
+          .select("id,meta_ad_id,ad_name,status,daily_budget,total_spend,created_on,last_synced_at,location_id,role_id,recruitment_locations(code,name,region),recruitment_roles(code,name)")
           .eq("company_id", companyId);
         if (locationIds) {
-          if (!locationIds.length) return workbookResponse([["Ad Name","Station","Cluster","Role","Ad Status","Daily Budget","Total Spend","Leads","Cost Per Lead","Created","Last Sync"]], report === "spend" ? "DropX_Spend_Analysis" : "DropX_Ad_Spend_Period_Report");
+          if (!locationIds.length) return workbookResponse([["Ad Name","Station","Operational Owner","Role","Ad Status","Daily Budget","Total Spend","Leads","Cost Per Lead","Created","Last Sync"]], report === "spend" ? "DropX_Spend_Analysis" : "DropX_Ad_Spend_Period_Report");
           adsQuery = adsQuery.in("location_id", locationIds);
         }
         if (roleIds) {
-          if (!roleIds.length) return workbookResponse([["Ad Name","Station","Cluster","Role","Ad Status","Daily Budget","Total Spend","Leads","Cost Per Lead","Created","Last Sync"]], report === "spend" ? "DropX_Spend_Analysis" : "DropX_Ad_Spend_Period_Report");
+          if (!roleIds.length) return workbookResponse([["Ad Name","Station","Operational Owner","Role","Ad Status","Daily Budget","Total Spend","Leads","Cost Per Lead","Created","Last Sync"]], report === "spend" ? "DropX_Spend_Analysis" : "DropX_Ad_Spend_Period_Report");
           adsQuery = adsQuery.in("role_id", roleIds);
         }
         const ads = await adsQuery;
@@ -445,7 +461,7 @@ export async function GET(request: Request) {
             const adName = String(insight.ad_name || ad.ad_name || "");
             const station = String(ad.recruitment_locations?.code || "");
             const stationName = String(ad.recruitment_locations?.name || station);
-            const cluster = String(ad.recruitment_locations?.cluster || "");
+            const cluster = ownerNameFor(ad.recruitment_locations?.code);
             const region = String(ad.recruitment_locations?.region || "");
             const spend = Number(insight.spend || 0);
             const reach = Number(insight.reach || 0);
@@ -453,13 +469,13 @@ export async function GET(request: Request) {
             const base = { adName, station, stationName, cluster, region };
             addSpend("Daily","Ad",daily,normalizeAd(adName),base,spend,reach,impressions);
             addSpend("Daily","Station",daily,station,{...base,adName:""},spend,reach,impressions);
-            addSpend("Daily","Cluster",daily,cluster,{...base,adName:"",station:"",stationName:""},spend,reach,impressions);
+            addSpend("Daily","Operational Owner",daily,cluster,{...base,adName:"",station:"",stationName:""},spend,reach,impressions);
             addSpend("Daily","Region",daily,region,{...base,adName:"",station:"",stationName:"",cluster:""},spend,reach,impressions);
             addSpend("Weekly","Station",weekly,station,{...base,adName:""},spend,reach,impressions);
-            addSpend("Weekly","Cluster",weekly,cluster,{...base,adName:"",station:"",stationName:""},spend,reach,impressions);
+            addSpend("Weekly","Operational Owner",weekly,cluster,{...base,adName:"",station:"",stationName:""},spend,reach,impressions);
             addSpend("Weekly","Region",weekly,region,{...base,adName:"",station:"",stationName:"",cluster:""},spend,reach,impressions);
             addSpend("Monthly","Station",monthly,station,{...base,adName:""},spend,reach,impressions);
-            addSpend("Monthly","Cluster",monthly,cluster,{...base,adName:"",station:"",stationName:""},spend,reach,impressions);
+            addSpend("Monthly","Operational Owner",monthly,cluster,{...base,adName:"",station:"",stationName:""},spend,reach,impressions);
             addSpend("Monthly","Region",monthly,region,{...base,adName:"",station:"",stationName:"",cluster:""},spend,reach,impressions);
           }
 
@@ -481,21 +497,21 @@ export async function GET(request: Request) {
             const monthly = monthPeriod(day);
             const adName = normalizeAd(lead.ad_name);
             const station = lead.recruitment_locations?.code ?? "";
-            const cluster = lead.recruitment_locations?.cluster ?? "";
+            const cluster = ownerNameFor(lead.recruitment_locations?.code);
             const region = lead.recruitment_locations?.region ?? "";
             addLead("Daily","Ad",day,adName,lead);
             addLead("Daily","Station",day,station,lead);
-            addLead("Daily","Cluster",day,cluster,lead);
+            addLead("Daily","Operational Owner",day,cluster,lead);
             addLead("Daily","Region",day,region,lead);
             addLead("Weekly","Station",weekly.label,station,lead);
-            addLead("Weekly","Cluster",weekly.label,cluster,lead);
+            addLead("Weekly","Operational Owner",weekly.label,cluster,lead);
             addLead("Weekly","Region",weekly.label,region,lead);
             addLead("Monthly","Station",monthly.label,station,lead);
-            addLead("Monthly","Cluster",monthly.label,cluster,lead);
+            addLead("Monthly","Operational Owner",monthly.label,cluster,lead);
             addLead("Monthly","Region",monthly.label,region,lead);
           }
           const identity = (item: SpendAgg) => item.level === "Ad" ? normalizeAd(item.adName)
-            : item.level === "Station" ? item.station : item.level === "Cluster" ? item.cluster : item.region;
+            : item.level === "Station" ? item.station : item.level === "Operational Owner" ? item.cluster : item.region;
           const reportRows = [...spendAgg.values()].sort((a,b) =>
             ["Daily","Weekly","Monthly"].indexOf(a.type) - ["Daily","Weekly","Monthly"].indexOf(b.type)
             || a.period.localeCompare(b.period) || a.level.localeCompare(b.level) || identity(a).localeCompare(identity(b))
@@ -509,7 +525,7 @@ export async function GET(request: Request) {
             ];
           });
           return workbookResponse([[
-            "Period Type","Level","Period","From","To","Ad Name","Station Code","Station","Cluster","Region",
+            "Period Type","Level","Period","From","To","Ad Name","Station Code","Station","Operational Owner","Region",
             "Spend","Reach","Impressions","Leads","Interviews","Joined","Cost Per Lead","Cost Per Interview","Cost Per Joined"
           ], ...reportRows], "DropX_Ad_Spend_Period_Report");
         }
@@ -528,14 +544,14 @@ export async function GET(request: Request) {
           const spend = Number(ad.total_spend || 0);
           const cost = (value: number) => value ? Math.round((spend / value) * 100) / 100 : "";
           return [
-            ad.ad_name,ad.recruitment_locations?.code??"",ad.recruitment_locations?.name??"",ad.recruitment_locations?.cluster??"",
+            ad.ad_name,ad.recruitment_locations?.code??"",ad.recruitment_locations?.name??"",ownerNameFor(ad.recruitment_locations?.code),
             ad.recruitment_roles?.code??"",Math.round(spend*100)/100,related.length,noStatus,count("no_response"),count("call_back"),
             interviews,joined,finalCount("dropped"),count("not_interested"),count("long_distance"),count("not_fit"),
             cost(related.length),cost(interviews),cost(joined)
           ];
         });
         return workbookResponse([[
-          "Ad Name","Station Code","Station","Cluster","Role","Total Spend","Total Leads","No Status","No Response",
+          "Ad Name","Station Code","Station","Operational Owner","Role","Total Spend","Total Leads","No Status","No Response",
           "Call Back","Interviews","Joined","Dropped","Not Interested","Long Distance","Not Fit",
           "Cost Per Lead","Cost Per Interview","Cost Per Joined"
         ], ...spendRows], "DropX_Spend_Analysis");
@@ -575,7 +591,7 @@ export async function GET(request: Request) {
       increment(byStatus, status);
       increment(byRole, lead.recruitment_roles?.name ?? "Unmapped");
       increment(byLocation, lead.recruitment_locations?.name ?? "Unmapped");
-      increment(byCluster, lead.recruitment_locations?.cluster ?? "Unmapped");
+      increment(byCluster, ownerNameFor(lead.recruitment_locations?.code) || "Unmapped");
       increment(byAd, lead.ad_name ?? "Unknown ad");
       if (lead.lead_created_at) increment(daily, lead.lead_created_at.slice(0, 10));
       if (["", "new", "no_response", "call_back"].includes(status) && lead.lead_created_at &&
