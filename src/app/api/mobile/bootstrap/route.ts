@@ -44,6 +44,7 @@ export async function GET(request: Request) {
         trackPerformance: session.trackPerformance,
         reportingManagerProfileId: session.reportingManagerProfileId,
         designationCode: session.designationCode,
+        designationName: session.designationName ?? null,
         isOwner: session.isOwner,
         canPreviewUsers: session.canPreviewUsers,
         canApproveManualPunch: canApproveManualPunch(session),

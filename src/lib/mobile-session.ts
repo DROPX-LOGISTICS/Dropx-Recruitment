@@ -1,4 +1,5 @@
 import { hashSessionToken } from "./mobile-auth";
+import { canPreviewPortalUsers, loadPeopleDesignations } from "./people-designation";
 import {
   matchUniversalRole,
   resolveRecruitmentPermissionSet,
@@ -36,6 +37,7 @@ export type MobileSessionContext = {
   trackPerformance: boolean;
   reportingManagerProfileId: string | null;
   designationCode: string | null;
+  designationName?: string | null;
   isOwner: boolean;
   canPreviewUsers: boolean;
   isPreview: boolean;
@@ -219,7 +221,9 @@ async function previewContext(
     inheritUniversalScope: access.data.can_access_all_locations,
     selectedRecruitmentLocationIds: (locations.data ?? []).map((row) => row.location_id)
   });
+  const peopleDesignation = (await loadPeopleDesignations(companyId, [profileId])).get(profileId);
   return {
+    designationName: peopleDesignation?.name ?? null,
     sessionId: viewer.sessionId,
     mobileUserId: viewer.mobileUserId,
     profileId,
@@ -409,7 +413,9 @@ export async function resolveMobileSession(
     inheritUniversalScope: access.data.can_access_all_locations,
     selectedRecruitmentLocationIds: (locations.data ?? []).map((row) => row.location_id)
   });
+  const peopleDesignation = (await loadPeopleDesignations(companyId, [session.data.profile_id])).get(session.data.profile_id);
   const resolved: MobileSessionContext = {
+    designationName: peopleDesignation?.name ?? null,
     sessionId: session.data.id,
     mobileUserId: mobileUserId ?? "",
     profileId: session.data.profile_id,
@@ -434,7 +440,7 @@ export async function resolveMobileSession(
     reportingManagerProfileId: workforceFunction.reportingManagerProfileId,
     designationCode,
     isOwner,
-    canPreviewUsers: isOwner,
+    canPreviewUsers: canPreviewPortalUsers(isOwner, null, peopleDesignation),
     isPreview: false,
     viewerProfileId: session.data.profile_id,
     previewProfileId: null,

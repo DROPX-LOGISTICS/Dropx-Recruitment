@@ -3,6 +3,7 @@ import { recruitmentSession, requiredEnv } from "@/lib/recruitment-api";
 import { loadUniversalRecruitmentPermissions, matchUniversalRole } from "@/lib/recruitment-menu-roles";
 import { loadWorkforceConfig, workforceFunctionFor } from "@/lib/recruitment-workforce-config";
 import { supabaseAdmin } from "@/lib/supabase-admin";
+import { loadPeopleDesignations } from "@/lib/people-designation";
 
 export const dynamic = "force-dynamic";
 
@@ -41,6 +42,7 @@ export async function GET(request: Request) {
     if (roles.error) throw roles.error;
     const workforceConfig = await loadWorkforceConfig(companyId);
     const profileById = new Map((profiles.data ?? []).map((profile: any) => [profile.id, profile]));
+    const peopleDesignations = await loadPeopleDesignations(companyId, (profiles.data ?? []).map((profile: any) => profile.id));
     const users = (access.data ?? []).flatMap((row: any) => {
       const profile = profileById.get(row.profile_id) as any;
       if (!profile?.is_active) return [];
@@ -75,7 +77,8 @@ export async function GET(request: Request) {
         designationCode: configuredFunction.designationCode
           || String(profile.role || role?.code || "").trim().toUpperCase()
           || null,
-        roleName: role?.name || null,
+        roleName: peopleDesignations.get(profile.id)?.name || role?.name || null,
+        designationName: peopleDesignations.get(profile.id)?.name || null,
         workforce: workspaces.includes("workforce"),
         hr: workspaces.includes("hr")
       }];
