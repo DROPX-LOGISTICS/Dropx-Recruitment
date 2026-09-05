@@ -58,6 +58,25 @@ describe("recruitment routing", () => {
     });
   });
 
+  it("routes station VEND ads to the workforce Vendor designation from the master", () => {
+    const locations = [{ code: "ERSE" }, { code: "AWEZ" }];
+    const roles = [
+      { code: "VEND", name: "Vendor", stream: "workforce" as const, aliases: ["VENDOR"] }
+    ];
+
+    expect(parseAdRouteWithMasters("ERSE_VEND", locations, roles)).toEqual({
+      adName: "ERSE_VEND",
+      stationCode: "ERSE",
+      roleCode: "VEND",
+      stream: "workforce"
+    });
+    expect(parseAdRouteWithMasters("AWEZ_VEND_05092026", locations, roles)).toMatchObject({
+      stationCode: "AWEZ",
+      roleCode: "VEND",
+      stream: "workforce"
+    });
+  });
+
   it("does not invent a station from campaign-like words", () => {
     expect(parseAdRouteWithMasters(
       "Kerala Summer Hiring Delivery Associate",
