@@ -5,6 +5,7 @@ import { uploadRecruitmentDocument } from "@/lib/recruitment-documents";
 import { normalizePhone } from "@/lib/recruitment-routing";
 import { extractRecruitmentDocumentText, supportedRecruitmentDocument } from "@/lib/resume-text";
 import { supabaseAdmin } from "@/lib/supabase-admin";
+import { assertRecruitWorkforceIdentity, evaluateRecruitWorkforceIdentity } from "@/lib/onboarding-identity";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -73,11 +74,29 @@ export async function POST(request: Request) {
     if (!(resume instanceof File) || !supportedRecruitmentDocument(resume)) return NextResponse.json({ error: "Upload a PDF, DOCX or TXT resume up to 15 MB." }, { status: 400 });
     await extractRecruitmentDocumentText(resume);
     const requisition = await supabaseAdmin.from("recruitment_job_requisitions")
-      .select("id,requisition_code,title,status,location_id,role_id")
+      .select("id,requisition_code,title,status,location_id,role_id,recruitment_roles(code,name)")
       .eq("company_id", companyId).eq("id", requisitionId).maybeSingle();
     if (requisition.error || !requisition.data || !["open", "pending_approval", "draft"].includes(requisition.data.status)) return NextResponse.json({ error: "Choose an active requisition." }, { status: 400 });
     if (!session.isOwner && !session.allLocations && !session.locationIds.includes(requisition.data.location_id)) return NextResponse.json({ error: "That requisition is outside your access scope." }, { status: 403 });
     if (!session.isOwner && session.roleIds.length && !session.roleIds.includes(requisition.data.role_id)) return NextResponse.json({ error: "That requisition is outside your position scope." }, { status: 403 });
+
+    if (phone) {
+      const roleRelation = Array.isArray(requisition.data.recruitment_roles)
+        ? requisition.data.recruitment_roles[0]
+        : requisition.data.recruitment_roles;
+      const identityEvaluation = await evaluateRecruitWorkforceIdentity({
+        client: supabaseAdmin,
+        companyId,
+        mobile: phone,
+        designationId: null,
+        designationName: roleRelation?.name || roleRelation?.code || requisition.data.title
+      });
+      try {
+        assertRecruitWorkforceIdentity(identityEvaluation);
+      } catch (identityError) {
+        return NextResponse.json({ error: identityError instanceof Error ? identityError.message : "Mobile identity conflict." }, { status: 409 });
+      }
+    }
 
     let existing: any = null;
     if (phone) {

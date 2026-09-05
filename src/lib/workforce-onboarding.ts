@@ -5,6 +5,7 @@ import { supabaseAdmin } from "./supabase-admin";
 import { onboardingApplicationSource } from "./workforce-onboarding-review";
 import { assertWorkforceDesignationRoute } from "./designation-register-routing";
 import { canonicalWorkforceIdentity, WORKFORCE_PROFILE_TABLE } from "./workforce-register";
+import { assertRecruitWorkforceIdentity, evaluateRecruitWorkforceIdentity, recruitmentIdentityExceptionMetadata } from "./onboarding-identity";
 
 type OnboardingSession = {
   profileId: string;
@@ -51,59 +52,6 @@ export function normalizeRecruitmentJoiningFields(input: Pick<OnboardingInput, "
   const amazonCompId = clean(input.providerEmployeeId, 100);
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error("Email ID is required.");
   return { email, dropxEmployeeId, amazonCompId };
-}
-
-type ExistingFieldExecutive = {
-  id: string;
-  mobile: string;
-  email: string;
-  dropx_id: string | null;
-  biometric_id: string | null;
-  onboarding_status: string | null;
-  designation: string | null;
-  location_id: string | null;
-};
-
-async function existingIdentity(companyId: string, mobile: string, email: string) {
-  if (!supabaseAdmin) throw new Error("Supabase is not configured.");
-  const columns = "id,mobile,email,dropx_id,biometric_id,onboarding_status,designation,location_id";
-  const [mobileResult, emailResult] = await Promise.all([
-    supabaseAdmin.from(WORKFORCE_PROFILE_TABLE).select(columns)
-      .eq("company_id", companyId).eq("mobile", mobile).limit(2),
-    supabaseAdmin.from(WORKFORCE_PROFILE_TABLE).select(columns)
-      .eq("company_id", companyId).ilike("email", email).limit(2)
-  ]);
-  if (mobileResult.error || emailResult.error) {
-    throw new Error(mobileResult.error?.message || emailResult.error?.message);
-  }
-  const matches = new Map<string, ExistingFieldExecutive>();
-  for (const row of [...(mobileResult.data ?? []), ...(emailResult.data ?? [])] as ExistingFieldExecutive[]) {
-    matches.set(row.id, row);
-  }
-  if (!matches.size) return null;
-  if (matches.size > 1) {
-    throw new Error("This mobile number or email is already linked to another Workforce profile. Review the existing records before continuing.");
-  }
-  const existing = [...matches.values()][0];
-  if (existing.mobile !== mobile || normalizeFieldExecutiveEmail(existing.email) !== email) {
-    throw new Error(`This mobile number or email is already registered${existing.dropx_id ? ` under ${existing.dropx_id}` : ""}.`);
-  }
-  return existing;
-}
-
-function existingResult(existing: ExistingFieldExecutive) {
-  return {
-    id: existing.id,
-    dropxId: existing.dropx_id,
-    biometricId: existing.biometric_id,
-    onboardingStatus: existing.onboarding_status,
-    designation: existing.designation,
-    reused: true,
-    notification: {
-      status: "skipped" as const,
-      reason: "This Workforce profile already exists; no duplicate notification was sent."
-    }
-  };
 }
 
 async function nextBiometricId(companyId: string) {
@@ -240,8 +188,15 @@ export async function createWorkforceFieldExecutive(
   }
   const designationName = selectedDesignation.data.name;
 
-  const existing = await existingIdentity(companyId, mobile, email);
-  if (existing) return existingResult(existing);
+  const identityEvaluation = await evaluateRecruitWorkforceIdentity({
+    client: supabaseAdmin,
+    companyId,
+    mobile,
+    designationId: selectedDesignation.data.id,
+    designationName
+  });
+  assertRecruitWorkforceIdentity(identityEvaluation);
+  const identityExceptionMetadata = recruitmentIdentityExceptionMetadata(identityEvaluation);
 
   const [dropxId, biometricId] = await Promise.all([
     generatedId(companyId, station.data.id, designationName, "dropx"),
@@ -278,9 +233,9 @@ export async function createWorkforceFieldExecutive(
   if (inserted.error) {
     const message = inserted.error.message.toLowerCase();
     if (message.includes("duplicate") || message.includes("unique")) {
-      const raced = await existingIdentity(companyId, mobile, email);
-      if (raced) return existingResult(raced);
-      throw new Error("This mobile, email, DropX ID, or biometric ID is already registered.");
+      throw new Error(inserted.error.message.includes("mobile")
+        ? inserted.error.message
+        : "This mobile, email, DropX ID, or biometric ID is already registered.");
     }
     throw new Error(inserted.error.message);
   }
@@ -315,7 +270,8 @@ export async function createWorkforceFieldExecutive(
 
   const onboardingEvent = await supabaseAdmin.from("workforce_onboarding_events").insert({
     company_id: companyId,
-    field_executive_id: inserted.data.id,
+    field_executive_id: null,
+    workforce_id: inserted.data.id,
     event_code: "onboarding_requested",
     from_status: null,
     to_status: "pending",
@@ -325,7 +281,8 @@ export async function createWorkforceFieldExecutive(
     metadata: {
       source: onboardingApplicationSource(session.recruitmentFunction),
       actor_email: session.email,
-      recruitment_lead_id: lead?.id ?? null
+      recruitment_lead_id: lead?.id ?? null,
+      ...identityExceptionMetadata
     }
   });
   if (onboardingEvent.error) throw new Error(onboardingEvent.error.message);
