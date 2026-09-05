@@ -11,6 +11,7 @@ import {
 import { calculateEffectiveRecruitmentLocationScope } from "@/lib/recruitment-location-scope";
 import { canUseRecruitmentMenu, recruitmentSession, requiredEnv } from "@/lib/recruitment-api";
 import { invalidateMobileSessionCache } from "@/lib/mobile-session";
+import { loadPeopleDesignations } from "@/lib/people-designation";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { loadWorkforceConfig } from "@/lib/recruitment-workforce-config";
 import {
@@ -97,6 +98,10 @@ export async function GET(request: Request) {
     const failure = [allowlist, access, mobile, locationScopes, roleScopes, locations, roles, registeredProfiles, productMemberships, workforceDesignations].find((item) => item.error);
     if (failure?.error) throw failure.error;
     const mainUserRoles = recruitDesignationAccess.roles;
+    const peopleDesignations = await loadPeopleDesignations(
+      companyId,
+      (registeredProfiles.data ?? []).map((profile) => profile.id)
+    );
     const productMembershipByUser = new Map((productMemberships.data ?? []).map((membership) => [membership.user_id, membership]));
     const locationsByAccess = new Map<string, string[]>();
     for (const row of locationScopes.data ?? []) {
@@ -169,6 +174,7 @@ export async function GET(request: Request) {
         const scopeIds = Array.isArray(profile.location_scope_ids) ? profile.location_scope_ids : [];
         return {
           ...profile,
+          peopleDesignation: peopleDesignations.get(profile.id) ?? null,
           universalRole: mainRole ? {
             id: mainRole.id,
             code: mainRole.code,
