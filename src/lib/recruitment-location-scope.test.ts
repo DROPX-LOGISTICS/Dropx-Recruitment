@@ -29,6 +29,25 @@ describe("calculateEffectiveRecruitmentLocationScope", () => {
     expect(scope.mode).toBe("inherit");
   });
 
+  it("includes a newly projected Dashboard station and excludes a Recruit-only orphan", () => {
+    const scope = calculateEffectiveRecruitmentLocationScope({
+      isMasterOwner: false,
+      universalLocationAccessMode: "assigned_locations",
+      universalStationIds: ["main-kbwe"],
+      recruitmentScopeMode: "inherit",
+      selectedRecruitmentLocationIds: ["recruit-ersn"],
+      mainStations: [...mainStations, { id: "main-kbwe", code: "KBWE" }],
+      recruitmentLocations: [
+        ...recruitmentLocations,
+        { id: "recruit-kbwe", code: "KBWE" },
+        { id: "recruit-ersn", code: "ERSN" }
+      ]
+    });
+
+    expect(scope.locationIds).toEqual(["recruit-kbwe"]);
+    expect(scope.locationIds).not.toContain("recruit-ersn");
+  });
+
   it("clamps a stale all-stations Recruitment record to the live universal scope", () => {
     const scope = calculateEffectiveRecruitmentLocationScope({
       isMasterOwner: false,

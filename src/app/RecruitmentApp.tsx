@@ -3059,7 +3059,7 @@ function MasterManager({ kind, stream, data, token, reload, canEdit = true }: {
     setNotice("");
   }
   async function save() {
-    if (!canEdit) return;
+    if (!canEdit || kind === "location") return;
     setSaving(true); setNotice("");
     try {
       const response=await fetch("/api/recruitment/masters",{method:"PUT",headers:{...headers(token),"Content-Type":"application/json"},body:JSON.stringify({resource:kind,...form})});
@@ -3073,15 +3073,14 @@ function MasterManager({ kind, stream, data, token, reload, canEdit = true }: {
     finally { setSaving(false); }
   }
   const title=kind==="location"
-    ? "Location / station master"
+    ? "Dashboard location directory"
     : kind==="contact"
       ? "Station contact master"
       : `${stream === "hr" ? "HR" : "Workforce"} designation master`;
   return <section className="connections-view">
-    {canEdit?<section className="content-card"><h2>{title}</h2><p>Select a record to update it, or choose “Add new”.</p>
+    {kind==="location"?<section className="content-card master-readonly-note"><h2>{title}</h2><p>Dashboard → Master Data → Locations is the source of truth. New stations, edits and deactivation sync here automatically.</p></section>:canEdit?<section className="content-card"><h2>{title}</h2><p>Select a record to update it, or choose “Add new”.</p>
       <div className="form-grid">
-        <SearchSelect label={kind==="role"?"Designation":kind==="contact"?"Station":"Location"} value={form.selected||""} options={(kind==="role"?roles:locations).map((item:any)=>[item.id,`${item.code} — ${item.name}`])} onChange={choose} placeholder="Search existing records or leave blank to add new"/>
-        {kind==="location"?<><label>Station code<input value={form.code||""} disabled={Boolean(form.selected)} onChange={(event)=>setForm({...form,code:event.target.value})}/></label><label>Station name<input value={form.name||""} onChange={(event)=>setForm({...form,name:event.target.value})}/></label><label>Operational owner<input value={form.cluster||"Not mapped in People"} disabled/><small>Managed in People using the active Cluster Manager or Area Ops Manager profile station scope.</small></label><label>State<input value={form.state||""} onChange={(event)=>setForm({...form,state:event.target.value})}/></label><label>Region<input value={form.region||""} onChange={(event)=>setForm({...form,region:event.target.value})}/></label><label className="check-field"><input type="checkbox" checked={form.isActive!==false} onChange={(event)=>setForm({...form,isActive:event.target.checked})}/>Active</label></>:null}
+        <SearchSelect label={kind==="role"?"Designation":"Station"} value={form.selected||""} options={(kind==="role"?roles:locations).map((item:any)=>[item.id,`${item.code} — ${item.name}`])} onChange={choose} placeholder="Search existing records or leave blank to add new"/>
         {kind==="contact"?<><label className="wide">Address<textarea value={form.address||""} onChange={(event)=>setForm({...form,address:event.target.value})}/></label><label>Latitude<input type="number" step="any" value={form.latitude||""} onChange={(event)=>setForm({...form,latitude:event.target.value})}/></label><label>Longitude<input type="number" step="any" value={form.longitude||""} onChange={(event)=>setForm({...form,longitude:event.target.value})}/></label><label>POC name<input value={form.pocName||""} onChange={(event)=>setForm({...form,pocName:event.target.value})}/></label><label>POC mobile<input inputMode="tel" value={form.pocMobile||""} onChange={(event)=>setForm({...form,pocMobile:event.target.value})}/></label></>:null}
         {kind==="role"?<><label>Code<input value={form.code||""} disabled={Boolean(form.selected)} onChange={(event)=>setForm({...form,code:event.target.value})}/></label><label>Designation name<input value={form.name||""} onChange={(event)=>setForm({...form,name:event.target.value})}/></label><label>Category<select value={form.stream||"workforce"} onChange={(event)=>setForm({...form,stream:event.target.value})}><option value="workforce">Workforce — blue-collar</option><option value="hr">HR — white-collar</option></select></label><label>Routing aliases<input value={form.aliases||""} onChange={(event)=>setForm({...form,aliases:event.target.value})} placeholder="comma separated"/></label><label>Required application fields<input value={form.requiredFields||""} onChange={(event)=>setForm({...form,requiredFields:event.target.value})} placeholder="comma separated"/></label><label className="check-field"><input type="checkbox" checked={form.isActive!==false} onChange={(event)=>setForm({...form,isActive:event.target.checked})}/>Active</label></>:null}
       </div>

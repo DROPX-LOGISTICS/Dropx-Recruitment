@@ -29,7 +29,7 @@ export async function GET(request: Request) {
     }
     const companyId = requiredEnv("RECRUITMENT_COMPANY_ID");
     const [locations, roles, contacts, whatsapp, mainStations, workforceConfig, lifecycleRules, lifecycleSettings] = await Promise.all([
-      supabaseAdmin.from("recruitment_locations").select("id,code,name,state,region,address,latitude,longitude,poc_name,poc_mobile,is_active").eq("company_id", companyId).order("code"),
+      supabaseAdmin.from("recruitment_locations").select("id,station_id,code,name,state,region,address,latitude,longitude,poc_name,poc_mobile,is_active").eq("company_id", companyId).not("station_id", "is", null).order("code"),
       supabaseAdmin.from("recruitment_roles").select("id,code,name,stream,aliases,required_fields,is_active").eq("company_id", companyId).order("code")
       ,supabaseAdmin.from("recruitment_location_contacts").select("id,location_id,address,latitude,longitude,poc_name,poc_mobile").eq("company_id", companyId),
       getConnectionConfig("whatsapp"),
@@ -156,26 +156,9 @@ export async function PUT(request: Request) {
     const now = new Date().toISOString();
 
     if (resource === "location") {
-      const code = text(body.code, 20).toUpperCase().replace(/[^A-Z0-9]/g, "");
-      const name = text(body.name, 160);
-      if (!code || !name) return NextResponse.json({ error: "Location code and name are required." }, { status: 400 });
-      const saved = await supabaseAdmin.from("recruitment_locations").upsert({
-        company_id: companyId,
-        code,
-        name,
-        state: optional(body.state, 100),
-        region: optional(body.region, 100),
-        is_active: body.isActive !== false,
-        updated_at: now
-      }, { onConflict: "company_id,code" }).select("id,code,name").single();
-      if (saved.error) throw saved.error;
-      const remapped = await remapUnmappedApplications({
-        companyId,
-        actorProfileId: session.profileId,
-        actorEmail: session.email
-      });
-      await auditMasterChange({ companyId, action: "location_saved", changedFields: ["name", "state", "region", "active"], message: `Station ${code} · ${name} saved. Operational ownership remains controlled in People.`, actorProfileId: session.profileId, actorEmail: session.email });
-      return NextResponse.json({ saved: true, resource, item: saved.data, remapped });
+      return NextResponse.json({
+        error: "Locations are managed in Dashboard → Master Data → Locations and sync to Recruitment automatically."
+      }, { status: 409 });
     }
 
     if (resource === "contact") {

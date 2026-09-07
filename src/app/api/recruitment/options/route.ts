@@ -19,7 +19,7 @@ export async function GET(request: Request) {
     if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     const companyId = requiredEnv("RECRUITMENT_COMPANY_ID");
     const unrestrictedCatalog = hasFullLeadAccess(session);
-    let locations = supabaseAdmin.from("recruitment_locations").select("id,code,name,state").eq("company_id", companyId).eq("is_active", true);
+    let locations = supabaseAdmin.from("recruitment_locations").select("id,station_id,code,name,state").eq("company_id", companyId).not("station_id", "is", null).eq("is_active", true);
     let roles = supabaseAdmin.from("recruitment_roles").select("id,code,name,stream").eq("company_id", companyId).eq("is_active", true);
     if (!unrestrictedCatalog && !session.allLocations) locations = locations.in("id", session.locationIds);
     if (!unrestrictedCatalog && session.roleIds.length) roles = roles.in("id", session.roleIds);
