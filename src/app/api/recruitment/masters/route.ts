@@ -165,16 +165,24 @@ export async function PUT(request: Request) {
     if (resource === "contact") {
       const locationId = text(body.locationId, 80);
       if (!locationId) return NextResponse.json({ error: "Choose a station." }, { status: 400 });
-      const location = await supabaseAdmin.from("recruitment_locations").select("id")
+      const location = await supabaseAdmin.from("recruitment_locations")
+        .select("id,address,latitude,longitude,poc_name,poc_mobile")
         .eq("company_id", companyId).eq("id", locationId).maybeSingle();
       if (location.error) throw location.error;
       if (!location.data) return NextResponse.json({ error: "Station was not found." }, { status: 404 });
-      const values = {
+      const current = await supabaseAdmin.from("recruitment_location_contacts")
+        .select("address,latitude,longitude,poc_name,poc_mobile")
+        .eq("company_id", companyId).eq("location_id", locationId).maybeSingle();
+      if (current.error) throw current.error;
+      const submitted = {
         address: optional(body.address, 1000),
         latitude: coordinate(body.latitude),
         longitude: coordinate(body.longitude),
         poc_name: optional(body.pocName, 160),
-        poc_mobile: optional(body.pocMobile, 30),
+        poc_mobile: optional(body.pocMobile, 30)
+      };
+      const values = {
+        ...mergeRecruitmentLocationContact(submitted, current.data ?? location.data),
         updated_at: now
       };
       const saved = await supabaseAdmin.from("recruitment_location_contacts").upsert({

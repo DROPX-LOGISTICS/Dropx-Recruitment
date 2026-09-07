@@ -1,8 +1,6 @@
 -- Keep station identity in Dashboard while preserving Recruit-owned contact
 -- details. Empty Dashboard fields must never erase a candidate contact.
 
-create extension if not exists pageinspect with schema extensions;
-
 create table if not exists public.recruitment_location_contact_history (
   id uuid primary key default gen_random_uuid(),
   company_id uuid not null references public.companies(id) on delete cascade,
@@ -126,8 +124,8 @@ begin
 end;
 $$;
 
--- Restore any surviving legacy values immediately. The remaining historical
--- rows are recovered in the follow-up data migration after raw-page validation.
+-- Restore any surviving legacy values immediately, then recover the remaining
+-- numbers from immutable pre-incident candidate-message history below.
 update public.recruitment_location_contacts as contact
 set poc_name = coalesce(nullif(trim(contact.poc_name), ''), nullif(trim(location.poc_name), '')),
     poc_mobile = coalesce(nullif(trim(contact.poc_mobile), ''), nullif(trim(location.poc_mobile), '')),
@@ -140,3 +138,103 @@ where location.id = contact.location_id
     or
     (nullif(trim(contact.poc_mobile), '') is null and nullif(trim(location.poc_mobile), '') is not null)
   );
+
+-- The previous contact values were included in immutable candidate WhatsApp
+-- template payloads. Recover the last verified number sent before the station
+-- projection incident. This avoids guessing or replacing numbers with manager
+-- contacts that were never shared with candidates.
+with evidence as (
+  select
+    lead.location_id,
+    outbox.created_at,
+    case
+      when outbox.template_name = 'job_application_number'
+        then nullif(trim(outbox.template_parameters ->> 2), '')
+      when outbox.template_name = 'job_location_share'
+        then nullif(trim(outbox.template_parameters ->> 3), '')
+    end as contact_mobile
+  from public.recruitment_whatsapp_outbox as outbox
+  join public.recruitment_leads as lead on lead.id = outbox.lead_id
+  where outbox.created_at < '2026-09-07 17:07:19.502098+00'::timestamptz
+    and outbox.template_name in ('job_application_number', 'job_location_share')
+), ranked as (
+  select
+    location_id,
+    right(regexp_replace(contact_mobile, '\D', '', 'g'), 10) as contact_mobile,
+    row_number() over (partition by location_id order by created_at desc) as row_no
+  from evidence
+  where regexp_replace(coalesce(contact_mobile, ''), '\D', '', 'g') ~ '^[0-9]{10,13}$'
+), latest as (
+  select location_id, contact_mobile
+  from ranked
+  where row_no = 1
+)
+update public.recruitment_location_contacts as contact
+set poc_mobile = latest.contact_mobile,
+    updated_at = now()
+from latest
+where latest.location_id = contact.location_id
+  and nullif(trim(contact.poc_mobile), '') is null;
+
+-- Names visible in the pre-incident Station Contacts screen are restored
+-- exactly. For the remaining recovered numbers, use People only when the same
+-- normalized number resolves to one unambiguous person name.
+with exact_names(code, poc_name) as (
+  values
+    ('AWEZ', 'Sabith'),
+    ('CHM', 'Amaljith'),
+    ('ERSE', 'Rahul'),
+    ('GDRD', 'Suresh'),
+    ('GNTF', 'Basava'),
+    ('KBWE', 'Gokul')
+), people as (
+  select full_name, coalesce(nullif(mobile, ''), nullif(phone, '')) as mobile from public.profiles
+  union all select full_name, mobile from public.employees
+  union all select full_name, mobile from public.contractors
+  union all select full_name, mobile from public.workforce
+  union all select full_name, phone from public.delivery_associates
+  union all select full_name, mobile from public.vendors
+  union all select full_name, mobile from public.helpers
+  union all select full_name, mobile from public.workforce_helpers
+  union all select full_name, mobile from public.workforce_pickers
+), unique_people as (
+  select
+    right(regexp_replace(mobile, '\D', '', 'g'), 10) as mobile,
+    case
+      when count(distinct upper(trim(full_name))) = 1 then min(trim(full_name))
+      else null
+    end as full_name
+  from people
+  where nullif(trim(full_name), '') is not null
+    and regexp_replace(coalesce(mobile, ''), '\D', '', 'g') ~ '^[0-9]{10,13}$'
+  group by right(regexp_replace(mobile, '\D', '', 'g'), 10)
+), recovered_names as (
+  select
+    contact.id,
+    coalesce(exact.poc_name, person.full_name) as poc_name
+  from public.recruitment_location_contacts as contact
+  join public.recruitment_locations as location on location.id = contact.location_id
+  left join exact_names as exact on exact.code = upper(trim(location.code))
+  left join unique_people as person
+    on person.mobile = right(regexp_replace(contact.poc_mobile, '\D', '', 'g'), 10)
+  where nullif(trim(contact.poc_name), '') is null
+)
+update public.recruitment_location_contacts as contact
+set poc_name = recovered.poc_name,
+    updated_at = now()
+from recovered_names as recovered
+where recovered.id = contact.id
+  and recovered.poc_name is not null;
+
+-- Keep compatibility reads in older Recruit flows aligned with the recovered
+-- contact record while Dashboard continues to own station identity/mapping.
+update public.recruitment_locations as location
+set address = coalesce(nullif(trim(contact.address), ''), location.address),
+    latitude = coalesce(contact.latitude, location.latitude),
+    longitude = coalesce(contact.longitude, location.longitude),
+    poc_name = coalesce(nullif(trim(contact.poc_name), ''), location.poc_name),
+    poc_mobile = coalesce(nullif(trim(contact.poc_mobile), ''), location.poc_mobile),
+    updated_at = now()
+from public.recruitment_location_contacts as contact
+where contact.location_id = location.id
+  and contact.company_id = location.company_id;
