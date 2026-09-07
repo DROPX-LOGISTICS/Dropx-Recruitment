@@ -6,6 +6,7 @@ import { supabaseAdmin } from "@/lib/supabase-admin";
 import type { RecruitmentMenuId } from "@/lib/recruitment-menu-roles";
 import { legacyLeadDetailMenus } from "@/lib/lead-detail-menu";
 import { normalizeCandidateLocation } from "@/lib/hr-recruitment-overview";
+import { mergeRecruitmentLocationContact } from "@/lib/recruitment-location-contact";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -41,7 +42,7 @@ async function scopedLead(request: Request, id: string, includeContact = false) 
     if (contact.error) throw new Error(contact.error.message);
     if (contact.data) lead.recruitment_locations = {
       ...(lead.recruitment_locations ?? {}),
-      ...contact.data
+      ...mergeRecruitmentLocationContact(contact.data, lead.recruitment_locations)
     };
   }
   return { session, companyId, lead };
@@ -96,7 +97,7 @@ export async function GET(request: Request, { params }: { params: { id: string }
       ...resolved.lead,
       recruitment_locations: {
         ...(resolved.lead!.recruitment_locations ?? {}),
-        ...contact.data
+        ...mergeRecruitmentLocationContact(contact.data, resolved.lead!.recruitment_locations)
       }
     } : resolved.lead;
     const finishedAt = Date.now();

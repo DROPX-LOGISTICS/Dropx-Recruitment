@@ -11,6 +11,7 @@ import { authoritativeRoleStream } from "@/lib/recruitment-routing";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { loadWorkforceConfig, saveWorkforceConfig } from "@/lib/recruitment-workforce-config";
 import { loadHrLifecycleRules, loadHrWorkflowSettings } from "@/lib/hr-recruitment-lifecycle";
+import { mergeRecruitmentLocationContact } from "@/lib/recruitment-location-contact";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -69,7 +70,7 @@ export async function GET(request: Request) {
               operationalOwnerStatus: "unmapped",
               operationalOwnerDesignation: null
             }),
-        contact: contactByLocation.get(location.id) ?? null
+        contact: mergeRecruitmentLocationContact(contactByLocation.get(location.id), location)
       })),
       roles: (roles.data ?? []).map((role) => ({
         ...role,
