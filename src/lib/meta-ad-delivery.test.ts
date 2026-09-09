@@ -27,6 +27,22 @@ describe("Meta delivery, not just its on/off toggle", () => {
   it("does not invent live delivery without a status", () => {
     expect(metaDeliveryStatus({ adset: { status: "ACTIVE" } }, now)).toBe("UNKNOWN");
   });
+  it("exposes the current restart without changing Meta's original start", () => {
+    const ad = storedAdDelivery({ status: "ACTIVE", raw_payload: {
+      adset: { id: "set", start_time: "2026-08-01T00:00:00Z", end_time: "2026-09-16T12:00:00Z" },
+      last_restart: { at: "2026-09-09T12:00:00Z", endTime: "2026-09-16T12:00:00Z" }
+    } }, now);
+    expect(ad.current_run_started_at).toBe("2026-09-09T12:00:00Z");
+    expect(ad.starts_at).toBe("2026-08-01T00:00:00Z");
+    expect(ad.schedule_known).toBe(true);
+  });
+  it("does not attach an obsolete restart to a changed Meta schedule", () => {
+    expect(storedAdDelivery({ raw_payload: {
+      adset: { start_time: "2026-08-01T00:00:00Z", end_time: "2026-09-20T12:00:00Z" },
+      last_restart: { at: "2026-09-09T12:00:00Z", endTime: "2026-09-16T12:00:00Z" }
+    } }, now).current_run_started_at).toBe("2026-08-01T00:00:00Z");
+    expect(storedAdDelivery({ status: "unknown", raw_payload: {} }, now).schedule_known).toBe(false);
+  });
   it("uses the dedicated successful sync timestamp, including first run and retry", () => {
     expect(metaAdSyncDue(null, now)).toBe(true);
     expect(metaAdSyncDue("invalid", now)).toBe(true);
