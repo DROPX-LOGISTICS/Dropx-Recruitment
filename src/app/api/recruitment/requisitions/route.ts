@@ -26,7 +26,7 @@ function code() {
 
 async function scopedRequisitions(session: NonNullable<Awaited<ReturnType<typeof recruitmentSession>>>, companyId: string) {
   let query = supabaseAdmin!.from("recruitment_job_requisitions")
-    .select("id,requisition_code,title,worker_type,openings,filled_positions,status,priority,target_joining_date,experience_min_years,experience_max_years,education,salary_min,salary_max,currency,jd_text,jd_file_name,must_have_skills,preferred_skills,source_channels,version,approved_at,created_at,updated_at,role_id,location_id,hiring_manager_profile_id,recruiter_profile_id,recruitment_roles(code,name),recruitment_locations(code,name),hiring_manager:profiles!recruitment_job_requisitions_hiring_manager_profile_id_fkey(id,full_name,email),recruiter:profiles!recruitment_job_requisitions_recruiter_profile_id_fkey(id,full_name,email)")
+    .select("id,requisition_code,title,worker_type,openings,filled_positions,status,priority,target_joining_date,experience_min_years,experience_max_years,education,salary_min,salary_max,currency,jd_text,jd_file_name,must_have_skills,preferred_skills,source_channels,website_published,website_description,website_location,version,approved_at,created_at,updated_at,role_id,location_id,hiring_manager_profile_id,recruiter_profile_id,recruitment_roles(code,name),recruitment_locations(code,name),hiring_manager:profiles!recruitment_job_requisitions_hiring_manager_profile_id_fkey(id,full_name,email),recruiter:profiles!recruitment_job_requisitions_recruiter_profile_id_fkey(id,full_name,email)")
     .eq("company_id", companyId)
     .order("created_at", { ascending: false });
   if (!session.isOwner && !session.allLocations) query = query.in("location_id", session.locationIds);

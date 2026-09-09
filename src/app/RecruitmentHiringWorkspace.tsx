@@ -15,6 +15,7 @@ export function JobRequisitionsWorkspace({ data, token, options, canAdd, canEdit
   const requisitions=data?.requisitions??[];
   const people=data?.people??[];
   const [open,setOpen]=useState(false);
+  const [websiteJob,setWebsiteJob]=useState<any>(null);
   const [busy,setBusy]=useState(false);
   const [notice,setNotice]=useState("");
   const hrRoles=(options.roles??[]).filter((item:any)=>item.stream==="hr");
@@ -36,11 +37,28 @@ export function JobRequisitionsWorkspace({ data, token, options, canAdd, canEdit
     }catch(error){setNotice(error instanceof Error?error.message:"Unable to update requisition.");}
     finally{setBusy(false);}
   }
+  async function publishWebsite(event:React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();setBusy(true);setNotice("");
+    const form=new FormData(event.currentTarget);
+    try {
+      const response=await fetch("/api/recruitment/website-publishing",{method:"PATCH",headers:{...authHeaders(token),"Content-Type":"application/json"},body:JSON.stringify({id:websiteJob.id,description:form.get("description"),location:form.get("location"),published:form.get("published")==="on"})});
+      const body=await response.json();if(!response.ok)throw new Error(body.error||"Unable to save publication.");
+      setNotice("Website publication saved. Closed or filled jobs are automatically hidden.");setWebsiteJob(null);await reload();
+    }catch(error){setNotice(error instanceof Error?error.message:"Unable to save publication.");}finally{setBusy(false);}
+  }
   const openCount=requisitions.filter((item:any)=>item.status==="open").length;
   const openings=requisitions.filter((item:any)=>["open","pending_approval"].includes(item.status)).reduce((sum:number,item:any)=>sum+Number(item.openings||0)-Number(item.filled_positions||0),0);
   return <section className="ats-stack">
     <div className="ats-hero"><div><span>REQUISITION CONTROL</span><h2>Jobs, JDs and hiring ownership</h2><p>The TA tracker is organised by requisition, location and owner—without creating one sheet per role.</p></div>{canAdd?<button className="primary-action" onClick={()=>setOpen(!open)}>{open?"Close form":"+ New requisition"}</button>:null}</div>
     {notice?<div className="ats-notice" role="status">{notice}</div>:null}
+    {websiteJob?<form className="content-card ats-form" onSubmit={publishWebsite}>
+      <h3>Website listing: {websiteJob.title}</h3><p>Write for candidates. Include responsibilities and requirements; leave internal screening answers out. Use this page as the destination for LinkedIn applications.</p>
+      <label>Public location<input name="location" maxLength={200} defaultValue={websiteJob.website_location||""} required/></label>
+      <label>Public job description<textarea name="description" rows={10} minLength={80} maxLength={12000} defaultValue={websiteJob.website_description||""} required/></label>
+      <label><input type="checkbox" name="published" defaultChecked={websiteJob.website_published}/> Publish on DropX careers</label>
+      <button className="primary-action" disabled={busy}>Save website listing</button> <button type="button" onClick={()=>setWebsiteJob(null)}>Cancel</button>
+      <p><a href={`https://www.dropxlogistics.com/careers?job=${websiteJob.id}&utm_source=linkedin&utm_medium=job_listing`} target="_blank" rel="noreferrer">Open candidate link for LinkedIn</a></p>
+    </form>:null}
     <div className="ats-metrics"><article><b>{requisitions.length}</b><span>Total requisitions</span></article><article><b>{openCount}</b><span>Open for applications</span></article><article><b>{openings}</b><span>Remaining positions</span></article><article><b>{requisitions.reduce((sum:number,item:any)=>sum+Number(item.applications?.total||0),0)}</b><span>Linked applications</span></article></div>
     {open?<form className="content-card ats-form" onSubmit={submit}>
       <header><div><h2>Create job requisition</h2><p>Paste a JD or upload PDF/DOCX/TXT. The readable text becomes the versioned comparison source.</p></div></header>
@@ -68,7 +86,7 @@ export function JobRequisitionsWorkspace({ data, token, options, canAdd, canEdit
       </div>
       <div className="ats-form-actions"><button type="submit" className="primary-action" disabled={busy}>{busy?"Saving…":"Save requisition"}</button></div>
     </form>:null}
-    <section className="content-card ats-table-card"><header><div><h2>Requisition register</h2><p>HR executives with Edit access can update scoped role status. Opening a new requisition remains approval controlled; an approved role can be paused and reopened by HR.</p></div></header><div className="table-scroll"><table><thead><tr><th>Requisition</th><th>Role / location</th><th>Category</th><th>Hiring</th><th>Applications</th><th>Status</th><th>Control</th></tr></thead><tbody>{requisitions.map((item:any)=>{const role=relation(item.recruitment_roles);const location=relation(item.recruitment_locations);return <tr key={item.id}><td><b>{item.requisition_code}</b><span>{item.title}</span><small>JD v{item.version}{item.jd_file_name?` · ${item.jd_file_name}`:" · pasted JD"}</small></td><td><b>{role?.name||"Unmapped"}</b><small>{location?.code||"—"} · {location?.name||"No location"}</small></td><td>{label(item.worker_type)}<small>{label(item.priority)} priority</small></td><td><b>{Math.max(0,Number(item.openings)-Number(item.filled_positions))} remaining</b><small>{item.hiring_manager?.full_name||item.recruiter?.full_name||"Owner not set"}</small></td><td><b>{item.applications?.total||0}</b><small>{item.applications?.active||0} active · {item.applications?.hired||0} hired</small></td><td><em className={`ats-status ats-${item.status}`}>{label(item.status)}</em></td><td>{canEdit?<div className="ats-row-actions">{item.status==="draft"?<button disabled={busy} onClick={()=>void setStatus(item.id,"pending_approval")}>Submit</button>:null}{item.status==="pending_approval"&&canApprove?<button disabled={busy} onClick={()=>void setStatus(item.id,"open")}>Approve & open</button>:null}{item.status==="open"?<button disabled={busy} onClick={()=>void setStatus(item.id,"on_hold")}>Put on hold</button>:null}{item.status==="on_hold"?<button disabled={busy} onClick={()=>void setStatus(item.id,"open")}>Reopen</button>:null}{!["closed","cancelled"].includes(item.status)?<button disabled={busy} onClick={()=>void setStatus(item.id,"closed")}>Close</button>:null}</div>:"—"}</td></tr>})}{!requisitions.length?<tr><td colSpan={7}>No job requisitions yet.</td></tr>:null}</tbody></table></div></section>
+    <section className="content-card ats-table-card"><header><div><h2>Requisition register</h2><p>HR executives with Edit access can update scoped role status. Opening a new requisition remains approval controlled; an approved role can be paused and reopened by HR.</p></div></header><div className="table-scroll"><table><thead><tr><th>Requisition</th><th>Role / location</th><th>Category</th><th>Hiring</th><th>Applications</th><th>Status</th><th>Control</th></tr></thead><tbody>{requisitions.map((item:any)=>{const role=relation(item.recruitment_roles);const location=relation(item.recruitment_locations);return <tr key={item.id}><td><b>{item.requisition_code}</b><span>{item.title}</span><small>JD v{item.version}{item.jd_file_name?` · ${item.jd_file_name}`:" · pasted JD"}</small></td><td><b>{role?.name||"Unmapped"}</b><small>{location?.code||"—"} · {location?.name||"No location"}</small></td><td>{label(item.worker_type)}<small>{label(item.priority)} priority</small></td><td><b>{Math.max(0,Number(item.openings)-Number(item.filled_positions))} remaining</b><small>{item.hiring_manager?.full_name||item.recruiter?.full_name||"Owner not set"}</small></td><td><b>{item.applications?.total||0}</b><small>{item.applications?.active||0} active · {item.applications?.hired||0} hired</small></td><td><em className={`ats-status ats-${item.status}`}>{label(item.status)}</em></td><td>{canApprove?<button disabled={busy} onClick={()=>setWebsiteJob(item)}>{item.website_published?"Edit website listing":"Publish on website"}</button>:null}{canEdit?<div className="ats-row-actions">{item.status==="draft"?<button disabled={busy} onClick={()=>void setStatus(item.id,"pending_approval")}>Submit</button>:null}{item.status==="pending_approval"&&canApprove?<button disabled={busy} onClick={()=>void setStatus(item.id,"open")}>Approve & open</button>:null}{item.status==="open"?<button disabled={busy} onClick={()=>void setStatus(item.id,"on_hold")}>Put on hold</button>:null}{item.status==="on_hold"?<button disabled={busy} onClick={()=>void setStatus(item.id,"open")}>Reopen</button>:null}{!["closed","cancelled"].includes(item.status)?<button disabled={busy} onClick={()=>void setStatus(item.id,"closed")}>Close</button>:null}</div>:"—"}</td></tr>})}{!requisitions.length?<tr><td colSpan={7}>No job requisitions yet.</td></tr>:null}</tbody></table></div></section>
   </section>;
 }
 
