@@ -4,7 +4,7 @@ const SCRIPT = typeof document !== 'undefined' && document.currentScript?.src;
 const ASSET = SCRIPT && SCRIPT.includes('/website/') ? new URL('.', SCRIPT).href : 'https://recruit.dropxlogistics.com/website/';
 const API = new URL(ASSET).origin;
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const paths = {home:'/',solutions:'/solutions',quick:'/quick-commerce',about:'/about',join:'/delivery-partner',careers:'/careers',contact:'/contact',privacy:'/privacy-policy'};
+const paths = {home:'/',solutions:'/solutions',quick:'/quick-commerce',about:'/about',join:'/delivery-partner',careers:'/careers',contact:'/contact',privacy:'/recruitment-privacy'};
 const titles = {home:'Quick Commerce Infrastructure & Last-Mile Delivery',solutions:'Infrastructure for brands and marketplaces',quick:'Launch and scale quick commerce',about:'The company behind your next market',join:'Join as a delivery partner',careers:'Careers at DropX',contact:'Build with DropX',privacy:'Recruitment privacy'};
 const stages = [
  {name:'Connect',title:'Your commerce. Connected.',brand:'Connect your brand’s growth plans with the marketplace ecosystem and DropX’s own technology. Define the markets, inventory and operating model together.',market:'Bring your marketplace into new catchments with DropX’s physical network and own technology. Align your demand, service scope and launch plan.',outcome:'A clear route from business ambition to an operating plan.'},
