@@ -20,6 +20,7 @@ import {
   type AdRequestLifecycleAction
 } from "@/lib/ad-request-lifecycle";
 import { resolveMetaDailyBudgetTarget } from "@/lib/meta-budget";
+import { RESTART_AD_FIELDS, restartCompletedMetaAd, validateRestartTerms, type RestartAdSnapshot } from "@/lib/meta-ad-restart";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -173,7 +174,7 @@ async function metaGet<T>(path: string, fields: string) {
 async function completeMetaChange(companyId: string, requestId: string) {
   if (!supabaseAdmin) throw new Error("Supabase is not configured.");
   const pending = await supabaseAdmin.from("recruitment_ad_requests")
-    .select("id,request_type,requested_budget,ad_id,recruitment_ads(id,meta_ad_id,daily_budget,raw_payload)")
+    .select("id,request_type,requested_budget,days_required,raw_payload,ad_id,recruitment_ads(id,meta_ad_id,location_id,daily_budget,raw_payload)")
     .eq("company_id", companyId)
     .eq("id", requestId)
     .maybeSingle();
@@ -194,9 +195,52 @@ async function completeMetaChange(companyId: string, requestId: string) {
     return;
   }
   if (pending.data.request_type === "resume_ad") {
+    const requestPayload = requestRaw(pending.data.raw_payload);
+    if (requestPayload.restartCompleted === true) {
+      try {
+        const audience = await resolveRecruitmentAdAudience({ companyId, locationId: ad.location_id });
+        const result = await restartCompletedMetaAd({
+          adId: ad.meta_ad_id,
+          days: pending.data.days_required,
+          budget: pending.data.requested_budget,
+          expectedEndTime: String(requestPayload.expectedEndTime || ""),
+          audience,
+          read: () => metaGet<RestartAdSnapshot>(ad.meta_ad_id, RESTART_AD_FIELDS),
+          post: (id, values) => metaPost(id, values, "ad restart")
+        });
+        const now = new Date().toISOString();
+        const saved = await supabaseAdmin.from("recruitment_ads").update({
+          status: metaDeliveryStatus(result.after),
+          daily_budget: result.dailyBudget,
+          raw_payload: {
+            ...ad.raw_payload, ...result.after,
+            last_restart: { requestId, at: now, previousEndTime: result.before.adset?.end_time, endTime: result.endTime, days: pending.data.days_required, dailyBudget: result.dailyBudget }
+          },
+          last_synced_at: now, updated_at: now
+        }).eq("company_id", companyId).eq("id", ad.id);
+        if (saved.error) throw new Error("Meta accepted the restart, but Recruit could not save its latest status. Reconcile Meta before retrying.");
+      } catch (error) {
+        // Failed or interrupted writes must not leave the dashboard showing the old schedule.
+        try {
+          const current = await getMetaAdDeliverySnapshot(ad.meta_ad_id);
+          const currentSet = current.adset as { daily_budget?: string } | undefined;
+          const now = new Date().toISOString();
+          await supabaseAdmin.from("recruitment_ads").update({
+            status: metaDeliveryStatus(current),
+            ...(Number(currentSet?.daily_budget) > 0 ? { daily_budget: Number(currentSet?.daily_budget) / 100 } : {}),
+            raw_payload: { ...ad.raw_payload, ...current }, last_synced_at: now, updated_at: now
+          }).eq("company_id", companyId).eq("id", ad.id);
+        } catch { /* The next full Meta reconciliation will retry the read. */ }
+        throw new AdChangeError(error instanceof Error ? error.message : "Unable to restart this ad.");
+      }
+      return;
+    }
     const before = await getMetaAdDeliverySnapshot(ad.meta_ad_id);
-    if (["COMPLETED", "DELETED", "ARCHIVED"].includes(metaDeliveryStatus(before))) {
-      throw new AdChangeError("This ad has ended. Create a new ad with an approved duration and budget; switching it on will not extend its schedule.");
+    if (metaDeliveryStatus(before) === "COMPLETED") {
+      throw new AdChangeError("This ad has ended. Refresh Active Ads and choose Run again to set a new duration and budget.");
+    }
+    if (["DELETED", "ARCHIVED"].includes(metaDeliveryStatus(before))) {
+      throw new AdChangeError("This Meta ad has been deleted or archived. Create a new ad in Recruit.");
     }
     const parents = [before.adset, before.campaign];
     if (parents.some((parent) => parent && String(parent.effective_status || parent.status) !== "ACTIVE")) {
@@ -215,7 +259,7 @@ async function completeMetaChange(companyId: string, requestId: string) {
   }
   const currentDelivery = await getMetaAdDeliverySnapshot(ad.meta_ad_id);
   if (metaDeliveryStatus(currentDelivery) === "COMPLETED") {
-    throw new AdChangeError("This ad has ended. A budget change cannot restart it; create a new ad with an approved schedule.");
+    throw new AdChangeError("This ad has ended. Choose Run again to set a new duration and daily budget.");
   }
   const requestedBudget = Number(pending.data.requested_budget || 0);
   if (!(requestedBudget > 0)) throw new AdChangeError("The approved budget is invalid.");
@@ -352,6 +396,13 @@ export async function POST(request: Request) {
     const body = await request.json() as Record<string, unknown>;
     const requestType = String(body.requestType ?? "new_ad");
     if (!["new_ad", "budget_change", "stop_ad", "resume_ad"].includes(requestType)) return NextResponse.json({ error: "Invalid request type." }, { status: 400 });
+    if (body.restartCompleted === true) {
+      if (requestType !== "resume_ad" || !Number.isFinite(Date.parse(String(body.expectedEndTime || "")))) {
+        return NextResponse.json({ error: "Choose a completed ad from Active Ads before running it again." }, { status: 400 });
+      }
+      try { validateRestartTerms(body.daysRequired, body.requestedBudget); }
+      catch (error) { return NextResponse.json({ error: (error as Error).message }, { status: 400 }); }
+    }
     if (requestType === "new_ad" && (!body.locationId || !body.roleId)) return NextResponse.json({ error: "Station and designation are required." }, { status: 400 });
     if (requestType === "new_ad" && !(Number(body.requestedBudget) >= 100)) {
       return NextResponse.json({ error: "Daily budget must be at least ₹100." }, { status: 400 });
@@ -403,6 +454,8 @@ export async function POST(request: Request) {
         stream: role?.stream
       })) return NextResponse.json({ error: "You cannot request a change outside your assigned recruitment scope." }, { status: 403 });
       requestWorkspace = String(role?.stream || "");
+      body.locationId = ad.data.location_id;
+      body.roleId = ad.data.role_id;
     }
     const now = new Date().toISOString();
     const requestId = `AR-${Date.now()}-${randomUUID().slice(0, 6).toUpperCase()}`;

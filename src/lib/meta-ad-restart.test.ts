@@ -1,0 +1,118 @@
+import { describe, expect, it, vi } from "vitest";
+import { restartCompletedMetaAd, validateRestartTerms, type RestartAdSnapshot } from "./meta-ad-restart";
+
+const now = Date.parse("2026-09-09T12:00:00Z");
+const expectedEndTime = "2026-09-04T07:28:08+0530";
+function fixture() {
+  let ad: RestartAdSnapshot = {
+    id: "ad-1", status: "ACTIVE", effective_status: "ACTIVE",
+    campaign: { id: "campaign-1", status: "ACTIVE", effective_status: "ACTIVE", is_adset_budget_sharing_enabled: false },
+    adset: {
+      id: "set-1", status: "ACTIVE", effective_status: "ACTIVE", end_time: expectedEndTime,
+      start_time: "2026-08-30T01:58:08Z", daily_budget: "10000",
+      ads: { data: [{ id: "ad-1" }] },
+      targeting: { geo_locations: { custom_locations: [{ latitude: 11.265875, longitude: 75.825172, radius: 17, distance_unit: "kilometer" }] } }
+    }
+  };
+  const post = vi.fn(async (id: string, values: Record<string, string>) => {
+    if (values.execution_options) return { success: true };
+    if (id === ad.id) ad = { ...ad, ...values, effective_status: values.status || ad.effective_status };
+    else ad = { ...ad, adset: { ...ad.adset, ...values } };
+    return { success: true };
+  });
+  const read = vi.fn(async () => structuredClone(ad));
+  return {
+    input: { adId: "ad-1", days: 7, budget: 100, expectedEndTime, now,
+      audience: { stationCode: "KOZA", latitude: 11.265875, longitude: 75.825172 }, read, post },
+    get ad() { return ad; }
+  };
+}
+
+describe("completed ad restart", () => {
+  it("extends from now and verifies while paused before activating the same ad", async () => {
+    const f = fixture();
+    const result = await restartCompletedMetaAd(f.input);
+    expect(result.endTime).toBe("2026-09-16T12:00:00.000Z");
+    expect(result.after.status).toBe("ACTIVE");
+    expect(result.after.adset?.targeting).toEqual(result.before.adset?.targeting);
+    expect(f.input.post.mock.calls).toEqual([
+      ["set-1", { end_time: result.endTime, daily_budget: "10000", status: "ACTIVE", execution_options: '["validate_only"]' }],
+      ["ad-1", { status: "PAUSED" }],
+      ["set-1", { end_time: result.endTime, daily_budget: "10000", status: "ACTIVE" }],
+      ["ad-1", { status: "ACTIVE" }]
+    ]);
+    expect(result.after.adset?.start_time).toBe(result.before.adset?.start_time);
+  });
+
+  it.each([undefined, 0, -1, 1.5, 91, Infinity])("rejects invalid duration %s before contacting Meta", async (days) => {
+    const f = fixture();
+    await expect(restartCompletedMetaAd({ ...f.input, days })).rejects.toThrow("whole number");
+    expect(f.input.read).not.toHaveBeenCalled();
+    expect(f.input.post).not.toHaveBeenCalled();
+  });
+
+  it.each([0, 99, Infinity, "invalid"])("rejects invalid daily budget %s", (budget) => {
+    expect(() => validateRestartTerms(7, budget)).toThrow("at least ₹100");
+  });
+
+  it("prevents a double submission from extending an already restarted run", async () => {
+    const f = fixture();
+    await restartCompletedMetaAd(f.input);
+    f.input.post.mockClear();
+    await expect(restartCompletedMetaAd(f.input)).rejects.toThrow("schedule has changed");
+    expect(f.input.post).not.toHaveBeenCalled();
+  });
+
+  it("rejects stale schedules even when both end dates are in the past", async () => {
+    const f = fixture();
+    await expect(restartCompletedMetaAd({ ...f.input, expectedEndTime: "2026-09-01T00:00:00Z" })).rejects.toThrow("schedule has changed");
+    expect(f.input.post).not.toHaveBeenCalled();
+  });
+
+  it.each(["shared ads", "more pages", "campaign budget", "lifetime budget", "budget sharing", "paused parent", "wrong station"])("blocks %s before any write", async (kind) => {
+    const f = fixture();
+    if (kind === "shared ads") f.ad.adset!.ads!.data!.push({ id: "another-ad" });
+    if (kind === "more pages") f.ad.adset!.ads!.paging = { next: "more" };
+    if (kind === "campaign budget") f.ad.campaign!.daily_budget = "20000";
+    if (kind === "lifetime budget") f.ad.adset!.lifetime_budget = "70000";
+    if (kind === "budget sharing") f.ad.campaign!.is_adset_budget_sharing_enabled = true;
+    if (kind === "paused parent") f.ad.campaign!.effective_status = "PAUSED";
+    if (kind === "wrong station") f.input.audience.latitude = 10;
+    await expect(restartCompletedMetaAd(f.input)).rejects.toThrow();
+    expect(f.input.post).not.toHaveBeenCalled();
+  });
+
+  it("leaves the ad paused if Meta does not save the requested budget", async () => {
+    const f = fixture();
+    const originalRead = f.input.read.getMockImplementation()!;
+    f.input.read.mockImplementation(async () => {
+      const snapshot = await originalRead();
+      if (Date.parse(String(snapshot.adset?.end_time)) > now) snapshot.adset!.daily_budget = "50000";
+      return snapshot;
+    });
+    await expect(restartCompletedMetaAd(f.input)).rejects.toThrow("The ad is paused");
+    expect(f.ad.status).toBe("PAUSED");
+    expect(f.input.post.mock.calls.some(([id, values]) => id === "ad-1" && values.status === "ACTIVE")).toBe(false);
+  });
+
+  it("does not activate if the station pin changes during the update", async () => {
+    const f = fixture();
+    const originalRead = f.input.read.getMockImplementation()!;
+    f.input.read.mockImplementation(async () => {
+      const snapshot = await originalRead();
+      if (Date.parse(String(snapshot.adset?.end_time)) > now) snapshot.adset!.targeting = { geo_locations: { countries: ["IN"] } };
+      return snapshot;
+    });
+    await expect(restartCompletedMetaAd(f.input)).rejects.toThrow("The ad is paused");
+    expect(f.ad.status).toBe("PAUSED");
+  });
+
+  it("reports an unconfirmed safety pause instead of claiming the ad is paused", async () => {
+    const f = fixture();
+    f.input.post.mockImplementation(async (_id, values) => {
+      if (values.execution_options) return { success: true };
+      throw new Error("Meta unavailable");
+    });
+    await expect(restartCompletedMetaAd(f.input)).rejects.toThrow("Meta did not confirm the safety pause");
+  });
+});
