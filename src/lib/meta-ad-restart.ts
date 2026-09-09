@@ -1,5 +1,6 @@
 import { metaDeliveryStatus, type MetaDeliverySnapshot } from "./meta-ad-delivery";
 import { assertMetaTargeting } from "./meta-targeting";
+import { adRunEndTime } from "./ad-schedule";
 
 export type RestartAdSnapshot = MetaDeliverySnapshot & {
   id: string;
@@ -73,7 +74,7 @@ export async function restartCompletedMetaAd(input: {
   if (!Number.isFinite(radiusKm) || radiusKm <= 0 || !["mile", "kilometer"].includes(String(pin?.distance_unit))) throw new Error("Review this ad's audience radius in Meta before restarting.");
   const audience = { ...input.audience, radiusKm };
   assertMetaTargeting(adset.targeting, audience);
-  const endTime = new Date(Math.floor(now / 1000) * 1000 + terms.days * 86_400_000).toISOString();
+  const endTime = adRunEndTime(terms.days, now)!;
   const values = { end_time: endTime, daily_budget: String(terms.budgetMinor), status: "ACTIVE" };
   await input.post(adset.id, { ...values, execution_options: JSON.stringify(["validate_only"]) });
 

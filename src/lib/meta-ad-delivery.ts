@@ -1,7 +1,8 @@
 type MetaState = { status?: unknown; configured_status?: unknown; effective_status?: unknown };
 export type MetaDeliverySnapshot = MetaState & {
-  adset?: MetaState & { start_time?: unknown; end_time?: unknown };
+  adset?: MetaState & { id?: unknown; start_time?: unknown; end_time?: unknown };
   campaign?: MetaState;
+  last_restart?: { at?: unknown; endTime?: unknown };
 };
 
 const state = (value: unknown) => String(value || "").toUpperCase();
@@ -26,11 +27,15 @@ export function metaDeliveryStatus(ad: MetaDeliverySnapshot, now = Date.now()) {
 /** Re-evaluate schedules on every read, including between successful syncs. */
 export function storedAdDelivery<T extends { status?: unknown; raw_payload?: unknown }>(ad: T, now = Date.now()) {
   const raw = (ad.raw_payload && typeof ad.raw_payload === "object" ? ad.raw_payload : {}) as MetaDeliverySnapshot;
+  const restart = raw.last_restart;
+  const restartMatches = Number.isFinite(time(restart?.at)) && time(restart?.endTime) === time(raw.adset?.end_time);
   return {
     ...ad,
     status: metaDeliveryStatus({ ...raw, effective_status: ad.status || raw.effective_status }, now),
     starts_at: raw.adset?.start_time ? String(raw.adset.start_time) : null,
-    ends_at: raw.adset?.end_time ? String(raw.adset.end_time) : null
+    ends_at: raw.adset?.end_time ? String(raw.adset.end_time) : null,
+    current_run_started_at: restartMatches ? String(restart!.at) : raw.adset?.start_time ? String(raw.adset.start_time) : null,
+    schedule_known: Boolean(raw.adset?.id || raw.adset?.start_time || raw.adset?.end_time)
   };
 }
 

@@ -263,11 +263,15 @@ async function syncMetaAdsAccount(options: MetaAdSyncOptions) {
         last_synced_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
       };
-      const existing = await admin.from("recruitment_ads").select("id")
+      const existing = await admin.from("recruitment_ads").select("id,raw_payload")
         .eq("company_id", companyId()).eq("meta_ad_id", ad.id).limit(1).maybeSingle();
       if (existing.error) throw new Error(existing.error.message);
+      const previousRaw = existing.data?.raw_payload as { last_restart?: unknown } | null;
       const saved = existing.data?.id
-        ? await admin.from("recruitment_ads").update(adRecord)
+        ? await admin.from("recruitment_ads").update({
+            ...adRecord,
+            raw_payload: { ...adRecord.raw_payload, ...(previousRaw?.last_restart ? { last_restart: previousRaw.last_restart } : {}) }
+          })
             .eq("company_id", companyId()).eq("id", existing.data.id)
         : await admin.from("recruitment_ads").insert(adRecord);
       if (saved.error) throw new Error(saved.error.message);
