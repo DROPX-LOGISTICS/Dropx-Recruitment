@@ -1,3 +1,5 @@
+import { metaAdSyncDue } from "@/lib/meta-ad-delivery";
+import { getMetaPageAccessToken } from "@/lib/meta-ad-builder";
 import { NextResponse } from "next/server";
 import {
   discoverMetaFormIds,
@@ -18,7 +20,6 @@ export const maxDuration = 300;
 const POLLER_VERSION = 2;
 const SAFETY_OVERLAP_MS = 20 * 60 * 1000;
 const UPGRADE_CATCHUP_MS = 6 * 60 * 60 * 1000;
-const AD_SYNC_INTERVAL_MS = 30 * 60 * 1000;
 
 function authorized(request: Request) {
   const secret = process.env.CRON_SECRET?.trim();
@@ -80,27 +81,24 @@ export async function GET(request: Request) {
   }
 
   const graphVersion = config.publicConfig.graph_version || "v25.0";
-  const latestAdSync = await admin.from("recruitment_ads")
-    .select("last_synced_at")
-    .eq("company_id", companyId)
-    .not("last_synced_at", "is", null)
-    .order("last_synced_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  const latestAdSyncAt = latestAdSync.data?.last_synced_at
-    ? new Date(latestAdSync.data.last_synced_at).getTime()
-    : 0;
-  const shouldSyncAds = Boolean(
-    config.publicConfig.ad_account_id
-    && (!Number.isFinite(latestAdSyncAt) || startedAt.getTime() - latestAdSyncAt >= AD_SYNC_INTERVAL_MS)
-  );
+  const latestAdSync = await admin.from("recruitment_ingestion_runs")
+    .select("completed_at")
+    .eq("company_id", companyId).eq("source", "meta_ads").eq("status", "completed")
+    .order("completed_at", { ascending: false }).limit(1).maybeSingle();
+  if (latestAdSync.error) {
+    await finishRun({ status: "failed", error_count: 1, error: latestAdSync.error.message });
+    return NextResponse.json({ error: latestAdSync.error.message }, { status: 500 });
+  }
+  const shouldSyncAds = Boolean(config.publicConfig.ad_account_id
+    && metaAdSyncDue(latestAdSync.data?.completed_at, startedAt.getTime()));
   let adSync: { fetched: number; synced: number; skipped: number } | null = null;
   let adSyncError: string | null = null;
   const adSyncTask = shouldSyncAds
     ? syncMetaAds({
         accessToken,
         adAccountId: config.publicConfig.ad_account_id,
-        graphVersion
+        graphVersion,
+        reconcileMissing: true
       }).then((result) => { adSync = result; }).catch((error) => {
         adSyncError = error instanceof Error ? error.message : "Unknown Meta ad sync error";
       })
@@ -120,6 +118,7 @@ export async function GET(request: Request) {
   ]);
   if (ads.error || sources.error) {
     const message = ads.error?.message || sources.error?.message || "Unable to read known Meta forms.";
+    await adSyncTask;
     await finishRun({ status: "failed", error_count: 1, error: message });
     return NextResponse.json({ error: message }, { status: 500 });
   }
@@ -138,11 +137,11 @@ export async function GET(request: Request) {
     }));
   }
   if (config.publicConfig.page_id) {
-    discoveryTasks.push(discoverMetaPageFormIds({
-      accessToken,
+    discoveryTasks.push(getMetaPageAccessToken().then((pageToken) => discoverMetaPageFormIds({
+      accessToken: pageToken,
       pageId: config.publicConfig.page_id,
       graphVersion
-    }));
+    })));
   }
   const discoveredGroups: string[][] = [];
   for (const result of await Promise.allSettled(discoveryTasks)) {
@@ -249,7 +248,7 @@ export async function GET(request: Request) {
   await adSyncTask;
 
   const discoveryUnavailable = discoveryTasks.length === 0 || discoveredGroups.length === 0;
-  const intakeFailed = discoveryUnavailable || errors.length > 0;
+  const intakeFailed = discoveryUnavailable || errors.length > 0 || Boolean(adSyncError);
   const status = intakeFailed ? 502 : 200;
   const summary = {
     ok: !intakeFailed,

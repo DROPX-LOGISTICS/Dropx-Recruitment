@@ -1,3 +1,5 @@
+import { assertMetaTargeting } from "./meta-targeting";
+import { type MetaDeliverySnapshot } from "./meta-ad-delivery";
 import { getConnectionConfig } from "./connection-config";
 
 export type MetaAdBuilderCatalog = {
@@ -50,7 +52,7 @@ export type MetaLocationAudience = {
   latitude: number;
   longitude: number;
   radiusKm: number;
-  source: "station_contacts";
+  source: "station_contacts" | "location_master";
 };
 
 export type MetaPublishProgress = {
@@ -97,9 +99,9 @@ export function validateMetaLocationAudience(input: MetaLocationAudience): MetaL
   if (!String(input?.locationId || "").trim() || !String(input?.stationCode || "").trim()) {
     throw new Error("The station audience is missing. Reopen the publisher from the approved request.");
   }
-  if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90
-    || !Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
-    throw new Error(`Add valid latitude and longitude for ${String(input?.stationCode || "this station")} in Master → Station Contacts before publishing.`);
+  if (!Number.isFinite(latitude) || latitude < 5 || latitude > 38
+    || !Number.isFinite(longitude) || longitude < 67 || longitude > 98) {
+    throw new Error(`Add valid latitude and longitude for ${String(input?.stationCode || "this station")} in the Location Master before publishing.`);
   }
   if (!Number.isInteger(radiusKm)
     || radiusKm < META_AUDIENCE_RADIUS_MIN_KM
@@ -114,7 +116,7 @@ export function validateMetaLocationAudience(input: MetaLocationAudience): MetaL
     latitude,
     longitude,
     radiusKm,
-    source: "station_contacts"
+    source: input.source === "location_master" ? "location_master" : "station_contacts"
   };
 }
 
@@ -324,6 +326,12 @@ async function graphRequest(
     throw new Error(`${detail || `Meta returned HTTP ${response.status}.`}${suffix}`);
   }
   return payload;
+}
+
+export async function getMetaAdDeliverySnapshot(adId: string) {
+  return await graphGet(await metaConnection(), adId, {
+    fields: "id,name,status,configured_status,effective_status,adset{id,name,status,effective_status,start_time,end_time,daily_budget,targeting},campaign{id,name,status,effective_status}"
+  }) as MetaDeliverySnapshot & Record<string, unknown>;
 }
 
 export async function setMetaObjectStatus(objectId: string, status: "ACTIVE" | "PAUSED") {
@@ -616,6 +624,10 @@ async function resolveMetaPage(connection: Awaited<ReturnType<typeof metaConnect
   return { page, accessToken: connection.accessToken };
 }
 
+export async function getMetaPageAccessToken() {
+  return (await resolveMetaPage(await metaConnection())).accessToken;
+}
+
 export async function getMetaAdBuilderCatalog(): Promise<MetaAdBuilderCatalog> {
   const connection = await metaConnection();
   const [account, pageContext, campaignsPayload] = await Promise.all([
@@ -673,13 +685,33 @@ export async function getMetaAdBuilderCatalog(): Promise<MetaAdBuilderCatalog> {
   };
 }
 
+export function sameMetaPublishDraft(left: MetaAdDraft, right: MetaAdDraft) {
+  const normalized = (input: MetaAdDraft) => {
+    const draft = validateMetaAdDraft(input);
+    const { audience, ...fields } = draft;
+    return JSON.stringify([Object.keys(fields).sort().map((key) => [key, fields[key as keyof typeof fields]]),
+      [audience.locationId, audience.stationCode, audience.latitude, audience.longitude, audience.radiusKm]]);
+  };
+  return normalized(left) === normalized(right);
+}
+
 export async function publishMetaRecruitmentAd(input: {
   draft: MetaAdDraft;
   progress?: MetaPublishProgress;
+  previousDraft?: MetaAdDraft;
   onProgress?: (progress: MetaPublishProgress) => Promise<void>;
 }) {
   const draft = validateMetaAdDraft(input.draft);
   const connection = await metaConnection();
+  if (Object.values(input.progress || {}).some(Boolean)) {
+    if (!input.previousDraft || !sameMetaPublishDraft(input.previousDraft, draft)) {
+      throw new Error("This partial publish belongs to a different ad setup. Open a new publisher instead of reusing its Meta objects.");
+    }
+  }
+  const prefix = draft.audience.stationCode.toUpperCase();
+  if (![draft.adName, draft.adSetName].every((name) => name.toUpperCase().startsWith(prefix + "_"))) {
+    throw new Error(`Ad and ad set names must start with ${prefix}_ to match the selected station.`);
+  }
   const progress: MetaPublishProgress = { ...(input.progress ?? {}) };
   const saveProgress = async () => {
     if (input.onProgress) await input.onProgress({ ...progress });
@@ -738,6 +770,20 @@ export async function publishMetaRecruitmentAd(input: {
     await saveProgress();
   }
 
+  // Read back the actual saved ad set, including retries, before any activation.
+  const savedAdSet = await graphGet(connection, String(progress.adSetId), {
+    fields: "id,campaign_id,targeting,start_time,end_time,daily_budget"
+  });
+  assertMetaTargeting(savedAdSet.targeting, draft.audience);
+  const startAt = Date.parse(String(savedAdSet.start_time || ""));
+  const endAt = Date.parse(String(savedAdSet.end_time || ""));
+  if (String(savedAdSet.campaign_id) !== progress.campaignId
+    || Number(savedAdSet.daily_budget) !== Number(metaDailyBudgetMinorUnits(draft.dailyBudget))
+    || !Number.isFinite(startAt) || !Number.isFinite(endAt) || endAt <= Date.now()
+    || Math.abs(endAt - startAt - draft.daysRequired * 86400000) > 60000) {
+    throw new Error("The saved Meta ad set budget, campaign or schedule differs from the reviewed setup. Review it before retrying.");
+  }
+
   if (!progress.creativeId) {
     const creative = await graphRequest(
       connection,
@@ -786,5 +832,9 @@ export async function publishMetaRecruitmentAd(input: {
     await saveProgress();
   }
 
+  const savedAd = await graphGet(connection, String(progress.adId), { fields: "id,adset_id,name" });
+  if (String(savedAd.adset_id) !== progress.adSetId || savedAd.name !== draft.adName) {
+    throw new Error("The saved Meta ad does not match this station and ad set. It has not been activated.");
+  }
   return { draft, progress, pageId: connection.pageId, accountId: connection.accountId };
 }

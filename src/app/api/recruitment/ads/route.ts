@@ -1,3 +1,4 @@
+import { storedAdDelivery } from "@/lib/meta-ad-delivery";
 import { NextResponse } from "next/server";
 import { canAccessLead, canUseRecruitmentMenu, recruitmentSession, requiredEnv } from "@/lib/recruitment-api";
 import { supabaseAdmin } from "@/lib/supabase-admin";
@@ -33,17 +34,20 @@ export async function GET(request: Request) {
     if (!canUseRecruitmentMenu(session, "Active Ads", "view", stream as "workforce" | "hr" | undefined)) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
-    const [result, mainStations] = await Promise.all([
+    const [result, mainStations, statusSync] = await Promise.all([
       supabaseAdmin
         .from("recruitment_ads")
         .select("id,meta_ad_id,ad_name,adset_name,campaign_name,location_id,role_id,route_status,status,daily_budget,total_spend,poster_url,created_on,last_synced_at,raw_payload,recruitment_locations(id,code,name),recruitment_roles(id,code,name,stream)")
         .eq("company_id", companyId)
         .order("last_synced_at", { ascending: false })
         .limit(500),
-      loadMainDashboardStations(companyId)
+      loadMainDashboardStations(companyId),
+      supabaseAdmin.from("recruitment_ingestion_runs").select("completed_at")
+        .eq("company_id",companyId).eq("source","meta_ads").eq("status","completed")
+        .order("completed_at",{ascending:false}).limit(1).maybeSingle()
     ]);
     if (result.error) throw result.error;
-    const ads = (result.data ?? []).filter((ad) => adWithinScope(session, ad, stream));
+    const ads = (result.data ?? []).map((ad) => storedAdDelivery(ad)).filter((ad) => adWithinScope(session, ad, stream));
     const visibleAdIds = new Set(ads.map((ad) => ad.id));
     const counts = new Map<string, number>();
     const leadTotal = await supabaseAdmin.from("recruitment_leads")
@@ -93,9 +97,12 @@ export async function GET(request: Request) {
           lead_count: counts.get(ad.id) ?? 0,
           reach: numberFrom(ad.raw_payload, ["reach", "total_reach"]),
           impressions: numberFrom(ad.raw_payload, ["impressions", "total_impressions"]),
+          targeting_check: ad.raw_payload && typeof ad.raw_payload === "object" ? (ad.raw_payload as Record<string, unknown>).targeting_check : null,
           raw_payload: undefined
         });
       }),
+      lastStatusSyncAt: statusSync.data?.completed_at ?? null,
+      statusSyncStale: !statusSync.data?.completed_at || Date.now() - Date.parse(statusSync.data.completed_at) > 45 * 60000,
       permissions: session.adRequestActions,
       stream
     });

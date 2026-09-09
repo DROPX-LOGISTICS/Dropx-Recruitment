@@ -1,3 +1,5 @@
+import { reviewStationTargeting } from "./meta-targeting";
+import { metaDeliveryStatus } from "./meta-ad-delivery";
 import { createHash } from "node:crypto";
 import { getConnectionConfig } from "./connection-config";
 import { enqueueStoredLeadWelcome } from "./recruitment-lead-welcome";
@@ -119,17 +121,43 @@ type MetaAdSyncRow = {
   effective_status?: string;
   created_time?: string;
   creative?: { image_url?: string; thumbnail_url?: string; object_story_spec?: unknown };
-  adset?: { id?: string; name?: string; daily_budget?: string; lifetime_budget?: string };
-  campaign?: { id?: string; name?: string; daily_budget?: string; lifetime_budget?: string };
+  adset?: { id?: string; name?: string; daily_budget?: string; lifetime_budget?: string; status?: string; effective_status?: string; start_time?: string; end_time?: string; targeting?: unknown };
+  campaign?: { id?: string; name?: string; daily_budget?: string; lifetime_budget?: string; status?: string; effective_status?: string };
   insights?: { data?: Array<{ spend?: string; reach?: string; impressions?: string }> };
 };
 
-export async function syncMetaAds(options: {
+type MetaAdSyncOptions = {
   accessToken: string;
   adAccountId: string;
   graphVersion: string;
   reconcileMissing?: boolean;
-}) {
+};
+
+export async function syncMetaAds(options: MetaAdSyncOptions) {
+  if (!supabaseAdmin) throw new Error("Supabase is not configured.");
+  const run = await supabaseAdmin.from("recruitment_ingestion_runs").insert({
+    company_id: companyId(), source: "meta_ads", mode: "account_status", status: "running"
+  }).select("id").single();
+  if (run.error) throw new Error(run.error.message);
+  try {
+    const result = await syncMetaAdsAccount(options);
+    if (!result.completeAccountListing) throw new Error("Meta ad listing was incomplete; the next scheduled run will retry.");
+    const saved = await supabaseAdmin.from("recruitment_ingestion_runs").update({
+      status: "completed", scanned_count: result.fetched, updated_count: result.synced,
+      cursor: result, completed_at: new Date().toISOString()
+    }).eq("company_id", companyId()).eq("id", run.data.id);
+    if (saved.error) throw new Error(saved.error.message);
+    return result;
+  } catch (error) {
+    await supabaseAdmin.from("recruitment_ingestion_runs").update({
+      status: "failed", error_count: 1, error: error instanceof Error ? error.message : "Ad sync failed",
+      completed_at: new Date().toISOString()
+    }).eq("company_id", companyId()).eq("id", run.data.id);
+    throw error;
+  }
+}
+
+async function syncMetaAdsAccount(options: MetaAdSyncOptions) {
   if (!supabaseAdmin) throw new Error("Supabase is not configured.");
   const admin = supabaseAdmin;
   const account = options.adAccountId.replace(/^act_/, "");
@@ -142,7 +170,7 @@ export async function syncMetaAds(options: {
       endpoint.searchParams.set("limit", "100");
       endpoint.searchParams.set(
         "fields",
-        "id,name,status,configured_status,effective_status,created_time,creative{id,thumbnail_url,image_url,object_story_spec},adset{id,name,daily_budget,lifetime_budget},campaign{id,name,daily_budget,lifetime_budget},insights.date_preset(maximum){spend,reach,impressions}"
+        "id,name,status,configured_status,effective_status,created_time,creative{id,thumbnail_url,image_url,object_story_spec},adset{id,name,daily_budget,lifetime_budget,status,effective_status,start_time,end_time,targeting},campaign{id,name,daily_budget,lifetime_budget,status,effective_status},insights.date_preset(maximum){spend,reach,impressions}"
       );
     }
     const response = await fetch(endpoint, {
@@ -167,6 +195,10 @@ export async function syncMetaAds(options: {
     .eq("company_id", companyId())
     .eq("is_active", true);
   if (locations.error) throw new Error(locations.error.message);
+  const canonicalStations = await admin.from("stations").select("station_code,latitude,longitude")
+    .eq("company_id", companyId()).eq("is_active", true);
+  if (canonicalStations.error) throw new Error(canonicalStations.error.message);
+  const stationPins = new Map((canonicalStations.data ?? []).map((station) => [String(station.station_code).trim().toUpperCase(), station]));
   const stationCodes = (locations.data ?? []).map((item) => String(item.code || "")).filter(Boolean);
   const mappingMismatches = ads.flatMap((ad) => {
     if (!ad.id || !ad.name) return [];
@@ -201,10 +233,7 @@ export async function syncMetaAds(options: {
       const budgetMinor = campaign.daily_budget || campaign.lifetime_budget
         || adset.daily_budget || adset.lifetime_budget || "0";
       const budget = Number.isFinite(Number(budgetMinor)) ? Number(budgetMinor) / 100 : 0;
-      const effective = String(ad.effective_status || ad.configured_status || ad.status || "unknown").toUpperCase();
-      const state = effective === "ACTIVE"
-        ? "ACTIVE"
-        : ["PAUSED", "ADSET_PAUSED", "CAMPAIGN_PAUSED"].includes(effective) ? "PAUSED" : effective;
+      const state = metaDeliveryStatus(ad);
       const adRecord = {
         company_id: companyId(),
         meta_ad_id: ad.id,
@@ -223,6 +252,7 @@ export async function syncMetaAds(options: {
         poster_url: ad.creative?.image_url || ad.creative?.thumbnail_url || null,
         raw_payload: {
           ...ad,
+          targeting_check: reviewStationTargeting(ad.adset?.targeting, stationPins.get(route.parsed.stationCode || "") || null),
           reach: Number(insight.reach || 0),
           impressions: Number(insight.impressions || 0),
           budget_source: campaign.daily_budget || campaign.lifetime_budget ? "campaign" : "adset",
@@ -407,8 +437,6 @@ async function upsertAdUnlocked(value: LeadgenValue, lead: MetaLead) {
     location_id: route.locationId,
     role_id: route.roleId,
     route_status: route.routeStatus,
-    raw_payload: metaAd,
-    last_synced_at: new Date().toISOString(),
     updated_at: new Date().toISOString()
   };
   let existing = metaAdId
@@ -420,7 +448,7 @@ async function upsertAdUnlocked(value: LeadgenValue, lead: MetaLead) {
   const result = existing.data?.id
     ? await supabaseAdmin.from("recruitment_ads").update(adRecord)
         .eq("company_id", companyId()).eq("id", existing.data.id).select("id").single()
-    : await supabaseAdmin.from("recruitment_ads").insert(adRecord).select("id").single();
+    : await supabaseAdmin.from("recruitment_ads").insert({ ...adRecord, raw_payload: metaAd }).select("id").single();
   if (result.error) throw new Error(result.error.message);
   return { id: result.data.id as string, adName, route };
 }

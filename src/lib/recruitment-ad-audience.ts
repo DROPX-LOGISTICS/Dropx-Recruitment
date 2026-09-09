@@ -14,38 +14,36 @@ export async function resolveRecruitmentAdAudience(input: {
   const locationId = String(input.locationId || "").trim();
   if (!locationId) throw new Error("Choose a station before publishing.");
 
-  const [locationResult, contactResult] = await Promise.all([
-    supabaseAdmin.from("recruitment_locations")
-      .select("id,code,name")
+  const locationResult = await supabaseAdmin.from("recruitment_locations")
+      .select("id,station_id,code,name")
       .eq("company_id", input.companyId)
       .eq("id", locationId)
       .eq("is_active", true)
-      .maybeSingle(),
-    supabaseAdmin.from("recruitment_location_contacts")
-      .select("location_id,address,latitude,longitude")
-      .eq("company_id", input.companyId)
-      .eq("location_id", locationId)
-      .maybeSingle()
-  ]);
-  if (locationResult.error || contactResult.error) {
-    throw new Error(locationResult.error?.message || contactResult.error?.message);
-  }
+      .maybeSingle();
+  if (locationResult.error) throw new Error(locationResult.error.message);
   if (!locationResult.data) throw new Error("The selected station is no longer active.");
 
   const code = String(locationResult.data.code || "").trim().toUpperCase();
-  if (!contactResult.data) {
-    throw new Error(`Add latitude and longitude for ${code || "this station"} in Master → Station Contacts before publishing.`);
+  if (!locationResult.data.station_id) throw new Error(`${code} is not linked to the Location Master. Correct its station mapping before publishing.`);
+  const stationResult = await supabaseAdmin.from("stations")
+    .select("id,station_code,station_name,address,latitude,longitude")
+    .eq("company_id", input.companyId).eq("id", locationResult.data.station_id)
+    .eq("is_active", true).maybeSingle();
+  if (stationResult.error) throw new Error(stationResult.error.message);
+  const station = stationResult.data;
+  if (!station || String(station.station_code).trim().toUpperCase() !== code) {
+    throw new Error(`${code} does not match an active station in the Location Master. Correct the mapping before publishing.`);
   }
   return validateMetaLocationAudience({
     locationId,
     stationCode: code,
-    stationName: String(locationResult.data.name || code).trim(),
-    address: String(contactResult.data.address || "").trim() || null,
-    latitude: contactResult.data.latitude,
-    longitude: contactResult.data.longitude,
+    stationName: String(station.station_name || code).trim(),
+    address: String(station.address || "").trim() || null,
+    latitude: station.latitude,
+    longitude: station.longitude,
     radiusKm: input.radiusKm == null || String(input.radiusKm).trim() === ""
       ? META_AUDIENCE_RADIUS_DEFAULT_KM
       : Number(input.radiusKm),
-    source: "station_contacts"
+    source: "location_master"
   });
 }

@@ -1,3 +1,5 @@
+import { assertReviewedAudience } from "@/lib/meta-targeting";
+import { metaDeliveryStatus } from "@/lib/meta-ad-delivery";
 import { NextResponse } from "next/server";
 import {
   canAccessLead,
@@ -6,6 +8,7 @@ import {
   requiredEnv
 } from "@/lib/recruitment-api";
 import {
+  getMetaAdDeliverySnapshot,
   getMetaAdBuilderCatalog,
   publishMetaRecruitmentAd,
   setMetaObjectStatus,
@@ -161,6 +164,8 @@ export async function POST(request: Request) {
     };
     if (body.validateOnly === true) return NextResponse.json({ valid: true, review });
 
+    assertReviewedAudience(body.reviewedAudience, draft.audience);
+
     const clientRequestId = String(body.clientRequestId || "").trim();
     if (!/^[A-Za-z0-9_-]{12,100}$/.test(clientRequestId)) {
       return NextResponse.json({ error: "This submission has expired. Close the publisher and open it again." }, { status: 400 });
@@ -255,6 +260,7 @@ export async function POST(request: Request) {
       const published = await publishMetaRecruitmentAd({
         draft,
         progress,
+        previousDraft: oldPublish.draft as MetaAdDraft | undefined,
         onProgress: async (latest) => saveCheckpoint("publishing", latest)
       });
       progress = published.progress;
@@ -265,6 +271,8 @@ export async function POST(request: Request) {
           await setMetaObjectStatus(String(progress.campaignId), "ACTIVE");
         }
       }
+      const liveSnapshot = await getMetaAdDeliverySnapshot(String(progress.adId));
+      const deliveryStatus = metaDeliveryStatus(liveSnapshot);
       const adValues = {
         company_id: companyId,
         meta_ad_id: progress.adId,
@@ -277,15 +285,16 @@ export async function POST(request: Request) {
         location_id: locationId,
         role_id: roleId,
         route_status: "mapped",
-        status: launchMode === "live" ? "ACTIVE" : "PAUSED",
+        status: deliveryStatus,
         daily_budget: draft.dailyBudget,
         poster_url: draft.posterUrl || null,
         raw_payload: {
+          ...liveSnapshot,
           source: "direct_dashboard_publisher", stream: workspace, request_id: requestId,
           campaign_id: progress.campaignId, adset_id: progress.adSetId,
           creative_id: progress.creativeId, image_hash: draft.imageHash || null,
           created_via: "meta_marketing_api",
-          initial_status: launchMode === "live" ? "ACTIVE" : "PAUSED",
+          initial_status: deliveryStatus,
           audience: draft.audience
         },
         created_on: now,
@@ -317,7 +326,7 @@ export async function POST(request: Request) {
         created: true,
         adId: savedAd.data.id,
         metaAdId: progress.adId,
-        status: launchMode === "live" ? "ACTIVE" : "PAUSED",
+        status: deliveryStatus,
         review
       });
     } catch (error) {

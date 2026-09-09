@@ -111,19 +111,19 @@ describe("Meta recruitment ad builder", () => {
     expect(() => validateMetaAdDraft({
       ...validDraft,
       audience: { ...validDraft.audience, latitude: Number.NaN }
-    })).toThrow("Station Contacts");
+    })).toThrow("Location Master");
     expect(() => validateMetaAdDraft({
       ...validDraft,
       audience: { ...validDraft.audience, longitude: 181 }
-    })).toThrow("Station Contacts");
+    })).toThrow("Location Master");
     expect(() => validateMetaAdDraft({
       ...validDraft,
       audience: { ...validDraft.audience, latitude: null }
-    } as any)).toThrow("Station Contacts");
+    } as any)).toThrow("Location Master");
     expect(() => validateMetaAdDraft({
       ...validDraft,
       audience: { ...validDraft.audience, longitude: "" }
-    } as any)).toThrow("Station Contacts");
+    } as any)).toThrow("Location Master");
   });
 
   it("rejects unsafe or incomplete drafts", () => {

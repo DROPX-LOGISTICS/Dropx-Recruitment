@@ -1,3 +1,4 @@
+import { storedAdDelivery } from "@/lib/meta-ad-delivery";
 import { NextResponse } from "next/server";
 import { applyLeadScope, canAccessLead, canUseRecruitmentMenu, recruitmentSession, requiredEnv } from "@/lib/recruitment-api";
 import { supabaseAdmin } from "@/lib/supabase-admin";
@@ -27,6 +28,7 @@ type DashboardLead = {
 };
 
 type DashboardAd = {
+  raw_payload?: unknown;
   id: string;
   ad_name: string | null;
   status: string | null;
@@ -235,7 +237,7 @@ export async function GET(request: Request) {
       if (adCount.error) throw new Error(adCount.error.message);
       const adPages = await Promise.all(Array.from({ length: Math.ceil((adCount.count ?? 0) / 1000) }, (_, page) =>
         supabaseAdmin!.from("recruitment_ads")
-          .select("id,ad_name,status,route_status,location_id,role_id,last_synced_at,recruitment_locations(id,code,name),recruitment_roles(id,code,name,stream)")
+          .select("id,ad_name,status,raw_payload,route_status,location_id,role_id,last_synced_at,recruitment_locations(id,code,name),recruitment_roles(id,code,name,stream)")
           .eq("company_id", companyId)
           .order("last_synced_at", { ascending: false })
           .range(page * 1000, page * 1000 + 999)
@@ -244,6 +246,7 @@ export async function GET(request: Request) {
       if (failedAdPage?.error) throw new Error(failedAdPage.error.message);
       ads = adPages
         .flatMap((result) => (result.data ?? []) as DashboardAd[])
+        .map((ad) => storedAdDelivery(ad))
         .filter((ad) => adWithinScope(session, ad, stream, locationIds, roleIds));
     }
 

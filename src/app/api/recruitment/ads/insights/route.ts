@@ -1,3 +1,4 @@
+import { storedAdDelivery } from "@/lib/meta-ad-delivery";
 import { NextResponse } from "next/server";
 import { canAccessLead, canUseRecruitmentMenu, recruitmentSession, requiredEnv } from "@/lib/recruitment-api";
 import { supabaseAdmin } from "@/lib/supabase-admin";
@@ -36,14 +37,14 @@ export async function GET(request: Request) {
     }
     const companyId=requiredEnv("RECRUITMENT_COMPANY_ID");
     const ads = await supabaseAdmin.from("recruitment_ads")
-      .select("id,meta_ad_id,status,daily_budget,created_on,last_synced_at,location_id,role_id,recruitment_roles(stream)")
+      .select("id,meta_ad_id,raw_payload,status,daily_budget,created_on,last_synced_at,location_id,role_id,recruitment_roles(stream)")
       .eq("company_id", companyId)
       .not("meta_ad_id", "is", null);
     if (ads.error) throw new Error(ads.error.message);
     const allowedIds = new Set((ads.data ?? [])
       .filter((ad) => adWithinScope(session, ad, stream))
       .map((ad) => String(ad.meta_ad_id)));
-    const visibleAds=(ads.data??[]).filter((ad)=>adWithinScope(session,ad,stream));
+    const visibleAds=(ads.data??[]).map((ad)=>storedAdDelivery(ad)).filter((ad)=>adWithinScope(session,ad,stream));
     const visibleDbIds=visibleAds.map((ad:any)=>ad.id);
     const [leadResult,policyResult]=await Promise.all([
       visibleDbIds.length?supabaseAdmin.from("recruitment_leads").select("ad_id,total_attempts,lead_created_at,created_at").eq("company_id",companyId).in("ad_id",visibleDbIds).eq("archived",false):Promise.resolve({data:[],error:null}),

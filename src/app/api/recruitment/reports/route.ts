@@ -1,3 +1,4 @@
+import { storedAdDelivery } from "@/lib/meta-ad-delivery";
 import { NextResponse } from "next/server";
 import * as XLSX from "xlsx";
 import { applyLeadScope, canUseRecruitmentMenu, recruitmentSession, requiredEnv } from "@/lib/recruitment-api";
@@ -273,10 +274,10 @@ export async function GET(request: Request) {
       roleIds = (resolved.data ?? []).map((row) => row.id);
     }
     if (adStatus.length) {
-      const resolved = await supabaseAdmin.from("recruitment_ads").select("id,status")
+      const resolved = await supabaseAdmin.from("recruitment_ads").select("id,status,raw_payload")
         .eq("company_id", companyId);
       if (resolved.error) throw new Error(resolved.error.message);
-      adIds = (resolved.data ?? []).filter((ad) => matchesAdStatus(ad.status, adStatus)).map((ad) => ad.id);
+      adIds = (resolved.data ?? []).map((ad) => storedAdDelivery(ad)).filter((ad) => matchesAdStatus(ad.status, adStatus)).map((ad) => ad.id);
     }
 
     if (report === "leadattempts" && format === "xlsx") {
@@ -411,7 +412,7 @@ export async function GET(request: Request) {
           return workbookResponse([["Date","Total Leads","No Status","No Response","Call Back","Interviews","Joined"], ...[...dailyMap.entries()].sort().map(([day,item])=>[day,item.total,item.noStatus,item.noResponse,item.callback,item.interviews,item.joined])], "DropX_Daily_Lead_Generation");
         }
         let adsQuery: any = supabaseAdmin.from("recruitment_ads")
-          .select("id,meta_ad_id,ad_name,status,daily_budget,total_spend,created_on,last_synced_at,location_id,role_id,recruitment_locations(code,name,region),recruitment_roles(code,name)")
+          .select("id,meta_ad_id,ad_name,status,raw_payload,daily_budget,total_spend,created_on,last_synced_at,location_id,role_id,recruitment_locations(code,name,region),recruitment_roles(code,name)")
           .eq("company_id", companyId);
         if (locationIds) {
           if (!locationIds.length) return workbookResponse([["Ad Name","Station","Operational Owner","Role","Ad Status","Daily Budget","Total Spend","Leads","Cost Per Lead","Created","Last Sync"]], report === "spend" ? "DropX_Spend_Analysis" : "DropX_Ad_Spend_Period_Report");
@@ -424,7 +425,7 @@ export async function GET(request: Request) {
         const ads = await adsQuery;
         if (ads.error) throw new Error(ads.error.message);
         const leadCounts = new Map<string, number>(); rows.forEach((lead)=>leadCounts.set(lead.ad_name ?? "Unknown", (leadCounts.get(lead.ad_name ?? "Unknown") ?? 0)+1));
-        const filteredAds = (ads.data ?? []).filter((ad:any)=>matchesAdStatus(ad.status, adStatus));
+        const filteredAds = (ads.data ?? []).map((ad:any)=>storedAdDelivery(ad)).filter((ad:any)=>matchesAdStatus(ad.status, adStatus));
         if (report === "weeklyspend") {
           const range = defaultSpendRange(spendFrom, spendTo);
           const metaRows = await fetchMetaDailySpend(range.from, range.to);

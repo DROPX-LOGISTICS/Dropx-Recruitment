@@ -1,3 +1,5 @@
+import { metaDeliveryStatus } from "@/lib/meta-ad-delivery";
+import { getMetaAdDeliverySnapshot } from "@/lib/meta-ad-builder";
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { canAccessLead, recruitmentSession, requiredEnv } from "@/lib/recruitment-api";
@@ -184,6 +186,7 @@ async function completeMetaChange(companyId: string, requestId: string) {
     await metaPost(ad.meta_ad_id, { status: "PAUSED" });
     const saved = await supabaseAdmin.from("recruitment_ads").update({
       status: "PAUSED",
+      raw_payload: { ...ad.raw_payload, status: "PAUSED", effective_status: "PAUSED" },
       last_synced_at: new Date().toISOString(),
       updated_at: new Date().toISOString()
     }).eq("company_id", companyId).eq("id", ad.id);
@@ -191,14 +194,28 @@ async function completeMetaChange(companyId: string, requestId: string) {
     return;
   }
   if (pending.data.request_type === "resume_ad") {
+    const before = await getMetaAdDeliverySnapshot(ad.meta_ad_id);
+    if (["COMPLETED", "DELETED", "ARCHIVED"].includes(metaDeliveryStatus(before))) {
+      throw new AdChangeError("This ad has ended. Create a new ad with an approved duration and budget; switching it on will not extend its schedule.");
+    }
+    const parents = [before.adset, before.campaign];
+    if (parents.some((parent) => parent && String(parent.effective_status || parent.status) !== "ACTIVE")) {
+      throw new AdChangeError("The parent campaign or ad set is not active. Review it in Meta before resuming this ad.");
+    }
     await metaPost(ad.meta_ad_id, { status: "ACTIVE" });
+    const after = await getMetaAdDeliverySnapshot(ad.meta_ad_id);
     const saved = await supabaseAdmin.from("recruitment_ads").update({
-      status: "ACTIVE",
+      status: metaDeliveryStatus(after),
+      raw_payload: { ...ad.raw_payload, ...after },
       last_synced_at: new Date().toISOString(),
       updated_at: new Date().toISOString()
     }).eq("company_id", companyId).eq("id", ad.id);
     if (saved.error) throw new Error(saved.error.message);
     return;
+  }
+  const currentDelivery = await getMetaAdDeliverySnapshot(ad.meta_ad_id);
+  if (metaDeliveryStatus(currentDelivery) === "COMPLETED") {
+    throw new AdChangeError("This ad has ended. A budget change cannot restart it; create a new ad with an approved schedule.");
   }
   const requestedBudget = Number(pending.data.requested_budget || 0);
   if (!(requestedBudget > 0)) throw new AdChangeError("The approved budget is invalid.");
@@ -544,7 +561,8 @@ export async function PATCH(request: Request) {
         let campaignName: string | null = null;
         let metaFormId: string | null = null;
         let metaProgress: MetaPublishProgress | null = null;
-        let adStatus = "ACTIVE";
+        let adStatus = "UNKNOWN";
+        let deliverySnapshot: Record<string, unknown> = {};
 
         if (publishMode === "api") {
           const sourceDraft = body.metaDraft && typeof body.metaDraft === "object" && !Array.isArray(body.metaDraft)
@@ -621,6 +639,7 @@ export async function PATCH(request: Request) {
             const result = await publishMetaRecruitmentAd({
               draft,
               progress: previousProgress,
+              previousDraft: previousPublish.draft as MetaAdDraft | undefined,
               onProgress: async (progress) => {
                 latestProgress = progress;
                 await savePublishState("publishing", progress);
@@ -650,6 +669,10 @@ export async function PATCH(request: Request) {
           }, { status: 400 });
         }
 
+        if (publishedMetaAdId) {
+          deliverySnapshot = await getMetaAdDeliverySnapshot(publishedMetaAdId);
+          adStatus = metaDeliveryStatus(deliverySnapshot);
+        }
         const adValues = {
           company_id: companyId,
           meta_ad_id: publishedMetaAdId,
@@ -664,6 +687,7 @@ export async function PATCH(request: Request) {
           daily_budget: current.data.requested_budget,
           poster_url: current.data.poster_url || publishedUrl,
           raw_payload: {
+            ...deliverySnapshot,
             source: "ad_request",
             ad_request_id: current.data.id,
             request_id: current.data.request_id,
