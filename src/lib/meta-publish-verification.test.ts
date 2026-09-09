@@ -20,6 +20,7 @@ describe("publishing read-back verification", () => {
       calls.push({ path, method, values: new URLSearchParams(String(init.body || "")) });
       const now = Date.now();
       let data: unknown = { success: true };
+      if (path.endsWith("/99999")) data = {status:{video_status:"ready"}};
       if (path.endsWith("/campaigns")) data = { id: "111" };
       if (path.endsWith("/adsets")) data = { id: "222" };
       if (path.endsWith("/adcreatives")) data = { id: "333" };
@@ -39,6 +40,15 @@ describe("publishing read-back verification", () => {
     expect(calls.some((call) => call.path.endsWith("/222") && call.method === "GET")).toBe(true);
     expect(calls.at(-1)?.path).toBe("/v25.0/444");
     expect(calls.filter((call) => call.method === "POST").some((call) => call.values.get("status") === "ACTIVE")).toBe(false);
+  });
+  it("creates a video lead ad with the reviewed form and keeps it paused", async () => {
+    const calls=graph();
+    await publishMetaRecruitmentAd({draft:{...draft,videoId:"99999",imageHash:"a1b2c3d4e5f678901234567890abcdef"}});
+    const creative=calls.find(call=>call.path.endsWith("/adcreatives"))!;
+    const story=JSON.parse(creative.values.get("object_story_spec")!);
+    expect(story.video_data).toMatchObject({video_id:"99999",title:draft.headline,message:draft.primaryText,call_to_action:{value:{lead_gen_form_id:draft.formId,link:new URL(draft.destinationUrl).toString()}}});
+    expect(story).not.toHaveProperty("link_data");
+    expect(calls.find(call=>call.path.endsWith("/ads"))?.values.get("status")).toBe("PAUSED");
   });
   it("stops before creating an ad when Meta returns the wrong station pin", async () => {
     const calls = graph(11.499292);

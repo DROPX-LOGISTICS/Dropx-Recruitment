@@ -115,14 +115,16 @@ export async function POST(request: Request, { params }: { params: { id: string 
     }
     const body = await request.json().catch(() => ({})) as Record<string, unknown>;
     const imageHash = String(body.imageHash || "").trim();
+    const videoId = String(body.videoId || "").trim() || null;
     const expectedCreativeId = String(body.expectedCreativeId || "").trim();
     const reason = String(body.reason || "").trim();
     const clientRequestId = String(body.clientRequestId || "").trim();
     const uploadedPosterUrl = validHttpsUrl(body.replacementPosterUrl);
     const expectedEndTime = body.expectedEndTime ? String(body.expectedEndTime) : undefined;
     if (!/^[A-Za-z0-9_-]{16,256}$/.test(imageHash)) {
-      return NextResponse.json({ error: "Upload the replacement poster again." }, { status: 400 });
+      return NextResponse.json({ error: "Upload the replacement creative again." }, { status: 400 });
     }
+    if (videoId && !/^\d{5,30}$/.test(videoId)) return NextResponse.json({ error: "The video reference is invalid. Upload it again." }, { status: 400 });
     if (!/^\d{5,30}$/.test(expectedCreativeId)) {
       return NextResponse.json({ error: "The current creative reference is invalid. Reopen the preview." }, { status: 400 });
     }
@@ -197,6 +199,7 @@ export async function POST(request: Request, { params }: { params: { id: string 
         previous_poster_url: current.posterUrl || scoped.ad.poster_url || null,
         replacement_image_hash: imageHash,
         replacement_poster_url: uploadedPosterUrl,
+        meta_response: { media_type: videoId ? "video" : "image", video_id: videoId },
         reason,
         configured_status_before: current.configuredStatus,
         actor_profile_id: scoped.session.profileId,
@@ -215,7 +218,7 @@ export async function POST(request: Request, { params }: { params: { id: string 
     const replacement = await replaceMetaAdCreative({
       metaAdId: scoped.ad.meta_ad_id,
       expectedCreativeId,
-      imageHash, expectedEndTime
+      imageHash, videoId, expectedEndTime
     });
     const posterUrl = replacement.after.posterUrl || uploadedPosterUrl || scoped.ad.poster_url || null;
     const localStatus = replacement.after.deliveryStatus;
@@ -236,7 +239,8 @@ export async function POST(request: Request, { params }: { params: { id: string 
           creative: {
             id: replacement.after.creativeId,
             name: replacement.after.creativeName,
-            image_url: replacement.after.posterUrl
+            image_url: replacement.after.posterUrl,
+            object_story_spec: replacement.after.objectStorySpec
           },
           creative_replacement: {
             audit_id: auditId,
@@ -258,7 +262,7 @@ export async function POST(request: Request, { params }: { params: { id: string 
         replacement_creative_id: replacement.replacementCreativeId,
         replacement_poster_url: posterUrl,
         effective_status_after: replacement.after.effectiveStatus,
-        meta_response: replacement.metaResponse,
+        meta_response: { ...replacement.metaResponse, media_type: videoId ? "video" : "image", video_id: videoId },
         completed_at: now,
         error_message: null
       })

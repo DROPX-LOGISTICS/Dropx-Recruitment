@@ -35,6 +35,7 @@ export type MetaAdDraft = {
   headline: string;
   description?: string | null;
   imageHash?: string | null;
+  videoId?: string | null;
   posterUrl?: string | null;
   destinationUrl: string;
   callToAction: "APPLY_NOW" | "SIGN_UP" | "LEARN_MORE";
@@ -144,8 +145,10 @@ export function validateMetaAdDraft(input: MetaAdDraft): MetaAdDraft {
   if (!String(input.adSetName || "").trim()) throw new Error("Enter the ad set name.");
   if (!String(input.creativeName || "").trim()) throw new Error("Enter the creative name.");
   const imageHash = String(input.imageHash || "").trim();
+  const videoId = String(input.videoId || "").trim();
   const posterUrl = String(input.posterUrl || "").trim();
-  if (!imageHash && !posterUrl) throw new Error("Upload a poster before reviewing the ad.");
+  if (!imageHash && !posterUrl) throw new Error("Upload an image or video before reviewing the ad.");
+  if (videoId) requireMetaObjectId(videoId, "Video ID");
   if (imageHash && !/^[A-Za-z0-9_-]{16,256}$/.test(imageHash)) {
     throw new Error("The uploaded poster reference is invalid. Upload the poster again.");
   }
@@ -168,6 +171,7 @@ export function validateMetaAdDraft(input: MetaAdDraft): MetaAdDraft {
     headline: String(input.headline).trim(),
     description: String(input.description || "").trim() || null,
     imageHash: imageHash || null,
+    videoId: videoId || null,
     posterUrl: posterUrl ? requireHttpUrl(posterUrl, "Poster link") : null,
     destinationUrl: requireHttpUrl(String(input.destinationUrl || ""), "Destination link"),
     callToAction,
@@ -222,6 +226,26 @@ export async function uploadMetaAdImage(input: {
 
 export function metaDailyBudgetMinorUnits(value: number) {
   return String(Math.round(Number(value) * 100));
+}
+
+export async function uploadMetaAdVideoFromUrl(fileUrl: string, title: string) {
+  const connection = await metaConnection();
+  const uploaded = await graphRequest(connection, `act_${connection.accountId}/advideos`, "POST", {
+    file_url: requireHttpUrl(fileUrl, "Video file"), title: title.slice(0,240)
+  });
+  return requireMetaObjectId(String(uploaded.id || ""), "Uploaded video ID");
+}
+
+export async function getMetaVideo(videoId: string) {
+  const video = await graphGet(await metaConnection(), requireMetaObjectId(videoId, "Video ID"), { fields: "id,status,source,picture" });
+  return { status: String(metaObject(video.status).video_status || "processing"),
+    videoUrl: safeMetaImageUrl(video.source), previewUrl: safeMetaImageUrl(video.picture) };
+}
+
+async function assertVideoReady(videoId?: string | null) {
+  if (videoId && (await getMetaVideo(videoId)).status !== "ready") {
+    throw new Error("Meta is still processing this video. Wait for it to finish before saving the creative.");
+  }
 }
 
 export function buildEmploymentCampaignValues(name: string) {
@@ -388,6 +412,8 @@ export type MetaAdCreativeReplacementContext = {
   creativeId: string;
   creativeName: string;
   posterUrl: string | null;
+  videoId: string | null;
+  videoUrl?: string | null;
   primaryText: string;
   headline: string;
   description: string;
@@ -420,14 +446,19 @@ function requireMetaObjectId(value: string, label: string) {
   return id;
 }
 
-export function buildReplacementObjectStorySpec(value: unknown, imageHash: string) {
+export function buildReplacementObjectStorySpec(value: unknown, imageHash: string, videoId?: string | null) {
   const hash = String(imageHash || "").trim();
   if (!/^[A-Za-z0-9_-]{16,256}$/.test(hash)) {
     throw new Error("The uploaded poster reference is invalid. Upload the poster again.");
   }
   const source = metaObject(value);
-  const linkData = metaObject(source.link_data);
-  if (!Object.keys(linkData).length) {
+  const sourceVideo = metaObject(source.video_data);
+  const linkData = Object.keys(metaObject(source.link_data)).length ? metaObject(source.link_data) : {
+    link: metaObject(metaObject(sourceVideo.call_to_action).value).link,
+    message: sourceVideo.message, name: sourceVideo.title, description: sourceVideo.link_description,
+    call_to_action: sourceVideo.call_to_action
+  };
+  if (!Object.keys(metaObject(source.link_data)).length && !sourceVideo.video_id) {
     throw new Error("This ad uses a creative format that cannot be replaced from Recruitment yet.");
   }
   if (Array.isArray(linkData.child_attachments) && linkData.child_attachments.length) {
@@ -435,7 +466,8 @@ export function buildReplacementObjectStorySpec(value: unknown, imageHash: strin
   }
   const pageId = String(source.page_id || "").trim();
   const link = String(linkData.link || "").trim();
-  if (!/^\d{5,30}$/.test(pageId) || !link) {
+  const leadForm = String(metaObject(metaObject(linkData.call_to_action).value).lead_gen_form_id || "");
+  if (!/^\d{5,30}$/.test(pageId) || (!link && !leadForm)) {
     throw new Error("The current creative is missing its Page or destination link.");
   }
 
@@ -443,7 +475,7 @@ export function buildReplacementObjectStorySpec(value: unknown, imageHash: strin
   // cannot be submitted back to the create endpoint. Rebuild the supported
   // single-image shape instead of cloning the read response wholesale.
   const replacementLinkData: MetaObject = {
-    link,
+    link: link || `https://www.facebook.com/${pageId}`,
     image_hash: hash
   };
   for (const key of ["message", "name", "description"] as const) {
@@ -455,7 +487,7 @@ export function buildReplacementObjectStorySpec(value: unknown, imageHash: strin
   const callToActionType = String(callToAction.type || "").trim();
   if (callToActionType) {
     const sourceValue = metaObject(callToAction.value);
-    const callToActionValue: MetaObject = { link };
+    const callToActionValue: MetaObject = link ? { link } : {};
     const leadFormId = String(sourceValue.lead_gen_form_id || "").trim();
     if (leadFormId) callToActionValue.lead_gen_form_id = leadFormId;
     replacementLinkData.call_to_action = {
@@ -466,7 +498,13 @@ export function buildReplacementObjectStorySpec(value: unknown, imageHash: strin
 
   const replacement: MetaObject = {
     page_id: pageId,
-    link_data: replacementLinkData
+    ...(videoId ? { video_data: {
+      video_id: requireMetaObjectId(videoId, "Video ID"), image_hash: hash,
+      message: replacementLinkData.message,
+      title: replacementLinkData.name,
+      link_description: replacementLinkData.description,
+      call_to_action: replacementLinkData.call_to_action
+    } } : { link_data: replacementLinkData })
   };
   const instagramUserId = String(source.instagram_user_id || "").trim();
   if (/^\d{5,30}$/.test(instagramUserId)) replacement.instagram_user_id = instagramUserId;
@@ -504,12 +542,13 @@ function replacementContext(payload: MetaGraphPayload): MetaAdCreativeReplacemen
   const creative = metaObject(payload.creative);
   const story = metaObject(creative.object_story_spec);
   const linkData = metaObject(story.link_data);
-  const callToAction = metaObject(linkData.call_to_action);
+  const videoData = metaObject(story.video_data);
+  const callToAction = metaObject(linkData.call_to_action || videoData.call_to_action);
   const deliverySnapshot: MetaDeliverySnapshot = { status:payload.status,configured_status:payload.configured_status,effective_status:payload.effective_status,adset:metaObject(payload.adset),campaign:metaObject(payload.campaign) };
   let replacementBlocker: string | null = null;
   if (!String(creative.id || "")) replacementBlocker = "Meta did not return the current creative ID.";
   else if (Object.keys(metaObject(creative.asset_feed_spec)).length) replacementBlocker = "Dynamic multi-asset creatives cannot be replaced with one poster.";
-  else if (!Object.keys(linkData).length) replacementBlocker = "Only single-image link and lead creatives can be replaced.";
+  else if (!Object.keys(linkData).length && !videoData.video_id) replacementBlocker = "Only single-image or video link and lead creatives can be replaced.";
   else if (Array.isArray(linkData.child_attachments) && linkData.child_attachments.length) replacementBlocker = "Carousel creatives cannot be replaced with a single poster.";
   return {
     adId: String(payload.id || ""),
@@ -524,10 +563,11 @@ function replacementContext(payload: MetaGraphPayload): MetaAdCreativeReplacemen
     creativeName: String(creative.name || "Current creative"),
     posterUrl: safeMetaImageUrl(creative.image_url)
       || safeMetaImageUrl(creative.thumbnail_url)
-      || safeMetaImageUrl(linkData.picture),
-    primaryText: String(linkData.message || ""),
-    headline: String(linkData.name || ""),
-    description: String(linkData.description || ""),
+      || safeMetaImageUrl(linkData.picture) || safeMetaImageUrl(videoData.image_url),
+    videoId: videoData.video_id ? String(videoData.video_id) : null,
+    primaryText: String(linkData.message || videoData.message || ""),
+    headline: String(linkData.name || videoData.title || ""),
+    description: String(linkData.description || videoData.link_description || ""),
     callToAction: String(callToAction.type || "APPLY_NOW"),
     replaceable: !replacementBlocker,
     replacementBlocker,
@@ -542,6 +582,7 @@ export async function getMetaAdCreativeReplacementContext(metaAdId: string) {
     fields: CREATIVE_REPLACEMENT_FIELDS
   });
   const context = replacementContext(payload);
+  if (context.videoId) context.videoUrl = (await getMetaVideo(context.videoId)).videoUrl;
   if (context.replaceable) {
     const permissionBlocker = await metaPageAdvertiseBlocker(connection);
     if (permissionBlocker) {
@@ -556,6 +597,7 @@ export async function replaceMetaAdCreative(input: {
   metaAdId: string;
   expectedCreativeId: string;
   imageHash: string;
+  videoId?: string | null;
   expectedEndTime?: string;
 }) {
   const adId = requireMetaObjectId(input.metaAdId, "Meta Ad ID");
@@ -577,7 +619,8 @@ export async function replaceMetaAdCreative(input: {
     throw new Error("The creative changed after this preview opened. Close it and review the latest creative before replacing it.");
   }
 
-  const objectStorySpec = buildReplacementObjectStorySpec(before.objectStorySpec, input.imageHash);
+  const objectStorySpec = buildReplacementObjectStorySpec(before.objectStorySpec, input.imageHash, input.videoId);
+  await assertVideoReady(input.videoId);
   const completed = assertCreativeReplacementDelivery(before,input.expectedEndTime);
   if (completed) {
     // An ended ad may still have its switch on. Hold only this ad paused while preparing the next creative.
@@ -587,7 +630,7 @@ export async function replaceMetaAdCreative(input: {
     if (held.configuredStatus !== "PAUSED" || held.creativeId !== expectedCreativeId) throw new Error("The ad changed while preparing its replacement. Refresh the preview; no new run was started.");
   }
   const timestamp = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 12);
-  const creativeName = `${before.creativeName || before.adName} · poster ${timestamp}`.slice(0, 240);
+  const creativeName = `${before.creativeName || before.adName} · ${input.videoId ? "video" : "image"} ${timestamp}`.slice(0, 240);
   const created = await graphRequest(
     connection,
     `act_${connection.accountId}/adcreatives`,
@@ -732,6 +775,7 @@ export async function publishMetaRecruitmentAd(input: {
   onProgress?: (progress: MetaPublishProgress) => Promise<void>;
 }) {
   const draft = validateMetaAdDraft(input.draft);
+  await assertVideoReady(draft.videoId);
   const connection = await metaConnection();
   if (Object.values(input.progress || {}).some(Boolean)) {
     if (!input.previousDraft || !sameMetaPublishDraft(input.previousDraft, draft)) {
@@ -823,7 +867,12 @@ export async function publishMetaRecruitmentAd(input: {
         name: draft.creativeName,
         object_story_spec: JSON.stringify({
           page_id: connection.pageId,
-          link_data: {
+          ...(draft.videoId ? { video_data: {
+            video_id: draft.videoId,
+            ...(draft.imageHash ? { image_hash: draft.imageHash } : { image_url: draft.posterUrl }),
+            message: draft.primaryText, title: draft.headline, link_description: draft.description || undefined,
+            call_to_action: { type: draft.callToAction, value: { link: draft.destinationUrl, lead_gen_form_id: draft.formId } }
+          } } : { link_data: {
             link: draft.destinationUrl,
             ...(draft.imageHash ? { image_hash: draft.imageHash } : { picture: draft.posterUrl }),
             message: draft.primaryText,
@@ -836,7 +885,7 @@ export async function publishMetaRecruitmentAd(input: {
                 lead_gen_form_id: draft.formId
               }
             }
-          }
+          } })
         })
       }
     );

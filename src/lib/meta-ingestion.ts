@@ -385,6 +385,20 @@ export async function getFreshMetaAdPoster(metaAdId: string) {
   return parsed.toString();
 }
 
+export async function getFreshMetaAdMedia(metaAdId: string) {
+  const ad = await graphGet<{ creative?: { image_url?: string; thumbnail_url?: string; object_story_spec?: { video_data?: { video_id?: string } } } }>(
+    metaAdId, "creative{id,image_url,thumbnail_url,object_story_spec}");
+  const videoId = ad.creative?.object_story_spec?.video_data?.video_id;
+  const poster = ad.creative?.image_url || ad.creative?.thumbnail_url || "";
+  if (videoId && /^\d{5,30}$/.test(String(videoId))) {
+    const video = await graphGet<{ source?: string }>(String(videoId), "source");
+    if (!video.source || new URL(video.source).protocol !== "https:") throw new Error("Meta has not made this video preview available yet.");
+    return { url: video.source, posterUrl: poster, mediaType: "video" as const };
+  }
+  if (!poster || new URL(poster).protocol !== "https:") throw new Error("Meta did not return a preview for this creative.");
+  return { url: poster, posterUrl: poster, mediaType: "image" as const };
+}
+
 function fieldMap(lead: MetaLead) {
   return Object.fromEntries((lead.field_data ?? []).map((field) => [
     normalizeMetaFieldName(field.name),

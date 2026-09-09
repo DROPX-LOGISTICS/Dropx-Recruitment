@@ -292,7 +292,7 @@ export async function POST(request: Request) {
           ...liveSnapshot,
           source: "direct_dashboard_publisher", stream: workspace, request_id: requestId,
           campaign_id: progress.campaignId, adset_id: progress.adSetId,
-          creative_id: progress.creativeId, image_hash: draft.imageHash || null,
+          creative_id: progress.creativeId, image_hash: draft.imageHash || null, video_id: draft.videoId || null,
           created_via: "meta_marketing_api",
           initial_status: deliveryStatus,
           audience: draft.audience

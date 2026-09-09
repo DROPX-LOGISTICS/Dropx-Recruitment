@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getFreshMetaAdPoster } from "@/lib/meta-ingestion";
+import { getFreshMetaAdMedia } from "@/lib/meta-ingestion";
 import { canAccessLead, canUseRecruitmentMenu, recruitmentSession, requiredEnv } from "@/lib/recruitment-api";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 
@@ -35,11 +35,14 @@ export async function GET(request: Request, { params }: { params: { id: string }
     })) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
     let url = "";
+    let mediaType: "image" | "video" = "image";
+    let posterUrl = "";
     if (result.data.meta_ad_id) {
-      url = await getFreshMetaAdPoster(result.data.meta_ad_id);
+      const media = await getFreshMetaAdMedia(result.data.meta_ad_id);
+      url = media.url; mediaType = media.mediaType; posterUrl = media.posterUrl;
       await supabaseAdmin
         .from("recruitment_ads")
-        .update({ poster_url: url, updated_at: new Date().toISOString() })
+        .update({ poster_url: posterUrl || null, updated_at: new Date().toISOString() })
         .eq("company_id", companyId)
         .eq("id", result.data.id);
     } else if (result.data.poster_url) {
@@ -52,7 +55,7 @@ export async function GET(request: Request, { params }: { params: { id: string }
       return NextResponse.json({ error: "No poster is available for this ad." }, { status: 404 });
     }
     return NextResponse.json(
-      { url, adName: result.data.ad_name },
+      { url, mediaType, posterUrl, adName: result.data.ad_name },
       { headers: { "Cache-Control": "private, no-store, max-age=0" } }
     );
   } catch (error) {
