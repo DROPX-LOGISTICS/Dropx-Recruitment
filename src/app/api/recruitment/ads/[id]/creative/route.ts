@@ -1,3 +1,5 @@
+import { storedAdDelivery } from "@/lib/meta-ad-delivery";
+import { assertCreativeReplacementDelivery } from "@/lib/meta-creative-delivery";
 import { NextResponse } from "next/server";
 import {
   getMetaAdCreativeReplacementContext,
@@ -13,7 +15,7 @@ import { supabaseAdmin } from "@/lib/supabase-admin";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-export const maxDuration = 60;
+export const maxDuration = 120;
 
 function relatedRole(value: unknown) {
   return Array.isArray(value) ? value[0] : value;
@@ -31,7 +33,7 @@ function validHttpsUrl(value: unknown) {
 }
 
 function eligibleLocalStatus(value: unknown) {
-  return ["ACTIVE", "PAUSED"].includes(String(value || "").toUpperCase());
+  return ["ACTIVE", "PAUSED", "COMPLETED"].includes(String(value || "").toUpperCase());
 }
 
 async function scopedAd(request: Request, id: string) {
@@ -68,7 +70,7 @@ export async function GET(request: Request, { params }: { params: { id: string }
       return NextResponse.json({ error: "This record is not linked to a Meta ad." }, { status: 400 });
     }
     const context = await getMetaAdCreativeReplacementContext(scoped.ad.meta_ad_id);
-    const localStatusEligible = eligibleLocalStatus(scoped.ad.status);
+    const localStatusEligible = eligibleLocalStatus(context.deliveryStatus);
     const history = await supabaseAdmin!
       .from("recruitment_ad_creative_changes")
       .select("id,status,previous_creative_id,replacement_creative_id,reason,actor_email,created_at,completed_at")
@@ -82,13 +84,13 @@ export async function GET(request: Request, { params }: { params: { id: string }
         id: scoped.ad.id,
         name: scoped.ad.ad_name,
         metaAdId: scoped.ad.meta_ad_id,
-        localStatus: String(scoped.ad.status || "UNKNOWN").toUpperCase(),
+        localStatus: context.deliveryStatus,
         currentPosterUrl: context.posterUrl || scoped.ad.poster_url || null
       },
       creative: context,
       eligible: localStatusEligible && context.replaceable,
       blocker: !localStatusEligible
-        ? "Only Active or Paused ads can receive a replacement poster."
+        ? "Only Active, Paused or Completed ads can receive a replacement poster."
         : context.replacementBlocker,
       recentChanges: history.data ?? []
     }, { headers: { "Cache-Control": "private, no-store, max-age=0" } });
@@ -108,8 +110,8 @@ export async function POST(request: Request, { params }: { params: { id: string 
     if (!scoped.ad.meta_ad_id) {
       return NextResponse.json({ error: "This record is not linked to a Meta ad." }, { status: 400 });
     }
-    if (!eligibleLocalStatus(scoped.ad.status)) {
-      return NextResponse.json({ error: "Only Active or Paused ads can receive a replacement poster." }, { status: 409 });
+    if (!eligibleLocalStatus(storedAdDelivery(scoped.ad).status)) {
+      return NextResponse.json({ error: "Only Active, Paused or Completed ads can receive a replacement poster." }, { status: 409 });
     }
     const body = await request.json().catch(() => ({})) as Record<string, unknown>;
     const imageHash = String(body.imageHash || "").trim();
@@ -117,6 +119,7 @@ export async function POST(request: Request, { params }: { params: { id: string 
     const reason = String(body.reason || "").trim();
     const clientRequestId = String(body.clientRequestId || "").trim();
     const uploadedPosterUrl = validHttpsUrl(body.replacementPosterUrl);
+    const expectedEndTime = body.expectedEndTime ? String(body.expectedEndTime) : undefined;
     if (!/^[A-Za-z0-9_-]{16,256}$/.test(imageHash)) {
       return NextResponse.json({ error: "Upload the replacement poster again." }, { status: 400 });
     }
@@ -146,11 +149,14 @@ export async function POST(request: Request, { params }: { params: { id: string 
 
     const previousRequest = await supabaseAdmin!
       .from("recruitment_ad_creative_changes")
-      .select("id,status,replacement_creative_id,replacement_poster_url,effective_status_after,error_message")
+      .select("id,ad_id,status,replacement_creative_id,replacement_poster_url,effective_status_after,error_message")
       .eq("company_id", scoped.companyId)
       .eq("client_request_id", clientRequestId)
       .maybeSingle();
     if (previousRequest.error) throw previousRequest.error;
+    if (previousRequest.data && previousRequest.data.ad_id !== scoped.ad.id) {
+      return NextResponse.json({ error: "This request reference belongs to another ad. Reopen the replacement preview." }, { status: 409 });
+    }
     if (previousRequest.data?.status === "completed") {
       return NextResponse.json({
         replaced: true,
@@ -172,6 +178,7 @@ export async function POST(request: Request, { params }: { params: { id: string 
     if (!current.replaceable) {
       return NextResponse.json({ error: current.replacementBlocker || "This creative cannot be replaced." }, { status: 409 });
     }
+    assertCreativeReplacementDelivery(current,expectedEndTime);
     if (current.creativeId !== expectedCreativeId) {
       return NextResponse.json({
         error: "The creative changed after this preview opened. Close it and review the latest creative before replacing it."
@@ -208,15 +215,10 @@ export async function POST(request: Request, { params }: { params: { id: string 
     const replacement = await replaceMetaAdCreative({
       metaAdId: scoped.ad.meta_ad_id,
       expectedCreativeId,
-      imageHash
+      imageHash, expectedEndTime
     });
     const posterUrl = replacement.after.posterUrl || uploadedPosterUrl || scoped.ad.poster_url || null;
-    const configuredStatus = replacement.after.configuredStatus;
-    const localStatus = configuredStatus === "ACTIVE"
-      ? "ACTIVE"
-      : configuredStatus === "PAUSED"
-        ? "PAUSED"
-        : scoped.ad.status;
+    const localStatus = replacement.after.deliveryStatus;
     const rawPayload = scoped.ad.raw_payload && typeof scoped.ad.raw_payload === "object"
       ? scoped.ad.raw_payload as Record<string, unknown>
       : {};
@@ -230,6 +232,7 @@ export async function POST(request: Request, { params }: { params: { id: string 
         updated_at: now,
         raw_payload: {
           ...rawPayload,
+          ...replacement.after.deliverySnapshot,
           creative: {
             id: replacement.after.creativeId,
             name: replacement.after.creativeName,
@@ -271,6 +274,8 @@ export async function POST(request: Request, { params }: { params: { id: string 
       posterUrl,
       configuredStatus: replacement.after.configuredStatus,
       effectiveStatus: replacement.after.effectiveStatus,
+      deliveryStatus: replacement.after.deliveryStatus,
+      endsAt: replacement.after.endsAt, startsAt: replacement.after.startsAt,
       auditId
     });
   } catch (error) {
@@ -287,7 +292,7 @@ export async function POST(request: Request, { params }: { params: { id: string 
     }
     const message = error instanceof Error ? error.message : "Unable to replace the Meta creative.";
     return NextResponse.json({ error: message }, {
-      status: /changed after this preview|already in progress/i.test(message) ? 409 : 502
+      status: /changed after (this|the) preview|already in progress|Only Active, Paused or Completed/i.test(message) ? 409 : 502
     });
   }
 }

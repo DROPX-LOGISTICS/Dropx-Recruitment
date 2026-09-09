@@ -1,5 +1,6 @@
+import { assertCreativeReplacementDelivery } from "./meta-creative-delivery";
 import { assertMetaTargeting } from "./meta-targeting";
-import { type MetaDeliverySnapshot } from "./meta-ad-delivery";
+import { metaDeliveryStatus, type MetaDeliverySnapshot } from "./meta-ad-delivery";
 import { getConnectionConfig } from "./connection-config";
 
 export type MetaAdBuilderCatalog = {
@@ -380,6 +381,10 @@ export type MetaAdCreativeReplacementContext = {
   adName: string;
   configuredStatus: string;
   effectiveStatus: string;
+  deliveryStatus: string;
+  endsAt: string | null;
+  startsAt: string | null;
+  deliverySnapshot: MetaDeliverySnapshot;
   creativeId: string;
   creativeName: string;
   posterUrl: string | null;
@@ -493,11 +498,14 @@ async function metaPageAdvertiseBlocker(connection: Awaited<ReturnType<typeof me
   return null;
 }
 
+const CREATIVE_REPLACEMENT_FIELDS = "id,name,status,configured_status,effective_status,adset{id,name,status,effective_status,start_time,end_time,daily_budget,lifetime_budget,targeting},campaign{id,name,status,effective_status,daily_budget,lifetime_budget},creative{id,name,image_url,thumbnail_url,object_story_spec,asset_feed_spec}";
+
 function replacementContext(payload: MetaGraphPayload): MetaAdCreativeReplacementContext {
   const creative = metaObject(payload.creative);
   const story = metaObject(creative.object_story_spec);
   const linkData = metaObject(story.link_data);
   const callToAction = metaObject(linkData.call_to_action);
+  const deliverySnapshot: MetaDeliverySnapshot = { status:payload.status,configured_status:payload.configured_status,effective_status:payload.effective_status,adset:metaObject(payload.adset),campaign:metaObject(payload.campaign) };
   let replacementBlocker: string | null = null;
   if (!String(creative.id || "")) replacementBlocker = "Meta did not return the current creative ID.";
   else if (Object.keys(metaObject(creative.asset_feed_spec)).length) replacementBlocker = "Dynamic multi-asset creatives cannot be replaced with one poster.";
@@ -508,6 +516,10 @@ function replacementContext(payload: MetaGraphPayload): MetaAdCreativeReplacemen
     adName: String(payload.name || "Unnamed ad"),
     configuredStatus: String(payload.configured_status || payload.status || "UNKNOWN").toUpperCase(),
     effectiveStatus: String(payload.effective_status || payload.status || "UNKNOWN").toUpperCase(),
+    deliveryStatus: metaDeliveryStatus(deliverySnapshot),
+    endsAt: deliverySnapshot.adset?.end_time ? String(deliverySnapshot.adset.end_time) : null,
+    startsAt: deliverySnapshot.adset?.start_time ? String(deliverySnapshot.adset.start_time) : null,
+    deliverySnapshot,
     creativeId: String(creative.id || ""),
     creativeName: String(creative.name || "Current creative"),
     posterUrl: safeMetaImageUrl(creative.image_url)
@@ -527,7 +539,7 @@ export async function getMetaAdCreativeReplacementContext(metaAdId: string) {
   const adId = requireMetaObjectId(metaAdId, "Meta Ad ID");
   const connection = await metaConnection();
   const payload = await graphGet(connection, adId, {
-    fields: "id,name,status,configured_status,effective_status,creative{id,name,image_url,thumbnail_url,object_story_spec,asset_feed_spec}"
+    fields: CREATIVE_REPLACEMENT_FIELDS
   });
   const context = replacementContext(payload);
   if (context.replaceable) {
@@ -544,12 +556,13 @@ export async function replaceMetaAdCreative(input: {
   metaAdId: string;
   expectedCreativeId: string;
   imageHash: string;
+  expectedEndTime?: string;
 }) {
   const adId = requireMetaObjectId(input.metaAdId, "Meta Ad ID");
   const expectedCreativeId = requireMetaObjectId(input.expectedCreativeId, "Current creative ID");
   const connection = await metaConnection();
   const beforePayload = await graphGet(connection, adId, {
-    fields: "id,name,status,configured_status,effective_status,creative{id,name,image_url,thumbnail_url,object_story_spec,asset_feed_spec}"
+    fields: CREATIVE_REPLACEMENT_FIELDS
   });
   const before = replacementContext(beforePayload);
   const permissionBlocker = before.replaceable
@@ -565,6 +578,14 @@ export async function replaceMetaAdCreative(input: {
   }
 
   const objectStorySpec = buildReplacementObjectStorySpec(before.objectStorySpec, input.imageHash);
+  const completed = assertCreativeReplacementDelivery(before,input.expectedEndTime);
+  if (completed) {
+    // An ended ad may still have its switch on. Hold only this ad paused while preparing the next creative.
+    await graphRequest(connection,adId,"POST",{status:"PAUSED"});
+    const held = replacementContext(await graphGet(connection,adId,{fields:CREATIVE_REPLACEMENT_FIELDS}));
+    assertCreativeReplacementDelivery(held,input.expectedEndTime);
+    if (held.configuredStatus !== "PAUSED" || held.creativeId !== expectedCreativeId) throw new Error("The ad changed while preparing its replacement. Refresh the preview; no new run was started.");
+  }
   const timestamp = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 12);
   const creativeName = `${before.creativeName || before.adName} · poster ${timestamp}`.slice(0, 240);
   const created = await graphRequest(
@@ -574,13 +595,22 @@ export async function replaceMetaAdCreative(input: {
     { name: creativeName, object_story_spec: JSON.stringify(objectStorySpec) }
   );
   const replacementCreativeId = requireMetaObjectId(String(created.id || ""), "Replacement creative ID");
+  if (completed) {
+    const current = replacementContext(await graphGet(connection,adId,{fields:CREATIVE_REPLACEMENT_FIELDS}));
+    assertCreativeReplacementDelivery(current,input.expectedEndTime);
+    if (current.configuredStatus !== "PAUSED" || current.creativeId !== expectedCreativeId) throw new Error("The ad changed while creating the poster. Refresh before applying it; no new run was started.");
+  }
   const updated = await graphRequest(connection, adId, "POST", {
     creative: JSON.stringify({ creative_id: replacementCreativeId })
   });
   const afterPayload = await graphGet(connection, adId, {
-    fields: "id,name,status,configured_status,effective_status,creative{id,name,image_url,thumbnail_url,object_story_spec,asset_feed_spec}"
+    fields: CREATIVE_REPLACEMENT_FIELDS
   });
   const after = replacementContext(afterPayload);
+  if (completed) {
+    assertCreativeReplacementDelivery(after,input.expectedEndTime);
+    if (after.configuredStatus !== "PAUSED") throw new Error("Meta did not confirm the completed ad remains paused. Check this ad in Meta before starting a new run.");
+  }
   if (after.creativeId !== replacementCreativeId) {
     throw new Error("Meta accepted the replacement but did not attach it to the ad. No local change was saved.");
   }

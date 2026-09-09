@@ -10,6 +10,7 @@ type Props = {
   ad: any;
   close: () => void;
   afterReplace: () => Promise<void>;
+  onRunAgain?: (schedule: { endsAt: string; startsAt: string | null }) => void;
 };
 
 function requestKey() {
@@ -33,7 +34,7 @@ function statusLabel(value: unknown) {
   return String(value || "Unknown").replaceAll("_", " ").toLowerCase().replace(/^./, (letter) => letter.toUpperCase());
 }
 
-export default function MetaCreativeReplacement({ token, stream, ad, close, afterReplace }: Props) {
+export default function MetaCreativeReplacement({ token, stream, ad, close, afterReplace, onRunAgain }: Props) {
   const [context, setContext] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
@@ -49,6 +50,7 @@ export default function MetaCreativeReplacement({ token, stream, ad, close, afte
   const fileInput = useRef<HTMLInputElement>(null);
   const clientRequestId = useRef(requestKey());
   const busy = uploading || saving;
+  const completed = String(context?.creative?.deliveryStatus || ad.status).toUpperCase() === "COMPLETED";
 
   useEffect(() => {
     const controller = new AbortController();
@@ -125,6 +127,7 @@ export default function MetaCreativeReplacement({ token, stream, ad, close, afte
       && reason.trim().length >= 3
       && confirmed
       && !busy
+      && !success
   );
 
   async function replaceCreative() {
@@ -139,6 +142,7 @@ export default function MetaCreativeReplacement({ token, stream, ad, close, afte
           imageHash,
           replacementPosterUrl: uploadedUrl || null,
           expectedCreativeId: context.creative.creativeId,
+          ...(completed ? { expectedEndTime: context.creative.endsAt } : {}),
           reason: reason.trim(),
           clientRequestId: clientRequestId.current
         })
@@ -164,14 +168,14 @@ export default function MetaCreativeReplacement({ token, stream, ad, close, afte
   }}>
     <section className="modal meta-direct-publisher creative-replace-modal" role="dialog" aria-modal="true" aria-label={`Replace creative for ${ad.ad_name || "Meta ad"}`}>
       <header className="modal-header">
-        <div><span>EXISTING META AD</span><h2>Replace poster</h2><p>{ad.ad_name} · the ad, budget, audience and performance history stay in place.</p></div>
+        <div><span>{completed ? "COMPLETED META AD · STEP 1 OF 2" : "EXISTING META AD"}</span><h2>{completed ? "Replace creative & run again" : "Replace poster"}</h2><p>{ad.ad_name} · {completed ? "Save the new poster, then choose a duration and budget for the next run." : "the ad, budget, audience and performance history stay in place."}</p></div>
         <button type="button" aria-label="Close creative replacement" disabled={busy} onClick={close}>×</button>
       </header>
       {loading ? <div className="publisher-loading"><span className="loader"/><b>Loading the current live creative from Meta…</b></div> : null}
       {!loading && context ? <>
         <div className="creative-replacement-note">
           <div><span className={`ad-state ad-state-${String(context.ad.localStatus || "unknown").toLowerCase()}`}>{statusLabel(context.ad.localStatus)}</span><b>Same Meta Ad ID: {context.ad.metaAdId}</b></div>
-          <p>Meta may review the replacement creative. An Active ad can temporarily stop delivering while that review is completed; a Paused ad remains paused.</p>
+          <p>{completed ? "Saving the poster keeps this ad completed and holds its switch paused. The next step lets you review the new end date and budget before starting it. Meta may review the replacement before it delivers." : "Meta may review the replacement creative. An Active ad can temporarily stop delivering while that review is completed; a Paused ad remains paused."}</p>
         </div>
         {!context.eligible ? <div className="error-banner">{context.blocker || "This creative cannot be replaced."}</div> : null}
         <div className="creative-compare-grid">
@@ -182,7 +186,7 @@ export default function MetaCreativeReplacement({ token, stream, ad, close, afte
           </article>
           <article className="creative-compare-card proposed">
             <header><span>REPLACEMENT</span><b>{posterMeta?.name || "Choose a new poster"}</b></header>
-            <button type="button" className={`creative-replacement-upload ${previewUrl ? "has-poster" : ""}`} disabled={!context.eligible || busy} onClick={() => fileInput.current?.click()}>
+            <button type="button" className={`creative-replacement-upload ${previewUrl ? "has-poster" : ""}`} disabled={!context.eligible || busy || Boolean(success)} onClick={() => fileInput.current?.click()}>
               {previewUrl ? <img src={previewUrl} alt="Replacement poster preview"/> : <><i>＋</i><strong>Upload replacement poster</strong><small>JPG, PNG or WebP · up to 12 MB · minimum 500 × 500 px</small></>}
               {previewUrl ? <span>{uploading ? "Uploading to Meta…" : "Choose another poster"}</span> : null}
             </button>
@@ -197,15 +201,16 @@ export default function MetaCreativeReplacement({ token, stream, ad, close, afte
         {previewUrl && posterMeta ? <PlacementGallery image={previewUrl} headline={creative.headline || ad.ad_name || "Recruitment opening"} copy={creative.primaryText || "Join DropX Logistics. Apply now."} cta={creative.callToAction || "APPLY_NOW"} width={posterMeta.width} height={posterMeta.height}/> : null}
         <div className="creative-replacement-controls">
           <label>Reason for changing this creative<textarea rows={3} maxLength={500} value={reason} disabled={!context.eligible || busy || Boolean(success)} onChange={(event) => setReason(event.target.value)} placeholder="Example: Update the recruitment poster with the corrected contact number."/><small>{reason.trim().length}/500 · saved permanently in the audit log</small></label>
-          <label className="creative-replacement-confirm"><input type="checkbox" checked={confirmed} disabled={!context.eligible || !imageHash || busy || Boolean(success)} onChange={(event) => setConfirmed(event.target.checked)}/><span><b>I reviewed the replacement preview</b><small>Apply only the new poster to this same Meta ad. Keep its targeting, budget and configured Active/Paused state.</small></span></label>
+          <label className="creative-replacement-confirm"><input type="checkbox" checked={confirmed} disabled={!context.eligible || !imageHash || busy || Boolean(success)} onChange={(event) => setConfirmed(event.target.checked)}/><span><b>I reviewed the replacement preview</b><small>{completed ? "Save this poster to the same ad and keep it stopped. I will choose the new duration and budget in the next step." : "Apply only the new poster to this same Meta ad. Keep its targeting, budget and configured Active/Paused state."}</small></span></label>
         </div>
         {context.recentChanges?.length ? <details className="creative-change-history"><summary>Recent poster changes ({context.recentChanges.length})</summary><div>{context.recentChanges.map((item: any) => <article key={item.id}><b>{statusLabel(item.status)} · {new Date(item.created_at).toLocaleString("en-IN")}</b><span>{item.reason}</span><small>{item.actor_email || "System"}</small></article>)}</div></details> : null}
       </> : null}
       {notice ? <div className={imageHash && !success ? "success-banner" : "error-banner"}>{notice}</div> : null}
-      {success ? <div className="success-banner"><b>Poster replaced successfully.</b> The same Meta ad is now using creative {success.creativeId}. Current Meta state: {statusLabel(success.effectiveStatus)}.</div> : null}
+      {success ? <div className="success-banner" role="status"><b>Poster replaced successfully.</b> {completed ? "This ad remains completed. Continue to set its next run, or finish later. No new run has started." : `The same Meta ad is now using creative ${success.creativeId}. Current Meta state: ${statusLabel(success.effectiveStatus)}.`}</div> : null}
       <footer className="publisher-actions">
-        <button type="button" disabled={busy} onClick={close}>{success ? "Done" : "Cancel"}</button>
-        {!success ? <button type="button" className="primary-action" disabled={!canSubmit} onClick={() => void replaceCreative()}>{saving ? "Replacing in Meta…" : uploading ? "Uploading poster…" : "Replace creative"}</button> : null}
+        <button type="button" disabled={busy} onClick={close}>{success ? completed ? "Finish later" : "Done" : "Cancel"}</button>
+        {!success ? <button type="button" className="primary-action" disabled={!canSubmit} onClick={() => void replaceCreative()}>{saving ? "Replacing in Meta…" : uploading ? "Uploading poster…" : completed ? "Save creative" : "Replace creative"}</button> : null}
+        {success && completed && onRunAgain ? <button type="button" className="primary-action" disabled={busy} onClick={() => onRunAgain({ endsAt: success.endsAt || context.creative.endsAt, startsAt: success.startsAt || context.creative.startsAt || null })}>Set duration & run again</button> : null}
       </footer>
     </section>
   </div>;
