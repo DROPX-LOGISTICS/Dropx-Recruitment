@@ -530,7 +530,7 @@ export async function GET(request: Request) {
             "Spend","Reach","Impressions","Leads","Interviews","Joined","Cost Per Lead","Cost Per Interview","Cost Per Joined"
           ], ...reportRows], "DropX_Ad_Spend_Period_Report");
         }
-        const spendAds = filteredAds.filter((ad:any) => adStatus.length || ["ACTIVE","PAUSED"].includes(String(ad.status ?? "").toUpperCase()));
+        const spendAds = filteredAds.filter((ad:any) => adStatus.length || ["ACTIVE","PAUSED","COMPLETED","SCHEDULED"].includes(String(ad.status ?? "").toUpperCase()));
         const spendRows = spendAds.map((ad:any) => {
           const exact = rows.filter((lead) => lead.ad_name?.trim() && lead.ad_name.trim() === String(ad.ad_name ?? "").trim());
           const related = exact.length ? exact : rows.filter((lead) =>

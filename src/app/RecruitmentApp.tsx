@@ -3457,7 +3457,7 @@ function ActiveAds({ data, token, stream, roleCatalog, reload, request, canDirec
       setInsightState((current)=>({...current,loading:false,available:false,error:error instanceof Error?error.message:"Unable to refresh Meta ad insights."}));
     });
     return ()=>controller.abort();
-  },[data?.stream,token]);
+  },[data?.stream,data?.lastStatusSyncAt,token]);
   const ads = useMemo(()=>baseAds.map((item:any)=>({
     ...item,
     status:metaDeliveryStatus({effective_status:item.status,adset:{start_time:item.starts_at,end_time:item.ends_at}},deliveryNow),
