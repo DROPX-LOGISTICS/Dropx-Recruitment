@@ -43,7 +43,7 @@ export default function MetaCreativeReplacement({ token, stream, ad, close, afte
   const [previewUrl, setPreviewUrl] = useState("");
   const [uploadedUrl, setUploadedUrl] = useState("");
   const [imageHash, setImageHash] = useState("");
-  const [reason, setReason] = useState("");
+  const [reason, setReason] = useState(String(ad?.recommendationReason || ""));
   const [confirmed, setConfirmed] = useState(false);
   const [posterMeta, setPosterMeta] = useState<{ name: string; width: number; height: number; size: number } | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);

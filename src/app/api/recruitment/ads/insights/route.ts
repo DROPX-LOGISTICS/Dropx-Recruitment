@@ -2,9 +2,12 @@ import { storedAdDelivery } from "@/lib/meta-ad-delivery";
 import { NextResponse } from "next/server";
 import { canAccessLead, canUseRecruitmentMenu, recruitmentSession, requiredEnv } from "@/lib/recruitment-api";
 import { supabaseAdmin } from "@/lib/supabase-admin";
-import { fetchRecentMetaInsights, metaLeadActions } from "@/lib/meta-ad-insights";
-import { defaultGuardPolicy, evaluateAdGuard } from "@/lib/ad-spend-guard";
-import { enhanceGuardRecommendations } from "@/lib/ad-spend-guard-ai";
+import { fetchRecentMetaInsights } from "@/lib/meta-ad-insights";
+import { calendarDaily, insightTotals } from "@/lib/ad-insight-metrics";
+import { adPolicy, buildHealthContext } from "@/lib/ad-health-context";
+import { monitoringState } from "@/lib/ad-health";
+import { recruitmentQueryPages } from "@/lib/recruitment-query-pages";
+import { evaluateAdGuard } from "@/lib/ad-spend-guard";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -36,86 +39,63 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
     const companyId=requiredEnv("RECRUITMENT_COMPANY_ID");
-    const ads = await supabaseAdmin.from("recruitment_ads")
+    const admin = supabaseAdmin;
+    const allAds = await recruitmentQueryPages((from,to) => admin.from("recruitment_ads")
       .select("id,meta_ad_id,raw_payload,status,daily_budget,created_on,last_synced_at,location_id,role_id,recruitment_roles(stream)")
-      .eq("company_id", companyId)
-      .not("meta_ad_id", "is", null);
-    if (ads.error) throw new Error(ads.error.message);
-    const allowedIds = new Set((ads.data ?? [])
-      .filter((ad) => adWithinScope(session, ad, stream))
-      .map((ad) => String(ad.meta_ad_id)));
-    const visibleAds=(ads.data??[]).map((ad)=>storedAdDelivery(ad)).filter((ad)=>adWithinScope(session,ad,stream));
-    const visibleDbIds=visibleAds.map((ad:any)=>ad.id);
-    const [leadResult,policyResult]=await Promise.all([
-      visibleDbIds.length?supabaseAdmin.from("recruitment_leads").select("ad_id,total_attempts,lead_created_at,created_at").eq("company_id",companyId).in("ad_id",visibleDbIds).eq("archived",false):Promise.resolve({data:[],error:null}),
-      supabaseAdmin.from("recruitment_ad_guard_policies").select("*").eq("company_id",companyId).eq("enabled",true)
+      .eq("company_id",companyId).not("meta_ad_id","is",null).order("id").range(from,to));
+    const visibleAds = allAds.map(ad => storedAdDelivery(ad)).filter(ad => adWithinScope(session,ad,stream));
+    const ids = visibleAds.map(ad => ad.id);
+    const since = new Date(Date.now()-30*86400000).toISOString();
+    const [leads, policiesResult, changes, requests, events, meta] = await Promise.all([
+      ids.length ? recruitmentQueryPages((from,to) => admin.from("recruitment_leads").select("id,ad_id,total_attempts,lead_created_at,created_at")
+        .eq("company_id",companyId).in("ad_id",ids).eq("archived",false).order("id").range(from,to)) : [],
+      admin.from("recruitment_ad_guard_policies").select("*").eq("company_id",companyId).eq("enabled",true),
+      ids.length ? recruitmentQueryPages((from,to) => admin.from("recruitment_ad_creative_changes").select("id,ad_id,status,created_at,completed_at")
+        .eq("company_id",companyId).in("ad_id",ids).gte("created_at",since).order("id").range(from,to)) : [],
+      ids.length ? recruitmentQueryPages((from,to) => admin.from("recruitment_ad_requests").select("id,ad_id,request_type,status,updated_at")
+        .eq("company_id",companyId).in("ad_id",ids).gte("updated_at",since).order("id").range(from,to)) : [],
+      ids.length ? recruitmentQueryPages((from,to) => admin.from("recruitment_ad_guard_events").select("id,ad_id,recommendation_code,evidence,reviewed_at,created_at,action_taken")
+        .eq("company_id",companyId).in("ad_id",ids).eq("action_taken","monitor_48h").gte("created_at",since).order("id").range(from,to)) : [],
+      fetchRecentMetaInsights()
     ]);
-    if(leadResult.error)throw leadResult.error;
-    const policies=policyResult.error?[]:(policyResult.data??[]);
-    const meta = await fetchRecentMetaInsights();
-    const grouped = new Map<string, any[]>();
-    for (const row of meta.rows) {
-      if (!row.ad_id || !allowedIds.has(row.ad_id)) continue;
-      grouped.set(row.ad_id, [...(grouped.get(row.ad_id) ?? []), row]);
+    if (policiesResult.error) throw policiesResult.error;
+    const policies = policiesResult.data || [], now = Date.now();
+    const insights: Record<string,any> = {}, recommendations: Record<string,any> = {}, health: Record<string,any> = {};
+    for (const ad of visibleAds) {
+      const metaId = String(ad.meta_ad_id), dailyRows = meta.rows.filter(row => row.ad_id === metaId);
+      const recent = insightTotals(meta.recent.find(row => row.ad_id === metaId));
+      const previous = insightTotals(meta.previous.find(row => row.ad_id === metaId));
+      const today = insightTotals(dailyRows.find(row => row.date_start === meta.today));
+      if (meta.available) insights[metaId] = {
+        today_spend:today.spend,today_reach:today.reach,today_impressions:today.impressions,today_clicks:today.clicks,today_meta_leads:today.leads,
+        recent_spend:recent.spend,recent_reach:recent.reach,recent_impressions:recent.impressions,recent_clicks:recent.clicks,
+        recent_link_clicks:recent.linkClicks,recent_link_ctr:recent.linkCtr,recent_frequency:recent.frequency,recent_cpm:recent.cpm,recent_meta_leads:recent.leads,
+        previous_spend:previous.spend,previous_clicks:previous.clicks,previous_meta_leads:previous.leads,
+        recent_daily:calendarDaily(dailyRows,meta.periods.recent)
+      };
+      const policy = adPolicy(ad,policies), adLeads = leads.filter(lead => lead.ad_id === ad.id);
+      const unattempted = adLeads.filter(lead => Number(lead.total_attempts||0) === 0);
+      const stale = unattempted.filter(lead => now-Date.parse(lead.lead_created_at||lead.created_at) > Number(policy.response_sla_minutes)*60000);
+      // Lead follow-up has its own result, so acquisition issues cannot hide the response backlog.
+      const followup = evaluateAdGuard({ status:ad.status,recentSpend:0,recentLeads:0,dashboardLeads:adLeads.length,
+        unattempted:unattempted.length,staleUnattempted:stale.length,ageDays:0,clicks:0,syncFresh:true },policy);
+      if (followup.action === "assign_leads") recommendations[metaId] = { ...followup, evidence:{...followup.evidence,recentSpend:recent.spend,recentLeads:recent.leads},aiEnhanced:false };
+      const result = buildHealthContext({ ad, allAds, daily:dailyRows, assessment:meta.assessment.find(row => row.ad_id === metaId),
+        previous:meta.previous.find(row => row.ad_id === metaId), period:meta.periods.assessment,previousPeriod:meta.periods.previous,
+        available:meta.available,now,policy,changes:changes.filter(item => item.ad_id === ad.id),requests:requests.filter(item => item.ad_id === ad.id) });
+      const latestEvents = new Map<string,any>();
+      events.filter(event => event.ad_id === ad.id).sort((a,b) => Date.parse(b.created_at)-Date.parse(a.created_at)).forEach(event => {
+        if (!latestEvents.has(event.recommendation_code)) latestEvents.set(event.recommendation_code,event);
+      });
+      health[metaId] = { ...result, monitoring:[...latestEvents.values()].map(event => ({
+        id:event.id,code:event.recommendation_code,reviewedAt:event.reviewed_at,reviewAfter:event.evidence?.reviewAfter,
+        state:monitoringState(event,result,now)
+      })) };
     }
-    const insights = Object.fromEntries([...grouped.entries()].map(([adId, rows]) => {
-      const allDaily = rows.sort((a, b) => String(a.date_start || "").localeCompare(String(b.date_start || "")))
-        .map((row) => ({
-          date: row.date_start,
-          spend: Number(row.spend || 0),
-          reach: Number(row.reach || 0),
-          impressions: Number(row.impressions || 0),
-          clicks: Number(row.clicks || 0),
-          leads: metaLeadActions(row)
-        }));
-      const daily=allDaily.slice(-7), previousDaily=allDaily.slice(-14,-7);
-      const today = daily.find((row) => row.date === meta.today);
-      const summarise=(source:typeof daily)=>source.reduce((summary, row) => ({
-        spend: summary.spend + row.spend,
-        reach: summary.reach + row.reach,
-        impressions: summary.impressions + row.impressions,
-        clicks: summary.clicks + row.clicks,
-        leads: summary.leads + row.leads
-      }), { spend: 0, reach: 0, impressions: 0, clicks: 0, leads: 0 });
-      const period=summarise(daily), previous=summarise(previousDaily);
-      return [adId, {
-        today_spend: today?.spend ?? 0,
-        today_reach: today?.reach ?? 0,
-        today_impressions: today?.impressions ?? 0,
-        today_clicks: today?.clicks ?? 0,
-        today_meta_leads: today?.leads ?? 0,
-        recent_spend: period.spend,
-        recent_reach: period.reach,
-        recent_impressions: period.impressions,
-        recent_clicks: period.clicks,
-        recent_meta_leads: period.leads,
-        previous_spend:previous.spend,
-        previous_clicks:previous.clicks,
-        previous_meta_leads:previous.leads,
-        recent_daily: daily
-      }];
-    }));
-    const now=Date.now();
-    const leadMetrics=new Map<string,{total:number;unattempted:number;unattemptedAges:number[]}>();
-    for(const lead of leadResult.data??[]){const m=leadMetrics.get(lead.ad_id)||{total:0,unattempted:0,unattemptedAges:[]};m.total++;if(Number(lead.total_attempts||0)===0){m.unattempted++;m.unattemptedAges.push(now-new Date(lead.lead_created_at||lead.created_at).getTime());}leadMetrics.set(lead.ad_id,m);}
-    const guardRows=visibleAds.map((ad:any)=>{
-      const insight=insights[String(ad.meta_ad_id)]||{};const leads=leadMetrics.get(ad.id)||{total:0,unattempted:0,unattemptedAges:[]};
-      const role=Array.isArray(ad.recruitment_roles)?ad.recruitment_roles[0]:ad.recruitment_roles;
-      const policy={...defaultGuardPolicy,...policies.find((p:any)=>!p.location_id&&!p.role_id&&(!p.stream||p.stream===role?.stream)),...policies.find((p:any)=>p.location_id===ad.location_id&&p.role_id===ad.role_id)};
-      const stale=leads.unattemptedAges.filter((age:number)=>age>Number(policy.response_sla_minutes)*60000).length;
-      return{ad,result:evaluateAdGuard({status:ad.status,recentSpend:Number(insight.recent_spend||0),recentLeads:Number(insight.recent_meta_leads||0),previousSpend:Number(insight.previous_spend||0),previousLeads:Number(insight.previous_meta_leads||0),dashboardLeads:leads.total,unattempted:leads.unattempted,staleUnattempted:stale,ageDays:Math.max(0,Math.floor((now-new Date(ad.created_on||now).getTime())/86400000)),clicks:Number(insight.recent_clicks||0),impressions:Number(insight.recent_impressions||0),dailyBudget:Number(ad.daily_budget||0),syncFresh:Boolean(ad.last_synced_at&&now-new Date(ad.last_synced_at).getTime()<259200000)},policy)};
-    });
-    const risky=guardRows.filter(x=>["critical","warning"].includes(x.result.severity)).slice(0,12);
-    const ai=await enhanceGuardRecommendations(risky.map(({ad,result}:any)=>{const role=Array.isArray(ad.recruitment_roles)?ad.recruitment_roles[0]:ad.recruitment_roles;return{id:String(ad.meta_ad_id),ad:String(ad.meta_ad_id),station:String(ad.location_id||"unmapped"),role:String(role?.stream||"unknown"),result};}));
-    const recommendations=Object.fromEntries(guardRows.map(({ad,result}:any)=>{const enhancement=ai?.get(String(ad.meta_ad_id));return[String(ad.meta_ad_id),{...result,...(enhancement||{}),aiEnhanced:Boolean(enhancement)}];}));
-    return NextResponse.json({
-      insightDate: meta.today,
-      insightsAvailable: meta.available,
-      insightsError: meta.error,
-      insights,
-      recommendations,
-      privacy:{personalDataSentToAI:false,mode:"aggregated_metrics_only"}
-    });
+    return NextResponse.json({ insightDate:meta.today,insightsAvailable:meta.available,insightsError:meta.error,
+      insights,recommendations,health,assessmentPeriod:meta.periods.assessment,previousPeriod:meta.periods.previous,
+      fetchedAt:meta.fetchedAt,privacy:{personalDataSentToAI:false,mode:"deterministic_metrics"}
+    }, { headers:{"Cache-Control":"private, no-store, max-age=0"} });
   } catch (error) {
     console.error("Recruitment ad insights failed", error);
     return NextResponse.json({ error: "Unable to refresh Meta ad insights." }, { status: 500 });
