@@ -23,6 +23,20 @@ export function adRunEndTime(days: number, now: number) {
   return new Date(Math.floor(now / 1000) * 1000 + days * 86_400_000).toISOString();
 }
 
+/** Meta Graph accepts ISO-8601; prefer second precision with explicit UTC offset. */
+export function toMetaGraphDateTime(value: string | number) {
+  const time = typeof value === "number" ? value : parse(value);
+  if (!Number.isFinite(time)) return null;
+  return new Date(time).toISOString().replace(/\.\d{3}Z$/, "+0000");
+}
+
+/** Meta often echoes end_time in the ad-account timezone; allow a small drift. */
+export function sameMetaInstant(left: unknown, right: unknown, toleranceMs = 60_000) {
+  const a = parse(left);
+  const b = parse(right);
+  return Number.isFinite(a) && Number.isFinite(b) && Math.abs(a - b) <= toleranceMs;
+}
+
 function timeRemaining(milliseconds: number) {
   const minutes = Math.ceil(milliseconds / 60_000);
   if (minutes < 60) return `${minutes}m`;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { adRunEndTime, adScheduleSummary, formatAdScheduleDate } from "./ad-schedule";
+import { adRunEndTime, adScheduleSummary, formatAdScheduleDate, sameMetaInstant, toMetaGraphDateTime } from "./ad-schedule";
 
 const now = Date.parse("2026-09-09T12:00:00Z");
 describe("visible ad schedules", () => {
@@ -31,5 +31,11 @@ describe("visible ad schedules", () => {
   });
   it("uses the latest run start rather than the original ad-set start", () => {
     expect(adScheduleSummary({ starts_at: "2026-08-01T12:00:00Z", current_run_started_at: new Date(now).toISOString() }, now).startLabel?.replaceAll(",", "")).toContain("09 Sept 2026");
+  });
+  it("formats Graph datetimes without milliseconds and tolerates Meta timezone echoes", () => {
+    expect(toMetaGraphDateTime(now)).toBe("2026-09-09T12:00:00+0000");
+    expect(sameMetaInstant("2026-09-16T12:00:00.000Z", "2026-09-16T17:30:00+0530")).toBe(true);
+    expect(sameMetaInstant("2026-09-16T12:00:00Z", "2026-09-16T12:00:30Z")).toBe(true);
+    expect(sameMetaInstant("2026-09-16T12:00:00Z", "2026-09-16T12:02:00Z")).toBe(false);
   });
 });

@@ -3,7 +3,16 @@ import { restartCompletedMetaAd, validateRestartTerms, type RestartAdSnapshot } 
 
 const now = Date.parse("2026-09-09T12:00:00Z");
 const expectedEndTime = "2026-09-04T07:28:08+0530";
-function fixture() {
+const metaEndTime = "2026-09-16T12:00:00+0000";
+
+function echoAsIst(value: string) {
+  const utc = Date.parse(value);
+  const local = new Date(utc + 5.5 * 3_600_000);
+  const stamp = local.toISOString().replace(/\.\d{3}Z$/, "");
+  return `${stamp}+0530`;
+}
+
+function fixture(options?: { echoEndInIst?: boolean }) {
   let ad: RestartAdSnapshot = {
     id: "ad-1", status: "ACTIVE", effective_status: "ACTIVE",
     campaign: { id: "campaign-1", status: "ACTIVE", effective_status: "ACTIVE", is_adset_budget_sharing_enabled: false },
@@ -16,13 +25,19 @@ function fixture() {
   };
   const post = vi.fn(async (id: string, values: Record<string, string>) => {
     if (id === ad.id) ad = { ...ad, ...values, effective_status: values.status || ad.effective_status };
-    else ad = { ...ad, adset: { ...ad.adset, ...values } };
+    else {
+      const end_time = values.end_time && options?.echoEndInIst ? echoAsIst(values.end_time) : values.end_time;
+      ad = { ...ad, adset: { ...ad.adset, ...values, ...(end_time ? { end_time } : {}) } };
+    }
     return { success: true };
   });
   const read = vi.fn(async () => structuredClone(ad));
   return {
-    input: { adId: "ad-1", days: 7, budget: 100, expectedEndTime, now,
-      audience: { stationCode: "KOZA", latitude: 11.265875, longitude: 75.825172 }, read, post },
+    input: {
+      adId: "ad-1", days: 7, budget: 100, expectedEndTime, now,
+      audience: { stationCode: "KOZA", latitude: 11.265875, longitude: 75.825172 },
+      read, post, sleep: async () => undefined
+    },
     get ad() { return ad; }
   };
 }
@@ -31,15 +46,22 @@ describe("completed ad restart", () => {
   it("extends from now and verifies while paused before activating the same ad", async () => {
     const f = fixture();
     const result = await restartCompletedMetaAd(f.input);
-    expect(result.endTime).toBe("2026-09-16T12:00:00.000Z");
+    expect(result.endTime).toBe(metaEndTime);
     expect(result.after.status).toBe("ACTIVE");
     expect(result.after.adset?.targeting).toEqual(result.before.adset?.targeting);
     expect(f.input.post.mock.calls).toEqual([
       ["ad-1", { status: "PAUSED" }],
-      ["set-1", { end_time: result.endTime, daily_budget: "10000", status: "ACTIVE" }],
+      ["set-1", { end_time: metaEndTime, daily_budget: "10000", status: "ACTIVE" }],
       ["ad-1", { status: "ACTIVE" }]
     ]);
     expect(result.after.adset?.start_time).toBe(result.before.adset?.start_time);
+  });
+
+  it("accepts Meta echoing the end time in the ad-account timezone", async () => {
+    const f = fixture({ echoEndInIst: true });
+    const result = await restartCompletedMetaAd(f.input);
+    expect(result.endTime).toBe(metaEndTime);
+    expect(Date.parse(String(result.after.adset?.end_time))).toBe(Date.parse(metaEndTime));
   });
 
   it.each([undefined, 0, -1, 1.5, 91, Infinity])("rejects invalid duration %s before contacting Meta", async (days) => {
@@ -88,7 +110,7 @@ describe("completed ad restart", () => {
       if (Date.parse(String(snapshot.adset?.end_time)) > now) snapshot.adset!.daily_budget = "50000";
       return snapshot;
     });
-    await expect(restartCompletedMetaAd(f.input)).rejects.toThrow("The ad is paused");
+    await expect(restartCompletedMetaAd(f.input)).rejects.toThrow(/daily budget 50000/);
     expect(f.ad.status).toBe("PAUSED");
     expect(f.input.post.mock.calls.some(([id, values]) => id === "ad-1" && values.status === "ACTIVE")).toBe(false);
   });
