@@ -15,7 +15,6 @@ function fixture() {
     }
   };
   const post = vi.fn(async (id: string, values: Record<string, string>) => {
-    if (values.execution_options) return { success: true };
     if (id === ad.id) ad = { ...ad, ...values, effective_status: values.status || ad.effective_status };
     else ad = { ...ad, adset: { ...ad.adset, ...values } };
     return { success: true };
@@ -36,7 +35,6 @@ describe("completed ad restart", () => {
     expect(result.after.status).toBe("ACTIVE");
     expect(result.after.adset?.targeting).toEqual(result.before.adset?.targeting);
     expect(f.input.post.mock.calls).toEqual([
-      ["set-1", { end_time: result.endTime, daily_budget: "10000", status: "ACTIVE", execution_options: '["validate_only"]' }],
       ["ad-1", { status: "PAUSED" }],
       ["set-1", { end_time: result.endTime, daily_budget: "10000", status: "ACTIVE" }],
       ["ad-1", { status: "ACTIVE" }]
@@ -109,10 +107,21 @@ describe("completed ad restart", () => {
 
   it("reports an unconfirmed safety pause instead of claiming the ad is paused", async () => {
     const f = fixture();
-    f.input.post.mockImplementation(async (_id, values) => {
-      if (values.execution_options) return { success: true };
+    f.input.post.mockImplementation(async () => {
       throw new Error("Meta unavailable");
     });
     await expect(restartCompletedMetaAd(f.input)).rejects.toThrow("Meta did not confirm the safety pause");
+  });
+
+  it("skips a redundant safety pause when the hold already succeeded", async () => {
+    const f = fixture();
+    const originalPost = f.input.post.getMockImplementation()!;
+    f.input.post.mockImplementation(async (id, values) => {
+      if (id === "set-1") throw new Error("ad set write failed");
+      return originalPost(id, values);
+    });
+    await expect(restartCompletedMetaAd(f.input)).rejects.toThrow("The ad is paused");
+    expect(f.input.post.mock.calls.filter(([id, values]) => id === "ad-1" && values.status === "PAUSED")).toHaveLength(1);
+    expect(f.ad.status).toBe("PAUSED");
   });
 });

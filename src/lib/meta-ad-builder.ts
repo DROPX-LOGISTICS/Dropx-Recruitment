@@ -2,6 +2,7 @@ import { assertCreativeReplacementDelivery } from "./meta-creative-delivery";
 import { assertMetaTargeting } from "./meta-targeting";
 import { metaDeliveryStatus, type MetaDeliverySnapshot } from "./meta-ad-delivery";
 import { getConnectionConfig } from "./connection-config";
+import { withMetaObjectEditGate } from "./meta-graph-throttle";
 
 export type MetaAdBuilderCatalog = {
   connected: boolean;
@@ -330,27 +331,39 @@ async function graphRequest(
   method: "GET" | "POST" = "GET",
   values?: Record<string, string>
 ) {
-  const encodedPath = path.split("/").map((part) => encodeURIComponent(part)).join("/");
-  const url = new URL(`https://graph.facebook.com/${connection.graphVersion}/${encodedPath}`);
-  const response = await fetch(url, {
-    method,
-    headers: {
-      Authorization: `Bearer ${connection.accessToken}`,
-      ...(method === "POST" ? { "Content-Type": "application/x-www-form-urlencoded" } : {})
-    },
-    body: method === "POST" ? new URLSearchParams(values ?? {}) : undefined,
-    cache: "no-store",
-    signal: AbortSignal.timeout(30_000)
-  });
-  const payload = await response.json() as MetaGraphPayload;
-  if (!response.ok || payload.error) {
-    const detail = payload.error?.error_user_msg || payload.error?.message;
-    const suffix = payload.error?.code
-      ? ` [Meta ${payload.error.code}${payload.error.error_subcode ? `/${payload.error.error_subcode}` : ""}]`
-      : "";
-    throw new Error(`${detail || `Meta returned HTTP ${response.status}.`}${suffix}`);
-  }
-  return payload;
+  const execute = async () => {
+    const encodedPath = path.split("/").map((part) => encodeURIComponent(part)).join("/");
+    const url = new URL(`https://graph.facebook.com/${connection.graphVersion}/${encodedPath}`);
+    const response = await fetch(url, {
+      method,
+      headers: {
+        Authorization: `Bearer ${connection.accessToken}`,
+        ...(method === "POST" ? { "Content-Type": "application/x-www-form-urlencoded" } : {})
+      },
+      body: method === "POST" ? new URLSearchParams(values ?? {}) : undefined,
+      cache: "no-store",
+      signal: AbortSignal.timeout(30_000)
+    });
+    const payload = await response.json() as MetaGraphPayload;
+    if (!response.ok || payload.error) {
+      const detail = payload.error?.error_user_msg || payload.error?.message;
+      const suffix = payload.error?.code
+        ? ` [Meta ${payload.error.code}${payload.error.error_subcode ? `/${payload.error.error_subcode}` : ""}]`
+        : "";
+      const error = new Error(`${detail || `Meta returned HTTP ${response.status}.`}${suffix}`) as Error & {
+        metaCode?: number;
+        metaSubcode?: number;
+      };
+      error.metaCode = payload.error?.code;
+      error.metaSubcode = payload.error?.error_subcode;
+      throw error;
+    }
+    return payload;
+  };
+  if (method !== "POST") return execute();
+  // Concurrent edit limit is per object ID (ad / ad set / campaign), not account edge creates.
+  if (path.includes("/")) return execute();
+  return withMetaObjectEditGate(path, execute);
 }
 
 export async function getMetaAdDeliverySnapshot(adId: string) {

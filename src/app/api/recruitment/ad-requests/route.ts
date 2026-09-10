@@ -21,9 +21,12 @@ import {
 } from "@/lib/ad-request-lifecycle";
 import { resolveMetaDailyBudgetTarget } from "@/lib/meta-budget";
 import { RESTART_AD_FIELDS, restartCompletedMetaAd, validateRestartTerms, type RestartAdSnapshot } from "@/lib/meta-ad-restart";
+import { withMetaObjectEditGate } from "@/lib/meta-graph-throttle";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
+/** Restart spaces Meta object edits by 30s; allow pause → wait → activate to finish. */
+export const maxDuration = 120;
 
 type Session = NonNullable<Awaited<ReturnType<typeof recruitmentSession>>>;
 
@@ -114,34 +117,36 @@ function metaFailure(payload: MetaErrorPayload, status: number, target = "change
 }
 
 async function metaPost(path: string, values: Record<string, string>, target = "change") {
-  const config = await getConnectionConfig("meta");
-  if (!config?.isEnabled || !config.secrets.access_token) {
-    throw new AdChangeError("Meta Lead Ads must be enabled and tested before completing this change.");
-  }
-  const version = config.publicConfig.graph_version || "v25.0";
-  let response: Response;
-  try {
-    response = await fetch(`https://graph.facebook.com/${version}/${encodeURIComponent(path)}`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${config.secrets.access_token}`,
-        "Content-Type": "application/x-www-form-urlencoded"
-      },
-      body: new URLSearchParams(values),
-      cache: "no-store",
-      signal: AbortSignal.timeout(25_000)
-    });
-  } catch (error) {
-    if (error instanceof DOMException && error.name === "TimeoutError") {
-      throw new AdChangeError("Meta did not respond within 25 seconds. No local budget was changed; please try again.");
+  return withMetaObjectEditGate(path, async () => {
+    const config = await getConnectionConfig("meta");
+    if (!config?.isEnabled || !config.secrets.access_token) {
+      throw new AdChangeError("Meta Lead Ads must be enabled and tested before completing this change.");
     }
-    throw error;
-  }
-  const payload = await response.json() as MetaErrorPayload;
-  if (!response.ok || payload.error || payload.success === false) {
-    throw metaFailure(payload, response.status, target);
-  }
-  return payload;
+    const version = config.publicConfig.graph_version || "v25.0";
+    let response: Response;
+    try {
+      response = await fetch(`https://graph.facebook.com/${version}/${encodeURIComponent(path)}`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${config.secrets.access_token}`,
+          "Content-Type": "application/x-www-form-urlencoded"
+        },
+        body: new URLSearchParams(values),
+        cache: "no-store",
+        signal: AbortSignal.timeout(25_000)
+      });
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "TimeoutError") {
+        throw new AdChangeError("Meta did not respond within 25 seconds. No local budget was changed; please try again.");
+      }
+      throw error;
+    }
+    const payload = await response.json() as MetaErrorPayload;
+    if (!response.ok || payload.error || payload.success === false) {
+      throw metaFailure(payload, response.status, target);
+    }
+    return payload;
+  });
 }
 
 async function metaGet<T>(path: string, fields: string) {

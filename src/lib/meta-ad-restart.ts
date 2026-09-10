@@ -76,7 +76,6 @@ export async function restartCompletedMetaAd(input: {
   assertMetaTargeting(adset.targeting, audience);
   const endTime = adRunEndTime(terms.days, now)!;
   const values = { end_time: endTime, daily_budget: String(terms.budgetMinor), status: "ACTIVE" };
-  await input.post(adset.id, { ...values, execution_options: JSON.stringify(["validate_only"]) });
 
   const verify = (snapshot: RestartAdSnapshot) => {
     if (!snapshot.adset || !snapshot.campaign
@@ -94,8 +93,14 @@ export async function restartCompletedMetaAd(input: {
     }
     assertMetaTargeting(snapshot.adset.targeting, audience);
   };
+
+  // Meta allows one POST edit per object / 30s (613/4841018). Order: pause ad → edit ad set
+  // (different object) → activate ad. Transport layer spaces the two ad POSTs.
+  let holdPaused = false;
+  let activated = false;
   try {
     await input.post(input.adId, { status: "PAUSED" });
+    holdPaused = true;
     // A concurrent change or retry must not extend an already restarted schedule.
     const paused = await input.read();
     if (!paused.adset || !paused.campaign || String(paused.status) !== "PAUSED" || paused.adset.id !== adset.id
@@ -110,15 +115,18 @@ export async function restartCompletedMetaAd(input: {
     await input.post(adset.id, values);
     verify(await input.read());
     await input.post(input.adId, { status: "ACTIVE" });
+    activated = true;
     const after = await input.read();
     verify(after);
     if (String(after.status) !== "ACTIVE") throw new Error("Meta has not confirmed that the ad is switched on.");
     return { before, after, endTime, dailyBudget: terms.budgetMinor / 100 };
   } catch (error) {
-    try {
-      await input.post(input.adId, { status: "PAUSED" });
-    } catch {
-      throw new Error("The restart could not be verified, and Meta did not confirm the safety pause. Check this ad in Meta Ads Manager before retrying.");
+    if (!holdPaused || activated) {
+      try {
+        await input.post(input.adId, { status: "PAUSED" });
+      } catch {
+        throw new Error("The restart could not be verified, and Meta did not confirm the safety pause. Check this ad in Meta Ads Manager before retrying.");
+      }
     }
     throw new Error(`${error instanceof Error ? error.message : "The restart could not be verified."} The ad is paused; refresh Active Ads to review its current schedule.`);
   }
