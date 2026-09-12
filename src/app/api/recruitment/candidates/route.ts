@@ -37,7 +37,16 @@ export async function GET(request: Request) {
     query = applyLeadScope(query, session, "hr");
     if (archive === "archived") query = query.eq("archived", true);
     else if (archive !== "all") query = query.eq("archived", false);
-    if (statuses.length) query = query.in("status", statuses);
+    // recruitment_leads.status defaults to '' (empty string, not null) until a
+    // first call is logged. Those rows still surface as "New profile" via
+    // candidateJourney's fallback (see hr-ats-product.ts), so the "new" filter
+    // must include '' too, matching how the leads queue route already treats
+    // "__BLANK__" as ["", "new"] — otherwise filtered results silently drop
+    // candidates that are visible when no status filter is applied.
+    if (statuses.length) {
+      const expanded = statuses.flatMap((item) => item === "new" ? ["new", ""] : [item]);
+      query = query.in("status", expanded);
+    }
     if (sources.length) query = query.in("source", sources);
     if (search) {
       const safe = search.replace(/[,%()]/g, " ").trim();
