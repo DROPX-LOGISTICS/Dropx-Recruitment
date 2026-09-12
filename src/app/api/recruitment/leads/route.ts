@@ -136,6 +136,12 @@ export async function GET(request: Request) {
     if (status) {
       const statuses = csv(status);
       if (statuses.includes("__BLANK__")) statuses.splice(statuses.indexOf("__BLANK__"), 1, "", "new");
+      // recruitment_leads.status defaults to '' (empty string, not null) until
+      // a first call is logged. The HR lifecycle filter sends the literal
+      // "new" code (see hrLifecycleFilterOptions), so without this expansion
+      // those blank-status leads are visible with no status filter applied
+      // but silently disappear the moment "New profile" is selected.
+      if (statuses.includes("new") && !statuses.includes("")) statuses.push("");
       query = statuses.length > 1 ? query.in("status", statuses) : query.eq("status", statuses[0]);
     }
     if (finalStatus) query = query.in("final_status", csv(finalStatus));
@@ -242,7 +248,7 @@ export async function GET(request: Request) {
       ));
       const facetFailure = facetResults.find((item) => item.error);
       if (facetFailure?.error) throw new Error(facetFailure.error.message);
-      const selectedStatuses = status ? csv(status).flatMap((item) => item === "__BLANK__" ? ["", "new"] : [item]) : [];
+      const selectedStatuses = status ? csv(status).flatMap((item) => item === "__BLANK__" || item === "new" ? ["", "new"] : [item]) : [];
       const selectedFinalStatuses = finalStatus ? csv(finalStatus) : [];
       const interviewStart = interviewFrom ? new Date(startOfIstDay(interviewFrom)).getTime() : null;
       const interviewEnd = interviewTo ? new Date(endOfIstDay(interviewTo)).getTime() : null;

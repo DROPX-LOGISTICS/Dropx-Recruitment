@@ -334,7 +334,7 @@ export async function GET(request: Request) {
       if (interviewFrom) query = query.gte("follow_up_at", startOfIstDay(interviewFrom));
       if (interviewTo) query = query.lte("follow_up_at", endOfIstDay(interviewTo));
       if (statuses.length) {
-        const normalized = statuses.flatMap((status) => status === "__BLANK__" ? ["", "new"] : [status]);
+        const normalized = statuses.flatMap((status) => status === "__BLANK__" || status === "new" ? ["", "new"] : [status]);
         query = query.in("status", normalized);
       }
       if (locationIds) {
