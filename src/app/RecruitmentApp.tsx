@@ -853,13 +853,15 @@ function WorkforceQueue({ leads, selected, busy, active, token, statusOptions, c
   retry: (lead:Lead)=>Promise<void>;
   refresh: (id:string)=>Promise<void>;
 }) {
+  const [now,setNow]=useState(Date.now);
+  useEffect(()=>{const timer=window.setInterval(()=>setNow(Date.now()),60_000);return()=>window.clearInterval(timer);},[]);
   return <><div className="table-scroll workforce-desktop-table"><table className="workforce-table"><thead><tr><th>Candidate</th><th>Location</th><th>Mobile number</th><th>Designation / station</th><th title="Latest time this lead was ingested into Recruit from Meta">Meta received (IST)</th><th>Status &amp; remark</th><th>Updated</th><th>Details</th></tr></thead><tbody>
-    {leads.map((lead)=><WorkforceLeadRow key={lead.id} lead={lead} detail={selected?.lead.id===lead.id?selected:null} busy={busy} active={active} token={token} statusOptions={statusOptions} canEdit={canEdit} open={open} update={update} retry={retry} refresh={refresh}/>) }
-  </tbody></table></div><div className="workforce-mobile-list">{leads.map((lead)=><WorkforceMobileCard key={lead.id} lead={lead} detail={selected?.lead.id===lead.id?selected:null} busy={busy} active={active} token={token} statusOptions={statusOptions} canEdit={canEdit} open={open} update={update} retry={retry} refresh={refresh}/>)}</div>{!busy&&!leads.length?<div className="empty">No leads match this queue.</div>:null}</>;
+    {leads.map((lead)=><WorkforceLeadRow key={lead.id} lead={lead} now={now} detail={selected?.lead.id===lead.id?selected:null} busy={busy} active={active} token={token} statusOptions={statusOptions} canEdit={canEdit} open={open} update={update} retry={retry} refresh={refresh}/>) }
+  </tbody></table></div><div className="workforce-mobile-list">{leads.map((lead)=><WorkforceMobileCard key={lead.id} lead={lead} now={now} detail={selected?.lead.id===lead.id?selected:null} busy={busy} active={active} token={token} statusOptions={statusOptions} canEdit={canEdit} open={open} update={update} retry={retry} refresh={refresh}/>)}</div>{!busy&&!leads.length?<div className="empty">No leads match this queue.</div>:null}</>;
 }
 
-function WorkforceMobileCard({ lead, detail, busy, active, token, statusOptions, canEdit, open, update, retry, refresh }: {
-  lead:Lead; detail:LeadDetail|null; busy:boolean; active:string; token:string; statusOptions:any[];
+function WorkforceMobileCard({ lead, now, detail, busy, active, token, statusOptions, canEdit, open, update, retry, refresh }: {
+  lead:Lead; now:number; detail:LeadDetail|null; busy:boolean; active:string; token:string; statusOptions:any[];
   canEdit:boolean;
   open:(id:string)=>Promise<void>;
   update:(lead:Lead,status:string,details?:{interviewAt?:string|null;callbackAt?:string|null;remarks?:string})=>Promise<void>;
@@ -875,7 +877,7 @@ function WorkforceMobileCard({ lead, detail, busy, active, token, statusOptions,
     </button>
     <div className="mobile-lead-contact"><a href={`tel:+91${phone}`}>{displayPhone(lead.phone)}</a>{phone.length===10?<><a href={`tel:+91${phone}`} aria-label={`Call ${lead.full_name||"candidate"}`}>Call</a><a href={`https://wa.me/91${phone}`} target="_blank" rel="noreferrer" aria-label={`WhatsApp ${lead.full_name||"candidate"}`}>WhatsApp</a></>:null}</div>
     {detail?<div className="mobile-lead-expanded">
-      <dl className="mobile-lead-facts"><span><dt>Designation</dt><dd>{lead.recruitment_roles?.name||"Unmapped"}</dd></span><span><dt>Meta received (IST)</dt><dd><MetaReceivedTime value={lead.meta_received_at}/></dd></span><span><dt>Updated</dt><dd>{lead.updated_at?new Date(lead.updated_at).toLocaleString("en-IN",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"}):"—"}</dd></span><span><dt>Owner</dt><dd>{lead.last_updated_profile?.full_name||lead.last_updated_profile?.email||"System"}</dd></span></dl>
+      <dl className="mobile-lead-facts"><span><dt>Designation</dt><dd>{lead.recruitment_roles?.name||"Unmapped"}</dd></span><span><dt>Meta received (IST)</dt><dd><MetaReceivedTime value={lead.meta_received_at} now={now}/></dd></span><span><dt>Updated</dt><dd>{lead.updated_at?new Date(lead.updated_at).toLocaleString("en-IN",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"}):"—"}</dd></span><span><dt>Owner</dt><dd>{lead.last_updated_profile?.full_name||lead.last_updated_profile?.email||"System"}</dd></span></dl>
       <div className="mobile-status-control">{active==="Interviews"?<InterviewOutcomeControl lead={lead} busy={busy} canEdit={canEdit} update={update} options={statusOptions}/>:<LeadStatusControl lead={lead} busy={busy} canEdit={canEdit} update={update} options={statusOptions}/>} {canEdit&&active==="No Response / Call Back"&&["no_response","call_back"].includes(lead.status)?<button className="retry-action" disabled={busy} onClick={()=>void retry(lead)}>Retry ({lead.status==="no_response"?lead.no_response_attempts:lead.call_back_attempts})</button>:null}</div>
       {lead.remarks||lead.follow_up_at||lead.callback_at?<p className="mobile-lead-remark">{lead.remarks||"Scheduled"}{lead.follow_up_at?` · ${new Date(lead.follow_up_at).toLocaleString("en-IN")}`:lead.callback_at?` · ${new Date(lead.callback_at).toLocaleString("en-IN")}`:""}</p>:null}
       <WorkforceDetailPanel detail={detail} active={active} token={token} busy={busy} canEdit={canEdit} refresh={refresh}/>
@@ -906,8 +908,9 @@ function visibleQuestionnaireEntries(questionnaire:any):Array<[string,unknown]> 
   }).map(([key,value])=>[key,value]);
 }
 
-function WorkforceLeadRow({ lead, detail, busy, active, token, statusOptions, canEdit, open, update, retry, refresh }: {
+function WorkforceLeadRow({ lead, now, detail, busy, active, token, statusOptions, canEdit, open, update, retry, refresh }: {
   lead: Lead;
+  now: number;
   detail: LeadDetail | null;
   busy: boolean;
   active: string;
@@ -925,7 +928,7 @@ function WorkforceLeadRow({ lead, detail, busy, active, token, statusOptions, ca
       <td className="candidate-location"><b title={lead.city||""}>{lead.city||"—"}</b><small>{lead.post_code||"No pincode"}</small></td>
       <td className="queue-phone"><a className="large-phone" href={`tel:+91${phoneDigits(lead.phone)}`}>{displayPhone(lead.phone)}</a>{phoneDigits(lead.phone).length===10?<div className="contact-actions"><a href={`tel:+91${phoneDigits(lead.phone)}`} aria-label={`Call ${lead.full_name||"candidate"}`}>Call</a><a href={`https://wa.me/91${phoneDigits(lead.phone)}`} target="_blank" rel="noreferrer" aria-label={`WhatsApp ${lead.full_name||"candidate"}`}>WA</a></div>:null}</td>
       <td className="queue-role"><b>{lead.recruitment_roles?.name||"Unmapped designation"}</b><small>{lead.recruitment_locations?.code||"Unmapped station"}{lead.city?` • ${lead.city}`:""}</small></td>
-      <td className="queue-meta-received"><MetaReceivedTime value={lead.meta_received_at}/></td>
+      <td className="queue-meta-received"><MetaReceivedTime value={lead.meta_received_at} now={now}/></td>
       <td className="queue-status-cell">{active==="Interviews"?<InterviewOutcomeControl lead={lead} busy={busy} canEdit={canEdit} update={update} options={statusOptions}/>:<LeadStatusControl lead={lead} busy={busy} canEdit={canEdit} update={update} options={statusOptions}/>} {canEdit&&active==="No Response / Call Back"&&["no_response","call_back"].includes(lead.status)?<button className="retry-action" disabled={busy} onClick={()=>void retry(lead)}>Retry ({lead.status==="no_response"?lead.no_response_attempts:lead.call_back_attempts})</button>:null}{lead.remarks||lead.follow_up_at||lead.callback_at?<small className="queue-remark" title={`${lead.remarks||""}${lead.follow_up_at?` • ${new Date(lead.follow_up_at).toLocaleString("en-IN")}`:lead.callback_at?` • ${new Date(lead.callback_at).toLocaleString("en-IN")}`:""}`}>{lead.remarks||"Scheduled"}{lead.follow_up_at?` • ${new Date(lead.follow_up_at).toLocaleString("en-IN")}`:lead.callback_at?` • ${new Date(lead.callback_at).toLocaleString("en-IN")}`:""}</small>:null}</td>
       <td className="queue-updated" title={lead.lead_created_at?`Lead created ${new Date(lead.lead_created_at).toLocaleString("en-IN")}`:""}><b>{lead.updated_at?new Date(lead.updated_at).toLocaleString("en-IN",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"}):"—"}</b><small>By {lead.last_updated_profile?.full_name||lead.last_updated_profile?.email||"System"}</small></td>
       <td><button className="expand-action" disabled={busy} onClick={()=>void open(lead.id)}>{active==="Interviews"&&["selected","joined"].includes(lead.status)?"Onboard":detail?"Hide":"View"} {detail?"⌃":"⌄"}</button></td>
