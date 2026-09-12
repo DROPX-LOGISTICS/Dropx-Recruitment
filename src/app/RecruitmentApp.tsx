@@ -3047,6 +3047,7 @@ function MasterManager({ kind, stream, data, token, reload, canEdit = true }: {
       : { selected:"", code:"", name:"", state:"", region:"", cluster:"", isActive:true };
   const [form, setForm] = useState<Record<string, any>>(empty);
   const [saving, setSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState("");
   const [notice, setNotice] = useState("");
   const locations = data?.locations ?? [];
   const roles = kind === "role"
@@ -3080,6 +3081,20 @@ function MasterManager({ kind, stream, data, token, reload, canEdit = true }: {
     } catch(error) { setNotice(error instanceof Error?error.message:"Unable to save master."); }
     finally { setSaving(false); }
   }
+  async function removeRole(item:any) {
+    if (!canEdit || kind !== "role") return;
+    if (!window.confirm(`Delete designation ${item.code} — ${item.name}? This cannot be undone.`)) return;
+    setDeletingId(item.id); setNotice("");
+    try {
+      const response=await fetch(`/api/recruitment/masters?resource=role&id=${encodeURIComponent(item.id)}`,{method:"DELETE",headers:headers(token)});
+      const payload=await response.json();
+      if(!response.ok) throw new Error(payload.error||"Unable to delete designation.");
+      setNotice("Designation deleted.");
+      if (form.selected===item.id) setForm(empty);
+      await reload();
+    } catch(error) { setNotice(error instanceof Error?error.message:"Unable to delete designation."); }
+    finally { setDeletingId(""); }
+  }
   const title=kind==="location"
     ? "Dashboard location directory"
     : kind==="contact"
@@ -3097,12 +3112,34 @@ function MasterManager({ kind, stream, data, token, reload, canEdit = true }: {
     </section>:<section className="content-card master-readonly-note"><h2>{title}</h2><p>You have View access. Edit or All access is required to change this master.</p></section>}
     <section className="content-card leads-card"><div className="toolbar"><span>{kind==="role"?roles.length:locations.length} records</span></div>
       {kind==="role"
-        ? <SimpleTable headers={["Code","Role","Category","Aliases","State"]} rows={roles.map((item:any)=>[item.code,item.name,item.stream,(item.aliases??[]).join(", ")||"—",item.is_active?"Active":"Inactive"])}/>
+        ? <RoleTable roles={roles} canEdit={canEdit} deletingId={deletingId} onEdit={(item)=>choose(item.id)} onDelete={removeRole}/>
         : kind==="contact"
           ? <SimpleTable headers={["Station","Address","POC","Mobile","Map"]} rows={locations.map((item:any)=>{const contact=item.contact??item;return[item.code,contact.address||"—",contact.poc_name||"—",contact.poc_mobile||"—",contact.latitude!=null?`${contact.latitude}, ${contact.longitude}`:"—"];})}/>
           : <SimpleTable headers={["Code","Location","Operational owner","State","Region","Status"]} rows={locations.map((item:any)=>[item.code,item.name,item.cluster||"Not mapped in People",item.state||"—",item.region||"—",item.is_active?"Active":"Inactive"])}/>}
     </section>
   </section>;
+}
+
+function RoleTable({ roles, canEdit, deletingId, onEdit, onDelete }: {
+  roles: any[];
+  canEdit: boolean;
+  deletingId: string;
+  onEdit: (item:any) => void;
+  onDelete: (item:any) => void;
+}) {
+  const headers = canEdit ? ["Code","Role","Category","Aliases","State","Actions"] : ["Code","Role","Category","Aliases","State"];
+  if (!roles.length) return <div className="empty">No records available.</div>;
+  return <><div className="table-scroll simple-table-desktop"><table><thead><tr>{headers.map((label)=><th key={label}>{label}</th>)}</tr></thead><tbody>
+    {roles.map((item:any)=><tr key={item.id}>
+      <td>{item.code}</td><td>{item.name}</td><td>{item.stream}</td><td>{(item.aliases??[]).join(", ")||"—"}</td><td>{item.is_active?"Active":"Inactive"}</td>
+      {canEdit?<td><div className="ats-row-actions"><button type="button" onClick={()=>onEdit(item)}>Edit</button><button type="button" className="danger-action" disabled={deletingId===item.id} onClick={()=>onDelete(item)}>{deletingId===item.id?"Deleting…":"Delete"}</button></div></td>:null}
+    </tr>)}
+  </tbody></table></div>
+  <div className="simple-table-mobile">{roles.map((item:any)=><details key={item.id}><summary><span><b>{item.code}</b><small>{item.name}</small></span><i>⌄</i></summary><dl>
+    <span><dt>Category</dt><dd>{item.stream}</dd></span>
+    <span><dt>Aliases</dt><dd>{(item.aliases??[]).join(", ")||"—"}</dd></span>
+    <span><dt>State</dt><dd>{item.is_active?"Active":"Inactive"}</dd></span>
+  </dl>{canEdit?<div className="ats-row-actions"><button type="button" onClick={()=>onEdit(item)}>Edit</button><button type="button" className="danger-action" disabled={deletingId===item.id} onClick={()=>onDelete(item)}>{deletingId===item.id?"Deleting…":"Delete"}</button></div>:null}</details>)}</div></>;
 }
 
 function LeadStatusMaster({data,token,canEdit,reload}:{data:any;token:string;canEdit:boolean;reload:()=>Promise<void>}) {

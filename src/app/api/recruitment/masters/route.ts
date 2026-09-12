@@ -359,3 +359,62 @@ export async function PUT(request: Request) {
     }, { status: 400 });
   }
 }
+
+export async function DELETE(request: Request) {
+  try {
+    if (!supabaseAdmin) throw new Error("Supabase is not configured.");
+    const session = await recruitmentSession(request);
+    if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const url = new URL(request.url);
+    const resource = text(url.searchParams.get("resource"), 30);
+    const id = text(url.searchParams.get("id"), 80);
+    if (resource !== "role") return NextResponse.json({ error: "Unsupported master resource." }, { status: 400 });
+    if (!id) return NextResponse.json({ error: "A designation id is required." }, { status: 400 });
+    const companyId = requiredEnv("RECRUITMENT_COMPANY_ID");
+
+    const role = await supabaseAdmin.from("recruitment_roles")
+      .select("id,code,name,stream").eq("company_id", companyId).eq("id", id).maybeSingle();
+    if (role.error) throw role.error;
+    if (!role.data) return NextResponse.json({ error: "Designation was not found." }, { status: 404 });
+    if (!canUseRecruitmentMenu(session, "Roles", "edit", role.data.stream === "hr" ? "hr" : "workforce")) {
+      return NextResponse.json({ error: "Edit access to this master is required." }, { status: 403 });
+    }
+
+    // recruitment_leads.role_id and recruitment_ads.role_id are both ON
+    // DELETE SET NULL, so the database would silently unmap every lead and
+    // ad on that designation instead of blocking the delete. Requisitions and
+    // Indeed direct-intake postings reference roles with ON DELETE RESTRICT,
+    // so those are checked here too for one clear message instead of a raw
+    // database error.
+    const [leads, ads, requisitions, indeedIntake] = await Promise.all([
+      supabaseAdmin.from("recruitment_leads").select("id", { count: "exact", head: true }).eq("company_id", companyId).eq("role_id", id),
+      supabaseAdmin.from("recruitment_ads").select("id", { count: "exact", head: true }).eq("company_id", companyId).eq("role_id", id),
+      supabaseAdmin.from("recruitment_job_requisitions").select("id", { count: "exact", head: true }).eq("company_id", companyId).eq("role_id", id),
+      supabaseAdmin.from("recruitment_indeed_job_mappings").select("id", { count: "exact", head: true }).eq("company_id", companyId).eq("role_id", id)
+    ]);
+    if (leads.error && !/relation .* does not exist/i.test(leads.error.message)) throw leads.error;
+    if (ads.error && !/relation .* does not exist/i.test(ads.error.message)) throw ads.error;
+    if (requisitions.error && !/relation .* does not exist/i.test(requisitions.error.message)) throw requisitions.error;
+    if (indeedIntake.error && !/relation .* does not exist/i.test(indeedIntake.error.message)) throw indeedIntake.error;
+    const blockers: string[] = [];
+    if (leads.count) blockers.push(`${leads.count} lead(s)`);
+    if (ads.count) blockers.push(`${ads.count} ad(s)`);
+    if (requisitions.count) blockers.push(`${requisitions.count} job requisition(s)`);
+    if (indeedIntake.count) blockers.push(`${indeedIntake.count} Indeed posting(s)`);
+    if (blockers.length) {
+      return NextResponse.json({
+        error: `Cannot delete ${role.data.code} — it is still used by ${blockers.join(", ")}. Mark it inactive instead, or remap those records first.`
+      }, { status: 409 });
+    }
+
+    const deleted = await supabaseAdmin.from("recruitment_roles").delete().eq("company_id", companyId).eq("id", id);
+    if (deleted.error) throw deleted.error;
+    await auditMasterChange({ companyId, action: "designation_deleted", changedFields: ["deleted"], message: `${role.data.stream} designation ${role.data.code} · ${role.data.name} deleted.`, actorProfileId: session.profileId, actorEmail: session.email });
+    return NextResponse.json({ deleted: true, resource, id });
+  } catch (error) {
+    console.error("Recruitment master delete failed", error);
+    return NextResponse.json({
+      error: error instanceof Error ? error.message : "Unable to delete master."
+    }, { status: 400 });
+  }
+}
