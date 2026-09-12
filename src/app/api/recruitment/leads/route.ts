@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { applyLeadScope, canUseRecruitmentMenu, recruitmentSession, requiredEnv } from "@/lib/recruitment-api";
 import type { RecruitmentMenuId } from "@/lib/recruitment-menu-roles";
 import { buildLeadFacets } from "@/lib/lead-facets";
+import { loadMetaReceivedTimes } from "@/lib/lead-meta-intake";
 import { loadMainDashboardStations } from "@/lib/main-dashboard-masters";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { WORKFORCE_ACTIVE_INTERVIEW_STATUS_QUERY } from "@/lib/workforce-interview-lifecycle";
@@ -117,6 +118,7 @@ export async function GET(request: Request) {
         structuredInterviewIds = [...new Set((scheduled.data ?? []).map((row) => row.lead_id).filter(Boolean))];
       }
     }
+    const includeMetaIntake = stream === "workforce" && !compact;
     let query: any = supabaseAdmin
       .from("recruitment_leads")
       .select(compact
@@ -295,7 +297,13 @@ export async function GET(request: Request) {
       facets = buildLeadFacets(commonRows, { stationCodes, clusters, roleCodes });
     }
 
-    return NextResponse.json({ leads: result.data ?? [], total: result.count ?? 0, page, limit, facets });
+    const receivedTimes = includeMetaIntake
+      ? await loadMetaReceivedTimes(companyId, (result.data ?? []).map((lead: any) => lead.id))
+      : null;
+    const leads = receivedTimes
+      ? (result.data ?? []).map((lead: any) => ({ ...lead, meta_received_at: receivedTimes.get(lead.id) ?? null }))
+      : result.data ?? [];
+    return NextResponse.json({ leads, total: result.count ?? 0, page, limit, facets });
   } catch (error) {
     console.error("Recruitment leads failed", error);
     return NextResponse.json({ error: "Unable to load leads." }, { status: 500 });
