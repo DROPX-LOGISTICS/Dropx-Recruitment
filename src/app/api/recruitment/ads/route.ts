@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { canAccessLead, canUseRecruitmentMenu, recruitmentSession, requiredEnv } from "@/lib/recruitment-api";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { loadMainDashboardStations } from "@/lib/main-dashboard-masters";
+import { loadAllSupabaseRows } from "@/lib/supabase-pagination";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -50,26 +51,21 @@ export async function GET(request: Request) {
     const ads = (result.data ?? []).map((ad) => storedAdDelivery(ad)).filter((ad) => adWithinScope(session, ad, stream));
     const visibleAdIds = new Set(ads.map((ad) => ad.id));
     const counts = new Map<string, number>();
-    const leadTotal = await supabaseAdmin.from("recruitment_leads")
-      .select("id", { count: "exact", head: true })
-      .eq("company_id", companyId)
-      .not("ad_id", "is", null);
-    if (leadTotal.error) throw leadTotal.error;
-    const leadPages = await Promise.all(Array.from(
-      { length: Math.ceil((leadTotal.count ?? 0) / 1000) },
-      (_, page) => supabaseAdmin!.from("recruitment_leads")
+    // Paged sequentially (not with Promise.all) so a large lead table
+    // doesn't open dozens of concurrent queries against Supabase at once -
+    // that pattern exhausted the connection pool elsewhere in this app and
+    // surfaced as intermittent 500s / statement timeouts. See
+    // dashboard/route.ts and leads/route.ts for the same fix.
+    const leadAdIds = await loadAllSupabaseRows<{ ad_id: string | null }>((from, to) =>
+      supabaseAdmin!.from("recruitment_leads")
         .select("ad_id")
         .eq("company_id", companyId)
         .not("ad_id", "is", null)
-        .range(page * 1000, page * 1000 + 999)
-    ));
-    const failedPage = leadPages.find((page) => page.error);
-    if (failedPage?.error) throw failedPage.error;
-    for (const page of leadPages) {
-      for (const lead of page.data ?? []) {
-        if (lead.ad_id && visibleAdIds.has(lead.ad_id)) {
-          counts.set(lead.ad_id, (counts.get(lead.ad_id) ?? 0) + 1);
-        }
+        .range(from, to) as any
+    );
+    for (const lead of leadAdIds) {
+      if (lead.ad_id && visibleAdIds.has(lead.ad_id)) {
+        counts.set(lead.ad_id, (counts.get(lead.ad_id) ?? 0) + 1);
       }
     }
     const numberFrom = (payload: unknown, keys: string[]) => {

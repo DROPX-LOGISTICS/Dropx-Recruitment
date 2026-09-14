@@ -4,6 +4,7 @@ import { applyLeadScope, canAccessLead, canUseRecruitmentMenu, recruitmentSessio
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { currentRequisitionStatuses, remainingRequisitionOpenings } from "@/lib/hr-recruitment-overview";
 import { loadMainDashboardStations } from "@/lib/main-dashboard-masters";
+import { loadAllSupabaseRows } from "@/lib/supabase-pagination";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -207,45 +208,33 @@ export async function GET(request: Request) {
       if (roleIds) query = query.in("role_id", roleIds);
       return query;
     };
+    // Leads and ads are paged sequentially, not with Promise.all, because a
+    // company with ~20k active leads needs ~20 pages here - firing them all
+    // at once opened ~20 concurrent joined/ordered queries against Supabase
+    // simultaneously, which exhausted the connection pool and surfaced as
+    // intermittent 500s / "canceling statement due to statement timeout" on
+    // this route even though each page is fast on its own. Sequential paging
+    // costs a bit of wall-clock time but stays within the pool's capacity.
     let rows: DashboardLead[] = [];
     if (!hasEmptyFilter) {
-      let countQuery: any = supabaseAdmin!.from("recruitment_leads")
-        .select("id", { count: "exact", head: true })
-        .eq("company_id", companyId).eq("archived", false);
-      countQuery = applyLeadScope(countQuery, session, stream);
-      if (locationIds) countQuery = countQuery.in("location_id", locationIds);
-      if (roleIds) countQuery = countQuery.in("role_id", roleIds);
-      const counted = await countQuery;
-      if (counted.error) throw new Error(counted.error.message);
-      const pages = Math.ceil((counted.count ?? 0) / 1000);
-      const results = await Promise.all(Array.from({ length: pages }, (_, page) =>
+      rows = await loadAllSupabaseRows<DashboardLead>((from, to) =>
         dashboardQuery()
           .order("lead_created_at", { ascending: false })
           .order("id", { ascending: false })
-          .range(page * 1000, page * 1000 + 999)
-      ));
-      const failed = results.find((result) => result.error);
-      if (failed?.error) throw new Error(failed.error.message);
-      rows = results.flatMap((result) => (result.data ?? []) as DashboardLead[]);
+          .range(from, to) as any
+      );
     }
 
     let ads: DashboardAd[] = [];
     if (!hasEmptyFilter) {
-      const adCount = await supabaseAdmin.from("recruitment_ads")
-        .select("id", { count: "exact", head: true })
-        .eq("company_id", companyId);
-      if (adCount.error) throw new Error(adCount.error.message);
-      const adPages = await Promise.all(Array.from({ length: Math.ceil((adCount.count ?? 0) / 1000) }, (_, page) =>
+      const allAds = await loadAllSupabaseRows<DashboardAd>((from, to) =>
         supabaseAdmin!.from("recruitment_ads")
           .select("id,ad_name,status,raw_payload,route_status,location_id,role_id,last_synced_at,recruitment_locations(id,code,name),recruitment_roles(id,code,name,stream)")
           .eq("company_id", companyId)
           .order("last_synced_at", { ascending: false })
-          .range(page * 1000, page * 1000 + 999)
-      ));
-      const failedAdPage = adPages.find((result) => result.error);
-      if (failedAdPage?.error) throw new Error(failedAdPage.error.message);
-      ads = adPages
-        .flatMap((result) => (result.data ?? []) as DashboardAd[])
+          .range(from, to) as any
+      );
+      ads = allAds
         .map((ad) => storedAdDelivery(ad))
         .filter((ad) => adWithinScope(session, ad, stream, locationIds, roleIds));
     }

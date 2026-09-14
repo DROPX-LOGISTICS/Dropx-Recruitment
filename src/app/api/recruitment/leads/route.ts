@@ -5,6 +5,7 @@ import { buildLeadFacets } from "@/lib/lead-facets";
 import { loadMetaReceivedTimes } from "@/lib/lead-meta-intake";
 import { loadMainDashboardStations } from "@/lib/main-dashboard-masters";
 import { supabaseAdmin } from "@/lib/supabase-admin";
+import { loadAllSupabaseRows } from "@/lib/supabase-pagination";
 import { WORKFORCE_ACTIVE_INTERVIEW_STATUS_QUERY } from "@/lib/workforce-interview-lifecycle";
 
 export const dynamic = "force-dynamic";
@@ -231,30 +232,21 @@ export async function GET(request: Request) {
           : scoped.eq("id", "00000000-0000-0000-0000-000000000000");
         return scoped;
       };
-      let facetCountQuery: any = supabaseAdmin.from("recruitment_leads")
-        .select("id", { count: "exact", head: true })
-        .eq("company_id", companyId);
-      if (archive === "archived") facetCountQuery = facetCountQuery.eq("archived", true);
-      else if (archive !== "all") facetCountQuery = facetCountQuery.eq("archived", false);
-      facetCountQuery = applyLeadScope(facetCountQuery, session, stream);
-      if (structuredInterviewIds) facetCountQuery = structuredInterviewIds.length
-        ? facetCountQuery.in("id", structuredInterviewIds)
-        : facetCountQuery.eq("id", "00000000-0000-0000-0000-000000000000");
-      const facetCount = await facetCountQuery;
-      if (facetCount.error) throw new Error(facetCount.error.message);
-      const facetPages = Math.ceil((facetCount.count ?? 0) / 1000);
-      const facetResults = await Promise.all(Array.from({ length: facetPages }, (_, facetPage) =>
-        facetQuery().order("id", { ascending: true }).range(facetPage * 1000, facetPage * 1000 + 999)
-      ));
-      const facetFailure = facetResults.find((item) => item.error);
-      if (facetFailure?.error) throw new Error(facetFailure.error.message);
+      // Paged sequentially (not with Promise.all) so a large queue doesn't
+      // open dozens of concurrent joined queries against Supabase at once -
+      // that exhausted the connection pool and surfaced as intermittent
+      // 500s / statement timeouts on this route even though each page is
+      // fast on its own. See dashboard/route.ts for the same fix.
+      const commonRowsRaw = await loadAllSupabaseRows<any>((from, to) =>
+        facetQuery().order("id", { ascending: true }).range(from, to) as any
+      );
       const selectedStatuses = status ? csv(status).flatMap((item) => item === "__BLANK__" || item === "new" ? ["", "new"] : [item]) : [];
       const selectedFinalStatuses = finalStatus ? csv(finalStatus) : [];
       const interviewStart = interviewFrom ? new Date(startOfIstDay(interviewFrom)).getTime() : null;
       const interviewEnd = interviewTo ? new Date(endOfIstDay(interviewTo)).getTime() : null;
       const now = Date.now();
       const safeSearch = search?.replace(/[%(),]/g, " ").trim().toLowerCase() ?? "";
-      const commonRows = facetResults.flatMap((item) => item.data ?? []).filter((row: any) => {
+      const commonRows = commonRowsRaw.filter((row: any) => {
         const normalizedStatus = String(row.status ?? "");
         if (selectedStatuses.length && !selectedStatuses.includes(normalizedStatus)) return false;
         if (selectedFinalStatuses.length && !selectedFinalStatuses.includes(String(row.final_status ?? ""))) return false;
