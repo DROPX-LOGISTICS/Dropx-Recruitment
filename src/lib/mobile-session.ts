@@ -214,9 +214,9 @@ async function previewContext(
   const locationScope = await effectiveLocationScope({
     companyId,
     isMasterOwner: isOwner,
-    roleLocationAccessMode: membership.data.has_all_location_access ? "all_locations" : universalRole?.location_access_mode,
-    universalStationIds: Array.isArray(membership.data.location_scope_ids)
-      ? membership.data.location_scope_ids
+    roleLocationAccessMode: universalRole?.location_access_mode,
+    universalStationIds: Array.isArray(profile.data.location_scope_ids)
+      ? profile.data.location_scope_ids
       : [],
     inheritUniversalScope: access.data.can_access_all_locations,
     selectedRecruitmentLocationIds: (locations.data ?? []).map((row) => row.location_id)
@@ -406,9 +406,9 @@ export async function resolveMobileSession(
   const locationScope = await effectiveLocationScope({
     companyId,
     isMasterOwner: isOwner,
-    roleLocationAccessMode: membership.data.has_all_location_access ? "all_locations" : universalRole?.location_access_mode,
-    universalStationIds: Array.isArray(membership.data.location_scope_ids)
-      ? membership.data.location_scope_ids
+    roleLocationAccessMode: universalRole?.location_access_mode,
+    universalStationIds: Array.isArray(profile.data.location_scope_ids)
+      ? profile.data.location_scope_ids
       : [],
     inheritUniversalScope: access.data.can_access_all_locations,
     selectedRecruitmentLocationIds: (locations.data ?? []).map((row) => row.location_id)

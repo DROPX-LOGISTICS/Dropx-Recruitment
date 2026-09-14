@@ -429,13 +429,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Workforce users can only be assigned blue-collar roles." }, { status: 400 });
     }
     const universalAllLocations = universalProfile.is_master_owner === true
-      || currentProductMembership.data?.has_all_location_access === true
       || mainRole.data?.location_access_mode === "all_locations";
     if (!inheritUniversalScope && !universalAllLocations && locationIds.length) {
       const universalStationIds = new Set(
-        Array.isArray(currentProductMembership.data?.location_scope_ids)
-          ? currentProductMembership.data.location_scope_ids
-          : Array.isArray(universalProfile.location_scope_ids) ? universalProfile.location_scope_ids : []
+        Array.isArray(universalProfile.location_scope_ids) ? universalProfile.location_scope_ids : []
       );
       const allowedCodes = new Set(mainStations
         .filter((station) => universalStationIds.has(station.id))
@@ -516,12 +513,10 @@ export async function POST(request: Request) {
       role_id: recruitRoleId,
       role_code_snapshot: mainRole.data?.code ?? currentProductMembership.data?.role_code_snapshot,
       source_system: "person_override",
-      has_all_location_access: universalAllLocations || inheritUniversalScope,
-      location_scope_ids: universalAllLocations || inheritUniversalScope
+      has_all_location_access: universalAllLocations,
+      location_scope_ids: universalAllLocations
         ? []
-        : Array.isArray(currentProductMembership.data?.location_scope_ids)
-          ? currentProductMembership.data.location_scope_ids
-          : Array.isArray(universalProfile.location_scope_ids) ? universalProfile.location_scope_ids : [],
+        : Array.isArray(universalProfile.location_scope_ids) ? universalProfile.location_scope_ids : [],
       is_active: body.isActive !== false,
       assigned_by: session.profileId,
       updated_at: new Date().toISOString()

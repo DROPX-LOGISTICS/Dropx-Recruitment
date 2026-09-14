@@ -1,7 +1,7 @@
 name: dropx_recruitment
 description: DropX workforce and HR recruitment mobile application.
 publish_to: none
-version: 1.4.2+132
+version: 1.4.3+133
 
 environment:
   sdk: ">=3.4.0 <4.0.0"

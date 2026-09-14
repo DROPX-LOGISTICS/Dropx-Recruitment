@@ -12,7 +12,12 @@ export type AdPendencyRow = {
   noResponse?: number | null;
   callBack?: number | null;
   interviews?: number | null;
+  joined?: number | null;
   stale24h?: number | null;
+  lifetimeTotalLeads?: number | null;
+  dailyBudget?: number | null;
+  totalSpend?: number | null;
+  createdOn?: string | null;
 };
 
 export type WorkforceCapacityRow = {
@@ -22,6 +27,8 @@ export type WorkforceCapacityRow = {
   currentHeadcount?: number | null;
   requiredHeadcount?: number | null;
   capacityGap?: number | null;
+  targetSpr?: number | null;
+  bufferPercent?: number | null;
   trainingHeadcount?: number | null;
   scheduledHeadcount?: number | null;
   netHiringNeed?: number | null;
@@ -43,6 +50,7 @@ export type WorkforceActionRow = {
   noResponse: number;
   callBack: number;
   interviews: number;
+  joined: number;
   stale24h: number;
   capacity: WorkforceCapacityRow | null;
 };
@@ -95,6 +103,7 @@ export function buildWorkforceActionRows(
       noResponse: 0,
       callBack: 0,
       interviews: 0,
+      joined: 0,
       stale24h: 0,
       capacity: capacityByStation.get(station.toUpperCase()) ?? null
     };
@@ -109,6 +118,7 @@ export function buildWorkforceActionRows(
     group.noResponse += numberValue(row.noResponse);
     group.callBack += numberValue(row.callBack);
     group.interviews += numberValue(row.interviews);
+    group.joined += numberValue(row.joined);
     group.stale24h += numberValue(row.stale24h);
     groups.set(key, group);
   }

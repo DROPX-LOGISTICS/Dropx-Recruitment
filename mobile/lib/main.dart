@@ -643,9 +643,8 @@ class _RecruitmentHomePageState extends State<RecruitmentHomePage> {
       setState(() {
         _user = user;
         _stream = user['workforce'] == true ? 'workforce' : 'hr';
-        _planning = _canViewWorkforcePlanFor(user)
-            ? _loadWorkforceOverview()
-            : null;
+        _planning =
+            _canViewWorkforcePlanFor(user) ? _loadWorkforceOverview() : null;
       });
     } catch (error) {
       RecruitmentApi.activePreviewProfileId =
@@ -5469,7 +5468,9 @@ class _DashboardPageState extends State<_DashboardPage> {
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.title),
-        actions: [IconButton(onPressed: _refresh, icon: const Icon(Icons.refresh))],
+        actions: [
+          IconButton(onPressed: _refresh, icon: const Icon(Icons.refresh))
+        ],
       ),
       body: FutureBuilder<Map<String, dynamic>>(
         future: _result,
@@ -5515,7 +5516,8 @@ class _DashboardPageState extends State<_DashboardPage> {
                               children: [
                                 Text(entry.value,
                                     style: const TextStyle(
-                                        color: Color(0xff667085), fontSize: 11)),
+                                        color: Color(0xff667085),
+                                        fontSize: 11)),
                                 const Spacer(),
                                 Text('${metrics[entry.key] ?? 0}',
                                     style: const TextStyle(
@@ -5551,8 +5553,7 @@ class _WorkforceCommandPanel extends StatefulWidget {
   final VoidCallback? onOpenAll;
 
   @override
-  State<_WorkforceCommandPanel> createState() =>
-      _WorkforceCommandPanelState();
+  State<_WorkforceCommandPanel> createState() => _WorkforceCommandPanelState();
 }
 
 class _WorkforceCommandPanelState extends State<_WorkforceCommandPanel> {
@@ -5563,8 +5564,8 @@ class _WorkforceCommandPanelState extends State<_WorkforceCommandPanel> {
   int _number(dynamic value) =>
       value is num ? value.toInt() : int.tryParse('${value ?? 0}') ?? 0;
 
-  String _label(dynamic value) => statusLabel(
-      (value?.toString().trim().isNotEmpty ?? false)
+  String _label(dynamic value) =>
+      statusLabel((value?.toString().trim().isNotEmpty ?? false)
           ? value.toString().trim()
           : 'not_active');
 
@@ -5591,8 +5592,9 @@ class _WorkforceCommandPanelState extends State<_WorkforceCommandPanel> {
       final designation = '${row['designation'] ?? 'Unmapped'}';
       if (_adStatuses.isNotEmpty && !_adStatuses.contains(adStatus)) continue;
       if (_stations.isNotEmpty && !_stations.contains(station)) continue;
-      if (_designations.isNotEmpty &&
-          !_designations.contains(designation)) continue;
+      if (_designations.isNotEmpty && !_designations.contains(designation)) {
+        continue;
+      }
       final key = '${station.toUpperCase()}|${designation.toUpperCase()}';
       final group = groups.putIfAbsent(
           key,
@@ -5609,7 +5611,9 @@ class _WorkforceCommandPanelState extends State<_WorkforceCommandPanel> {
                 'noResponse': 0,
                 'callBack': 0,
                 'interviews': 0,
+                'joined': 0,
                 'stale24h': 0,
+                'lifetimeTotalLeads': 0,
                 'capacity': capacityByStation[station.toUpperCase()]
               });
       group['adCount'] = _number(group['adCount']) + 1;
@@ -5622,7 +5626,9 @@ class _WorkforceCommandPanelState extends State<_WorkforceCommandPanel> {
         'noResponse',
         'callBack',
         'interviews',
-        'stale24h'
+        'joined',
+        'stale24h',
+        'lifetimeTotalLeads'
       ]) {
         group[field] = _number(group[field]) + _number(row[field]);
       }
@@ -5651,7 +5657,8 @@ class _WorkforceCommandPanelState extends State<_WorkforceCommandPanel> {
       ..sort();
     final statuses = <String>{
       'active',
-      ..._sourceRows.map((row) => '${row['adStatus'] ?? 'not_active'}'.toLowerCase())
+      ..._sourceRows
+          .map((row) => '${row['adStatus'] ?? 'not_active'}'.toLowerCase())
     }.toList();
     final selectedStations = {..._stations};
     final selectedDesignations = {..._designations};
@@ -5661,8 +5668,8 @@ class _WorkforceCommandPanelState extends State<_WorkforceCommandPanel> {
       isScrollControlled: true,
       useSafeArea: true,
       builder: (context) => StatefulBuilder(builder: (context, setSheetState) {
-        Widget filters(String title, List<String> values,
-                Set<String> selected) =>
+        Widget filters(
+                String title, List<String> values, Set<String> selected) =>
             Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Padding(
                 padding: const EdgeInsets.only(top: 13, bottom: 7),
@@ -5675,7 +5682,8 @@ class _WorkforceCommandPanelState extends State<_WorkforceCommandPanel> {
                 runSpacing: 4,
                 children: values
                     .map((value) => FilterChip(
-                          label: Text(title == 'Ad status' ? _label(value) : value),
+                          label: Text(
+                              title == 'Ad status' ? _label(value) : value),
                           selected: selected.contains(value),
                           onSelected: (_) => setSheetState(() =>
                               selected.contains(value)
@@ -5715,11 +5723,8 @@ class _WorkforceCommandPanelState extends State<_WorkforceCommandPanel> {
               filters('Ad status', statuses, selectedStatuses),
               const SizedBox(height: 18),
               FilledButton(
-                onPressed: () => Navigator.pop(context, [
-                  selectedStations,
-                  selectedDesignations,
-                  selectedStatuses
-                ]),
+                onPressed: () => Navigator.pop(context,
+                    [selectedStations, selectedDesignations, selectedStatuses]),
                 child: const Text('Apply filters'),
               )
             ],
@@ -5733,6 +5738,103 @@ class _WorkforceCommandPanelState extends State<_WorkforceCommandPanel> {
       _designations = result[1];
       _adStatuses = result[2];
     });
+  }
+
+  Future<void> _openActiveAds() async {
+    final ads = _sourceRows
+        .where((row) =>
+            '${row['adStatus'] ?? ''}'.toLowerCase() == 'active' &&
+            (_stations.isEmpty || _stations.contains('${row['station']}')) &&
+            (_designations.isEmpty ||
+                _designations.contains('${row['designation']}')))
+        .toList()
+      ..sort((left, right) =>
+          _number(right['totalSpend']).compareTo(_number(left['totalSpend'])));
+    final dailyBudget =
+        ads.fold<int>(0, (total, row) => total + _number(row['dailyBudget']));
+    final totalSpend =
+        ads.fold<int>(0, (total, row) => total + _number(row['totalSpend']));
+    if (!mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (context) => DraggableScrollableSheet(
+        expand: false,
+        initialChildSize: .72,
+        maxChildSize: .94,
+        builder: (context, controller) => ListView(
+          controller: controller,
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 24),
+          children: [
+            Row(children: [
+              const Expanded(
+                  child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                    Text('Active ads in your scope',
+                        style: TextStyle(
+                            fontSize: 18, fontWeight: FontWeight.w900)),
+                    Text('Current Meta budget, spend and lead volume',
+                        style:
+                            TextStyle(color: Color(0xff667085), fontSize: 10))
+                  ])),
+              IconButton(
+                  onPressed: () => Navigator.pop(context),
+                  icon: const Icon(Icons.close))
+            ]),
+            const SizedBox(height: 10),
+            Row(children: [
+              Expanded(
+                  child: _MobileAdTotal(
+                      label: 'Active ads', value: '${ads.length}')),
+              Expanded(
+                  child: _MobileAdTotal(
+                      label: 'Daily budget', value: '₹$dailyBudget')),
+              Expanded(
+                  child: _MobileAdTotal(
+                      label: 'Lifetime spend', value: '₹$totalSpend'))
+            ]),
+            const SizedBox(height: 9),
+            if (ads.isEmpty)
+              const Card(
+                  child: Padding(
+                      padding: EdgeInsets.all(18),
+                      child: Text(
+                          'No active ads are mapped to your permitted stations and designations.'))),
+            ...ads.map((ad) {
+              final lifetimeLeads = _number(ad['lifetimeTotalLeads']);
+              final spend = _number(ad['totalSpend']);
+              final cpl =
+                  lifetimeLeads > 0 ? (spend / lifetimeLeads).round() : 0;
+              return Card(
+                child: ListTile(
+                  title: Text('${ad['adName'] ?? 'Unnamed ad'}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontWeight: FontWeight.w900)),
+                  subtitle: Text(
+                      '${ad['station'] ?? 'Unmapped'} · ${ad['designation'] ?? 'Unmapped'}\n₹${_number(ad['dailyBudget'])}/day · ₹$spend spent'),
+                  isThreeLine: true,
+                  trailing: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Text('${_number(ad['totalLeads'])} MTD',
+                          style: const TextStyle(fontWeight: FontWeight.w900)),
+                      Text(
+                          '$lifetimeLeads lifetime · ${cpl > 0 ? '₹$cpl CPL' : '—'}',
+                          style: const TextStyle(
+                              color: Color(0xff667085), fontSize: 8))
+                    ],
+                  ),
+                ),
+              );
+            })
+          ],
+        ),
+      ),
+    );
   }
 
   void _openQueue(List<Map<String, dynamic>> rows,
@@ -5765,6 +5867,7 @@ class _WorkforceCommandPanelState extends State<_WorkforceCommandPanel> {
   Widget build(BuildContext context) {
     final rows = _rows();
     final highestNoStatus = rows.isEmpty ? 0 : _number(rows.first['noStatus']);
+    final periodLabel = '${widget.data['period']?['label'] ?? 'MTD'}';
     final summary = <String, int>{
       for (final field in [
         'totalLeads',
@@ -5772,6 +5875,7 @@ class _WorkforceCommandPanelState extends State<_WorkforceCommandPanel> {
         'noResponse',
         'callBack',
         'interviews',
+        'joined',
         'stale24h'
       ])
         field: rows.fold(0, (total, row) => total + _number(row[field]))
@@ -5788,121 +5892,128 @@ class _WorkforceCommandPanelState extends State<_WorkforceCommandPanel> {
       ('noResponse', 'No response'),
       ('callBack', 'Call back'),
       ('interviews', 'Interviews'),
+      ('joined', 'Joined'),
       ('stale24h', '24h+')
     ];
     final content = <Widget>[
-          GridView.count(
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            crossAxisCount: 3,
-            mainAxisSpacing: 6,
-            crossAxisSpacing: 6,
-            childAspectRatio: 1.48,
-            children: summaryItems.map((item) {
-              final key = item.$1;
-              final status = key == 'noStatus'
-                  ? '__BLANK__'
-                  : key == 'noResponse'
-                      ? 'no_response'
-                      : key == 'callBack'
-                          ? 'call_back'
-                          : key == 'interviews'
-                              ? 'interview_scheduled,interview_rescheduled'
+      GridView.count(
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        crossAxisCount: 3,
+        mainAxisSpacing: 6,
+        crossAxisSpacing: 6,
+        childAspectRatio: 1.48,
+        children: summaryItems.map((item) {
+          final key = item.$1;
+          final status = key == 'noStatus'
+              ? '__BLANK__'
+              : key == 'noResponse'
+                  ? 'no_response'
+                  : key == 'callBack'
+                      ? 'call_back'
+                      : key == 'interviews'
+                          ? 'interview_scheduled,interview_rescheduled'
+                          : key == 'joined'
+                              ? 'joined'
                               : null;
-              final color = key == 'noStatus' || key == 'stale24h'
-                  ? const Color(0xffb42318)
-                  : key == 'interviews'
-                      ? dropxGreen
-                      : dropxInk;
-              return Material(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(12),
-                child: InkWell(
-                  borderRadius: BorderRadius.circular(12),
-                  onTap: allAdIds.isEmpty
-                      ? null
-                      : () => _openQueue(rows,
-                          title: item.$2,
-                          status: status,
-                          stale24: key == 'stale24h'),
-                  child: Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                        border: Border.all(color: dropxBorder),
-                        borderRadius: BorderRadius.circular(12)),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(item.$2,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                                color: Color(0xff667085), fontSize: 9)),
-                        const Spacer(),
-                        Text('${summary[key] ?? 0}',
-                            style: TextStyle(
-                                color: color,
-                                fontSize: 20,
-                                fontWeight: FontWeight.w900)),
-                      ],
-                    ),
-                  ),
-                ),
-              );
-            }).toList(),
-          ),
-          const SizedBox(height: 9),
-          Container(
-            padding: const EdgeInsets.all(13),
-            decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                    colors: [dropxInk, Color(0xff3d2d50), dropxPink]),
-                borderRadius: BorderRadius.circular(15)),
-            child: Row(children: [
-              const Expanded(
+          final color = key == 'noStatus' || key == 'stale24h'
+              ? const Color(0xffb42318)
+              : key == 'interviews' || key == 'joined'
+                  ? dropxGreen
+                  : dropxInk;
+          return Material(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(12),
+              onTap: allAdIds.isEmpty
+                  ? null
+                  : () => _openQueue(rows,
+                      title: item.$2,
+                      status: status,
+                      stale24: key == 'stale24h'),
+              child: Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                    border: Border.all(color: dropxBorder),
+                    borderRadius: BorderRadius.circular(12)),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('ACT FIRST',
+                    Text(item.$2,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            color: Color(0xff667085), fontSize: 9)),
+                    const Spacer(),
+                    Text('${summary[key] ?? 0}',
                         style: TextStyle(
-                            color: Color(0xffffc5d7),
-                            fontSize: 8,
+                            color: color,
+                            fontSize: 20,
                             fontWeight: FontWeight.w900)),
-                    SizedBox(height: 3),
-                    Text('Station × designation pendency',
-                        style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 15,
-                            fontWeight: FontWeight.w900)),
-                    Text('Highest untreated active-ad work first',
-                        style: TextStyle(
-                            color: Color(0xffe2dce6), fontSize: 9)),
                   ],
                 ),
               ),
-              Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-                Text('${capacity?['totalGap'] ?? 0} net hires',
-                    style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 12,
+            ),
+          );
+        }).toList(),
+      ),
+      const SizedBox(height: 9),
+      Container(
+        padding: const EdgeInsets.all(13),
+        decoration: BoxDecoration(
+            gradient: const LinearGradient(
+                colors: [dropxInk, Color(0xff3d2d50), dropxPink]),
+            borderRadius: BorderRadius.circular(15)),
+        child: Row(children: [
+          const Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('ACT FIRST',
+                    style: TextStyle(
+                        color: Color(0xffffc5d7),
+                        fontSize: 8,
                         fontWeight: FontWeight.w900)),
-                Text('${rows.length} groups',
-                    style: const TextStyle(
-                        color: Color(0xffe2dce6), fontSize: 8))
-              ])
-            ]),
+                SizedBox(height: 3),
+                Text('Station × designation pendency',
+                    style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w900)),
+                Text('Current-month active-ad work first',
+                    style: TextStyle(color: Color(0xffe2dce6), fontSize: 9)),
+              ],
+            ),
           ),
-          const SizedBox(height: 7),
-          Row(children: [
-            Expanded(
-              child: Text(
-                  _adStatuses.length == 1 && _adStatuses.contains('active')
-                      ? 'Active ads only'
-                      : '${_adStatuses.isEmpty ? 'All' : _adStatuses.length} ad status selected',
-                  style: const TextStyle(
-                      color: Color(0xff067647),
-                      fontSize: 10,
-                      fontWeight: FontWeight.w800)),
+          Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+            Text('${capacity?['totalGap'] ?? 0} net hires',
+                style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w900)),
+            Text('${rows.length} groups',
+                style: const TextStyle(color: Color(0xffe2dce6), fontSize: 8))
+          ])
+        ]),
+      ),
+      const SizedBox(height: 7),
+      Wrap(
+          alignment: WrapAlignment.end,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          spacing: 6,
+          children: [
+            Text(
+                '${_adStatuses.length == 1 && _adStatuses.contains('active') ? 'Active ads only' : '${_adStatuses.isEmpty ? 'All' : _adStatuses.length} ad status selected'} · $periodLabel',
+                style: const TextStyle(
+                    color: Color(0xff067647),
+                    fontSize: 10,
+                    fontWeight: FontWeight.w800)),
+            OutlinedButton.icon(
+              onPressed: _openActiveAds,
+              icon: const Icon(Icons.campaign_outlined, size: 16),
+              label: Text(
+                  'Active ads (${_sourceRows.where((row) => '${row['adStatus'] ?? ''}'.toLowerCase() == 'active').length})'),
             ),
             OutlinedButton.icon(
               onPressed: _openFilters,
@@ -5910,146 +6021,144 @@ class _WorkforceCommandPanelState extends State<_WorkforceCommandPanel> {
               label: Text('Filters ($filterCount)'),
             )
           ]),
-          if (rows.isEmpty)
-            const Card(
-              child: Padding(
-                padding: EdgeInsets.all(18),
-                child: Text('No station-designation groups match these filters.'),
-              ),
-            ),
-          ...rows.take(widget.maxRows).map((row) {
-            final noStatus = _number(row['noStatus']);
-            final criticalFloor =
-                (highestNoStatus * .5).ceil().clamp(10, 1 << 30);
-            final critical = noStatus >= criticalFloor;
-            final capacityRow = row['capacity'] as Map<String, dynamic>?;
-            return Card(
-              margin: const EdgeInsets.only(bottom: 7),
-              clipBehavior: Clip.antiAlias,
-              child: Padding(
-                padding: const EdgeInsets.all(11),
-                child: Column(children: [
-                  Row(children: [
-                    Container(
-                      width: 54,
-                      padding: const EdgeInsets.symmetric(vertical: 8),
-                      alignment: Alignment.center,
-                      decoration: BoxDecoration(
-                          color: dropxInk,
-                          borderRadius: BorderRadius.circular(9)),
-                      child: Text('${row['station']}',
+      if (rows.isEmpty)
+        const Card(
+          child: Padding(
+            padding: EdgeInsets.all(18),
+            child: Text('No station-designation groups match these filters.'),
+          ),
+        ),
+      ...rows.take(widget.maxRows).map((row) {
+        final noStatus = _number(row['noStatus']);
+        final criticalFloor = (highestNoStatus * .5).ceil().clamp(10, 1 << 30);
+        final critical = noStatus >= criticalFloor;
+        final capacityRow = row['capacity'] as Map<String, dynamic>?;
+        return Card(
+          margin: const EdgeInsets.only(bottom: 7),
+          clipBehavior: Clip.antiAlias,
+          child: Padding(
+            padding: const EdgeInsets.all(11),
+            child: Column(children: [
+              Row(children: [
+                Container(
+                  width: 54,
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                      color: dropxInk, borderRadius: BorderRadius.circular(9)),
+                  child: Text('${row['station']}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w900)),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('${row['designation']} · ${row['designationName']}',
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 10,
-                              fontWeight: FontWeight.w900)),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text('${row['designation']} · ${row['designationName']}',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                  fontSize: 11, fontWeight: FontWeight.w900)),
-                          Text('${row['adCount']} selected ads · ${row['totalLeads']} leads',
-                              style: const TextStyle(
-                                  color: Color(0xff667085), fontSize: 8))
-                        ],
-                      ),
-                    ),
-                    TextButton(
-                      onPressed: () => _openQueue([row],
-                          title: '${row['station']} pending leads',
-                          status: '__BLANK__,no_response,call_back'),
-                      child: const Text('Open →'),
-                    )
-                  ]),
-                  const SizedBox(height: 7),
-                  Row(children: [
-                    _MobileCommandFact(
-                        label: 'No status',
-                        value: noStatus,
-                        color: const Color(0xffb42318),
-                        critical: critical,
-                        onTap: () => _openQueue([row],
-                            title: '${row['station']} no status',
-                            status: '__BLANK__')),
-                    _MobileCommandFact(
-                        label: 'No resp.',
-                        value: _number(row['noResponse']),
-                        onTap: () => _openQueue([row],
-                            title: '${row['station']} no response',
-                            status: 'no_response')),
-                    _MobileCommandFact(
-                        label: 'Callback',
-                        value: _number(row['callBack']),
-                        onTap: () => _openQueue([row],
-                            title: '${row['station']} call back',
-                            status: 'call_back')),
-                    _MobileCommandFact(
-                        label: 'Interview',
-                        value: _number(row['interviews']),
-                        color: dropxGreen,
-                        onTap: () => _openQueue([row],
-                            title: '${row['station']} interviews',
-                            status:
-                                'interview_scheduled,interview_rescheduled')),
-                    _MobileCommandFact(
-                        label: '24h+',
-                        value: _number(row['stale24h']),
-                        color: const Color(0xffb42318),
-                        onTap: () => _openQueue([row],
-                            title: '${row['station']} 24h pending',
-                            stale24: true)),
-                  ]),
-                  const SizedBox(height: 7),
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 9, vertical: 7),
-                    decoration: BoxDecoration(
-                        color: const Color(0xfff7f8fa),
-                        borderRadius: BorderRadius.circular(8)),
-                    child: capacityRow == null
-                        ? const Align(
-                            alignment: Alignment.centerLeft,
-                            child: Text('Ops capacity not configured',
-                                style: TextStyle(
-                                    color: Color(0xff667085), fontSize: 8)))
-                        : Row(children: [
-                            _MobileCapacityFact(
-                                'Gap', _number(capacityRow['capacityGap'])),
-                            _MobileCapacityFact('Training',
-                                _number(capacityRow['trainingHeadcount'])),
-                            _MobileCapacityFact('Net hire',
-                                _number(capacityRow['netHiringNeed']),
-                                alert: _number(
-                                        capacityRow['netHiringNeed']) >
-                                    0),
-                            Expanded(
-                              child: Text(
-                                  'HC ${capacityRow['currentHeadcount'] ?? 0}/${capacityRow['requiredHeadcount'] ?? 0}',
-                                  textAlign: TextAlign.right,
-                                  style: const TextStyle(
-                                      color: Color(0xff667085), fontSize: 8)),
-                            )
-                          ]),
-                  )
-                ]),
-              ),
-            );
-          }),
-          if (widget.onOpenAll != null && rows.length > widget.maxRows)
-            Padding(
-              padding: const EdgeInsets.only(top: 3),
-              child: OutlinedButton(
-                  onPressed: widget.onOpenAll,
-                  child: Text('Open all ${rows.length} groups')),
-            )
-        ];
+                              fontSize: 11, fontWeight: FontWeight.w900)),
+                      Text(
+                          '${row['adCount']} ${_adStatuses.length == 1 && _adStatuses.contains('active') ? 'active' : 'matching'} ads · ${row['totalLeads']} $periodLabel leads',
+                          style: const TextStyle(
+                              color: Color(0xff667085), fontSize: 8))
+                    ],
+                  ),
+                ),
+                TextButton(
+                  onPressed: () => _openQueue([row],
+                      title: '${row['station']} pending leads',
+                      status: '__BLANK__,no_response,call_back'),
+                  child: const Text('Open →'),
+                )
+              ]),
+              const SizedBox(height: 7),
+              Row(children: [
+                _MobileCommandFact(
+                    label: 'No status',
+                    value: noStatus,
+                    color: const Color(0xffb42318),
+                    critical: critical,
+                    onTap: () => _openQueue([row],
+                        title: '${row['station']} no status',
+                        status: '__BLANK__')),
+                _MobileCommandFact(
+                    label: 'No resp.',
+                    value: _number(row['noResponse']),
+                    onTap: () => _openQueue([row],
+                        title: '${row['station']} no response',
+                        status: 'no_response')),
+                _MobileCommandFact(
+                    label: 'Callback',
+                    value: _number(row['callBack']),
+                    onTap: () => _openQueue([row],
+                        title: '${row['station']} call back',
+                        status: 'call_back')),
+                _MobileCommandFact(
+                    label: 'Interview',
+                    value: _number(row['interviews']),
+                    color: dropxGreen,
+                    onTap: () => _openQueue([row],
+                        title: '${row['station']} interviews',
+                        status: 'interview_scheduled,interview_rescheduled')),
+                _MobileCommandFact(
+                    label: 'Joined',
+                    value: _number(row['joined']),
+                    color: dropxGreen,
+                    onTap: () => _openQueue([row],
+                        title: '${row['station']} joined', status: 'joined')),
+                _MobileCommandFact(
+                    label: '24h+',
+                    value: _number(row['stale24h']),
+                    color: const Color(0xffb42318),
+                    onTap: () => _openQueue([row],
+                        title: '${row['station']} 24h pending', stale24: true)),
+              ]),
+              const SizedBox(height: 7),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 7),
+                decoration: BoxDecoration(
+                    color: const Color(0xfff7f8fa),
+                    borderRadius: BorderRadius.circular(8)),
+                child: capacityRow == null
+                    ? const Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text('Ops capacity not configured',
+                            style: TextStyle(
+                                color: Color(0xff667085), fontSize: 8)))
+                    : Row(children: [
+                        _MobileCapacityFact(
+                            'BAU 14d', _number(capacityRow['workload'])),
+                        _MobileCapacityFact('Active HC',
+                            _number(capacityRow['currentHeadcount'])),
+                        _MobileCapacityFact('Required',
+                            _number(capacityRow['requiredHeadcount'])),
+                        _MobileCapacityFact(
+                            'Buffer', _number(capacityRow['bufferPercent']),
+                            suffix: '%'),
+                        _MobileCapacityFact(
+                            'Gap', _number(capacityRow['capacityGap']),
+                            alert: _number(capacityRow['capacityGap']) > 0),
+                      ]),
+              )
+            ]),
+          ),
+        );
+      }),
+      if (widget.onOpenAll != null && rows.length > widget.maxRows)
+        Padding(
+          padding: const EdgeInsets.only(top: 3),
+          child: OutlinedButton(
+              onPressed: widget.onOpenAll,
+              child: Text('Open all ${rows.length} groups')),
+        )
+    ];
     if (widget.embedded) {
       return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch, children: content);
@@ -6114,26 +6223,54 @@ class _MobileCommandFact extends StatelessWidget {
 }
 
 class _MobileCapacityFact extends StatelessWidget {
-  const _MobileCapacityFact(this.label, this.value, {this.alert = false});
+  const _MobileCapacityFact(this.label, this.value,
+      {this.alert = false, this.suffix = ''});
   final String label;
   final int value;
   final bool alert;
+  final String suffix;
+
+  @override
+  Widget build(BuildContext context) => Expanded(
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: Color(0xff667085), fontSize: 7)),
+          const SizedBox(height: 2),
+          Text('$value$suffix',
+              style: TextStyle(
+                  color: alert ? const Color(0xffb42318) : dropxInk,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w900))
+        ]),
+      );
+}
+
+class _MobileAdTotal extends StatelessWidget {
+  const _MobileAdTotal({required this.label, required this.value});
+  final String label;
+  final String value;
 
   @override
   Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.only(right: 13),
-        child: RichText(
-          text: TextSpan(
-            style: const TextStyle(color: Color(0xff667085), fontSize: 8),
-            children: [
-              TextSpan(text: '$label '),
-              TextSpan(
-                  text: '$value',
-                  style: TextStyle(
-                      color: alert ? const Color(0xffb42318) : dropxInk,
-                      fontWeight: FontWeight.w900))
-            ],
-          ),
+        padding: const EdgeInsets.symmetric(horizontal: 3),
+        child: Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+              color: const Color(0xffecfdf3),
+              borderRadius: BorderRadius.circular(10)),
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(label,
+                style: const TextStyle(color: Color(0xff667085), fontSize: 8)),
+            const SizedBox(height: 3),
+            Text(value,
+                style: const TextStyle(
+                    color: Color(0xff067647),
+                    fontSize: 14,
+                    fontWeight: FontWeight.w900))
+          ]),
         ),
       );
 }
@@ -6917,9 +7054,10 @@ class _LeadListPageState extends State<_LeadListPage> {
                   padding: const EdgeInsets.symmetric(horizontal: 16),
                   child: Row(children: [
                     Expanded(
-                        child: Text(widget.adIds.isNotEmpty
-                            ? '$total unique leads · Dashboard ad selection'
-                            : '$total unique leads',
+                        child: Text(
+                            widget.adIds.isNotEmpty
+                                ? '$total unique leads · Dashboard ad selection'
+                                : '$total unique leads',
                             style:
                                 const TextStyle(fontWeight: FontWeight.w700))),
                     Text(widget.stream == 'hr' ? 'HR' : 'WORKFORCE',

@@ -36,6 +36,9 @@ type DashboardAd = {
   route_status: string | null;
   location_id: string | null;
   role_id: string | null;
+  daily_budget: number | string | null;
+  total_spend: number | string | null;
+  created_on: string | null;
   last_synced_at: string | null;
   recruitment_locations: { id: string; code: string; name: string } | Array<{ id: string; code: string; name: string }> | null;
   recruitment_roles: { id: string; code: string; name: string; stream: string | null } | Array<{ id: string; code: string; name: string; stream: string | null }> | null;
@@ -56,7 +59,12 @@ type AdPendency = {
   noResponse: number;
   callBack: number;
   interviews: number;
+  joined: number;
   stale24h: number;
+  lifetimeTotalLeads: number;
+  dailyBudget: number;
+  totalSpend: number;
+  createdOn: string | null;
   lastSyncedAt: string | null;
 };
 
@@ -93,6 +101,11 @@ function ageHours(value: string | null, now: number) {
   if (!value) return 0;
   const parsed = new Date(value).getTime();
   return Number.isFinite(parsed) ? Math.max(0, (now - parsed) / 3_600_000) : 0;
+}
+
+function numberValue(value: unknown) {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function istDayBounds(now = new Date()) {
@@ -229,7 +242,7 @@ export async function GET(request: Request) {
     if (!hasEmptyFilter) {
       const allAds = await loadAllSupabaseRows<DashboardAd>((from, to) =>
         supabaseAdmin!.from("recruitment_ads")
-          .select("id,ad_name,status,raw_payload,route_status,location_id,role_id,last_synced_at,recruitment_locations(id,code,name),recruitment_roles(id,code,name,stream)")
+          .select("id,ad_name,status,raw_payload,route_status,location_id,role_id,daily_budget,total_spend,created_on,last_synced_at,recruitment_locations(id,code,name),recruitment_roles(id,code,name,stream)")
           .eq("company_id", companyId)
           .order("last_synced_at", { ascending: false })
           .range(from, to) as any
@@ -272,6 +285,11 @@ export async function GET(request: Request) {
 
     const now = Date.now();
     const today = istDayBounds();
+    const monthStartDate = `${today.date.slice(0, 8)}01`;
+    const monthStart = new Date(`${monthStartDate}T00:00:00+05:30`).getTime();
+    const monthLabel = new Intl.DateTimeFormat("en-IN", {
+      month: "short", timeZone: "Asia/Kolkata"
+    }).format(new Date());
     const metrics = { total: rows.length, noStatus: 0, noResponse: 0, callBack: 0, interviews: 0, joined: 0, pending24h: 0, unmapped: 0 };
     const queues = { noStatus: 0, retryDue: 0, callbackDue: 0, interviewsToday: 0, noStatus12h: 0, noStatus24h: 0, noStatus48h: 0 };
     const byStatus = new Map<string, number>();
@@ -298,7 +316,12 @@ export async function GET(request: Request) {
         noResponse: 0,
         callBack: 0,
         interviews: 0,
+        joined: 0,
         stale24h: 0,
+        lifetimeTotalLeads: 0,
+        dailyBudget: numberValue(ad.daily_budget),
+        totalSpend: numberValue(ad.total_spend),
+        createdOn: ad.created_on,
         lastSyncedAt: ad.last_synced_at
       });
     }
@@ -315,6 +338,11 @@ export async function GET(request: Request) {
       const finalStatus = lower(lead.final_status);
       const createdAge = ageHours(lead.lead_created_at, now);
       const updatedAge = ageHours(lead.updated_at, now);
+      const createdAt = lead.lead_created_at ? new Date(lead.lead_created_at).getTime() : NaN;
+      const updatedAt = lead.updated_at ? new Date(lead.updated_at).getTime() : NaN;
+      const isMtdLead = Number.isFinite(createdAt) && createdAt >= monthStart && createdAt <= now;
+      const isJoined = status === "joined" || finalStatus === "joined";
+      const joinedMtd = isJoined && Number.isFinite(updatedAt) && updatedAt >= monthStart && updatedAt <= now;
       const isNoStatus = !status || status === "new";
       const isPending = isNoStatus || status === "no_response" || status === "call_back";
       if (isNoStatus) metrics.noStatus++;
@@ -372,16 +400,25 @@ export async function GET(request: Request) {
         noResponse: 0,
         callBack: 0,
         interviews: 0,
+        joined: 0,
         stale24h: 0,
+        lifetimeTotalLeads: 0,
+        dailyBudget: 0,
+        totalSpend: 0,
+        createdOn: null,
         lastSyncedAt: null
       };
-      adGroup.totalLeads++;
-      if (isPending) adGroup.pending++;
-      if (isNoStatus) adGroup.noStatus++;
-      if (status === "no_response") adGroup.noResponse++;
-      if (status === "call_back") adGroup.callBack++;
-      if (status.startsWith("interview_")) adGroup.interviews++;
-      if (isPending && createdAge >= 24) adGroup.stale24h++;
+      adGroup.lifetimeTotalLeads++;
+      if (isMtdLead) {
+        adGroup.totalLeads++;
+        if (isPending) adGroup.pending++;
+        if (isNoStatus) adGroup.noStatus++;
+        if (status === "no_response") adGroup.noResponse++;
+        if (status === "call_back") adGroup.callBack++;
+        if (status.startsWith("interview_")) adGroup.interviews++;
+        if (isPending && createdAge >= 24) adGroup.stale24h++;
+      }
+      if (joinedMtd) adGroup.joined++;
       adDesignation.set(adKey, adGroup);
       const station = stations.get(location) ?? {
         code: location,
@@ -405,8 +442,6 @@ export async function GET(request: Request) {
       if (status === "no_response" && updatedAge >= 5 / 60) station.retryDue++;
       if (status === "call_back" && Number.isFinite(callbackAt) && callbackAt <= now) station.callbackDue++;
       if (status.startsWith("interview_") && Number.isFinite(interviewAt) && interviewAt >= today.start && interviewAt <= today.end) station.interviewsToday++;
-      const updatedAt = lead.updated_at ? new Date(lead.updated_at).getTime() : NaN;
-      const createdAt = lead.lead_created_at ? new Date(lead.lead_created_at).getTime() : NaN;
       if (Number.isFinite(updatedAt) && updatedAt >= today.start && updatedAt <= today.end) station.updatedToday++;
       if (!isNoStatus && Number.isFinite(updatedAt) && Number.isFinite(createdAt) && updatedAt >= createdAt) {
         station.responseMinutes += Math.round((updatedAt - createdAt) / 60_000);
@@ -463,6 +498,7 @@ export async function GET(request: Request) {
         edit: workspace === "hr" && canUseRecruitmentMenu(session, "Job Requisitions", "edit", "hr"),
         approve: workspace === "hr" && canUseRecruitmentMenu(session, "Job Requisitions", "all", "hr")
       },
+      period: { kind: "mtd", from: monthStartDate, to: today.date, label: `${monthLabel} MTD` },
       health: {
         attended: rows.length - metrics.noStatus,
         attendedRate: rows.length ? Math.round(((rows.length - metrics.noStatus) / rows.length) * 1000) / 10 : 0,

@@ -2144,6 +2144,7 @@ function WorkforceCommandCenter({
   openQueue:(target:CommandQueueTarget)=>void;
 }) {
   const [adStatus,setAdStatus]=useState("active");
+  const [showActiveAds,setShowActiveAds]=useState(false);
   const [capacity,setCapacity]=useState<any>(null);
   const [capacityLoading,setCapacityLoading]=useState(true);
   const [capacityNotice,setCapacityNotice]=useState("");
@@ -2171,6 +2172,12 @@ function WorkforceCommandCenter({
   );
   const highestNoStatus=actionRows[0]?.noStatus??0;
   const visibleRows=actionRows.slice(0,100);
+  const activeAds=useMemo(()=>(adRows as any[])
+    .filter((row)=>String(row.adStatus||"").toLowerCase()==="active")
+    .sort((left,right)=>Number(right.totalSpend||0)-Number(left.totalSpend||0)||String(left.adName||"").localeCompare(String(right.adName||""))),[adRows]);
+  const activeAdSpend=activeAds.reduce((sum,row)=>sum+Number(row.totalSpend||0),0);
+  const activeDailyBudget=activeAds.reduce((sum,row)=>sum+Number(row.dailyBudget||0),0);
+  const periodLabel=String(data?.period?.label||"MTD");
   const activeMetrics=actionRows.reduce<Metrics>((total,row)=>({
     total:total.total+row.totalLeads,
     noStatus:total.noStatus+row.noStatus,
@@ -2178,17 +2185,18 @@ function WorkforceCommandCenter({
     callBack:total.callBack+row.callBack,
     interviews:total.interviews+row.interviews,
     pending24h:total.pending24h+row.stale24h,
-    joined:0,
+    joined:total.joined+row.joined,
     unmapped:0
   }),{total:0,noStatus:0,noResponse:0,callBack:0,interviews:0,pending24h:0,joined:0,unmapped:0});
   const selectedAdIds=[...new Set(actionRows.flatMap((row)=>row.adIds))].join(",");
   const summaryCards:Array<[keyof Metrics,string,string]>=[
-    ["total","Total leads","All scoped leads"],
-    ["noStatus","No status","Untreated"],
-    ["noResponse","No response","Retry queue"],
-    ["callBack","Call back","Follow-ups"],
-    ["interviews","Interviews","In progress"],
-    ["pending24h","24h+ pending","Overdue"]
+    ["total","Total leads",`${periodLabel} · open lifetime`],
+    ["noStatus","No status",`${periodLabel} · open lifetime`],
+    ["noResponse","No response",`${periodLabel} · open lifetime`],
+    ["callBack","Call back",`${periodLabel} · open lifetime`],
+    ["interviews","Interviews",`${periodLabel} · open lifetime`],
+    ["joined","Joined",`${periodLabel} · open lifetime`],
+    ["pending24h","24h+ pending",`${periodLabel} · open lifetime`]
   ];
   const statusOptions=adStatuses.map((value)=>[value,statusLabel(value)] as [string,string]);
   const openRowQueue=(row:any,status:string,route="All Leads",stale24=false)=>openQueue({
@@ -2207,6 +2215,7 @@ function WorkforceCommandCenter({
     if(key==="noResponse"){status="no_response";route="No Response / Call Back";}
     if(key==="callBack"){status="call_back";route="No Response / Call Back";}
     if(key==="interviews"){status=WORKFORCE_ACTIVE_INTERVIEW_STATUS_QUERY;route="Interviews";}
+    if(key==="joined")status="joined";
     if(key==="pending24h")stale24=true;
     openQueue({station:"",designation:"",status,adIds:selectedAdIds,route,stale24});
   };
@@ -2216,7 +2225,7 @@ function WorkforceCommandCenter({
     </div>
     <section className="command-board">
       <header className="command-board-head">
-        <div><span>ACT FIRST</span><h2>Lead pendency by station &amp; designation</h2><p>Highest untreated active-ad workload appears first. Select a number to open that queue.</p></div>
+        <div><span>ACT FIRST · {periodLabel}</span><h2>Lead pendency by station &amp; designation</h2><p>Current-month active-ad counts appear first. Select a number to open its lifetime queue.</p></div>
         <div className="command-board-totals">
           <strong>{busy?"…":actionRows.length.toLocaleString("en-IN")}<small>station groups</small></strong>
           <strong className="need">{capacityLoading?"…":Number(capacity?.totalGap??0).toLocaleString("en-IN")}<small>net hires needed</small></strong>
@@ -2228,9 +2237,22 @@ function WorkforceCommandCenter({
         <MultiFilter label="Ad status" value={adStatus} options={statusOptions} onChange={setAdStatus}/>
         <button type="button" className="primary-action" disabled={busy} onClick={applyFilters}>{busy?"Applying…":"Apply filters"}</button>
         <button type="button" className="command-reset" disabled={busy} onClick={()=>{setAdStatus("active");resetFilters();}}>Reset</button>
+        <button type="button" className="command-ads-toggle" aria-expanded={showActiveAds} onClick={()=>setShowActiveAds((current)=>!current)}>Active ads ({activeAds.length})</button>
         <span className="command-filter-note"><i/> {adStatus==="active"?"Active ads only by default":selectedAdStatuses.length?`${selectedAdStatuses.length} ad statuses shown`:"All ad statuses shown"}</span>
       </div>
-      <div className="command-column-head" aria-hidden="true"><span>Station / designation</span><span>Lead pendency</span><span>Ops capacity</span><span>Action</span></div>
+      {showActiveAds?<section className="command-active-ads" aria-label="Scoped active ads">
+        <header><div><b>Active ads in this scope</b><span>{periodLabel} leads with current Meta spend</span></div><div><strong>₹{activeDailyBudget.toLocaleString("en-IN")}<small>daily budget</small></strong><strong>₹{Math.round(activeAdSpend).toLocaleString("en-IN")}<small>lifetime spend</small></strong><button type="button" aria-label="Close active ads" onClick={()=>setShowActiveAds(false)}>×</button></div></header>
+        <div className="command-active-ad-list">{activeAds.map((ad)=><article key={ad.adId||ad.adName}>
+          <div><b>{ad.adName||"Unnamed ad"}</b><span>{ad.station} · {ad.designation}</span></div>
+          <span><small>Budget/day</small><strong>₹{Number(ad.dailyBudget||0).toLocaleString("en-IN")}</strong></span>
+          <span><small>Spend</small><strong>₹{Math.round(Number(ad.totalSpend||0)).toLocaleString("en-IN")}</strong></span>
+          <span><small>{periodLabel} leads</small><strong>{Number(ad.totalLeads||0).toLocaleString("en-IN")}</strong></span>
+          <span><small>Lifetime leads</small><strong>{Number(ad.lifetimeTotalLeads||0).toLocaleString("en-IN")}</strong></span>
+          <span><small>Cost / lead</small><strong>{Number(ad.lifetimeTotalLeads||0)>0?`₹${Math.round(Number(ad.totalSpend||0)/Number(ad.lifetimeTotalLeads)).toLocaleString("en-IN")}`:"—"}</strong></span>
+        </article>)}</div>
+        {!activeAds.length?<p>No active ads are mapped to the permitted stations and designations.</p>:null}
+      </section>:null}
+      <div className="command-column-head" aria-hidden="true"><span>Station / designation</span><span>{periodLabel} lead status</span><span>Ops: BAU / HC / gap</span><span>Action</span></div>
       <div className="command-action-rows">
         {visibleRows.map((row)=>{
           const severity=noStatusSeverity(row.noStatus,highestNoStatus);
@@ -2238,21 +2260,23 @@ function WorkforceCommandCenter({
           return <article className="command-action-row" key={row.key}>
             <div className="command-row-identity">
               <span className="command-station-code">{row.station}</span>
-              <div><b>{row.stationName}</b><strong>{row.designation} · {row.designationName}</strong><small title={row.adNames.join(", ")}>{row.adCount} selected ad{row.adCount===1?"":"s"} · {row.totalLeads.toLocaleString("en-IN")} leads</small></div>
+              <div><b>{row.stationName}</b><strong>{row.designation} · {row.designationName}</strong><small title={row.adNames.join(", ")}>{row.adCount} {adStatus==="active"?"active":"matching"} ad{row.adCount===1?"":"s"} · {row.totalLeads.toLocaleString("en-IN")} {periodLabel} leads</small></div>
             </div>
             <div className="command-pendency">
               <button type="button" className={`command-status command-status-${severity}`} onClick={()=>openRowQueue(row,"__BLANK__")}><span>No status</span><strong>{row.noStatus.toLocaleString("en-IN")}</strong></button>
               <button type="button" className="command-status" onClick={()=>openRowQueue(row,"no_response","No Response / Call Back")}><span>No response</span><strong>{row.noResponse.toLocaleString("en-IN")}</strong></button>
               <button type="button" className="command-status" onClick={()=>openRowQueue(row,"call_back","No Response / Call Back")}><span>Call back</span><strong>{row.callBack.toLocaleString("en-IN")}</strong></button>
               <button type="button" className="command-status command-status-interview" onClick={()=>openRowQueue(row,WORKFORCE_ACTIVE_INTERVIEW_STATUS_QUERY,"Interviews")}><span>Interviews</span><strong>{row.interviews.toLocaleString("en-IN")}</strong></button>
+              <button type="button" className="command-status command-status-joined" onClick={()=>openRowQueue(row,"joined")}><span>Joined</span><strong>{row.joined.toLocaleString("en-IN")}</strong></button>
               <button type="button" className="command-status command-status-stale" onClick={()=>openRowQueue(row,"", "All Leads",true)}><span>24h+</span><strong>{row.stale24h.toLocaleString("en-IN")}</strong></button>
             </div>
             <div className="command-capacity">
               {capacityLoading?<span className="command-capacity-loading">Loading Ops…</span>:capacityRow?<>
+                <span><small>BAU 14d</small><strong>{Number(capacityRow.workload??0).toLocaleString("en-IN")}</strong></span>
+                <span><small>Active HC</small><strong>{Number(capacityRow.currentHeadcount??0).toLocaleString("en-IN")}</strong></span>
+                <span><small>Required</small><strong>{Number(capacityRow.requiredHeadcount??0).toLocaleString("en-IN")}</strong></span>
+                <span><small>Buffer</small><strong>{Number(capacityRow.bufferPercent??0).toLocaleString("en-IN")}%</strong></span>
                 <span><small>Gap</small><strong className={Number(capacityRow.capacityGap)>0?"gap":"clear"}>{Number(capacityRow.capacityGap??0).toLocaleString("en-IN")}</strong></span>
-                <span><small>Training</small><strong>{Number(capacityRow.trainingHeadcount??0).toLocaleString("en-IN")}</strong></span>
-                <span><small>Net hire</small><strong className={Number(capacityRow.netHiringNeed)>0?"need":"clear"}>{Number(capacityRow.netHiringNeed??0).toLocaleString("en-IN")}</strong></span>
-                <small className="command-capacity-detail">HC {Number(capacityRow.currentHeadcount??0).toLocaleString("en-IN")} / {Number(capacityRow.requiredHeadcount??0).toLocaleString("en-IN")} required</small>
               </>:<span className="command-capacity-missing">Capacity not configured</span>}
             </div>
             <button type="button" className="command-open" onClick={()=>openRowQueue(row,"__BLANK__,no_response,call_back")}>Open leads <span>→</span></button>
