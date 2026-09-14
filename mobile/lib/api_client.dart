@@ -165,9 +165,13 @@ class RecruitmentApi {
     return _payload(response);
   }
 
-  Future<Map<String, dynamic>> dashboard(String token, {String? stream}) async {
+  Future<Map<String, dynamic>> dashboard(
+    String token, {
+    String? stream,
+    bool detailed = false,
+  }) async {
     final query = Uri(queryParameters: {
-      'mode': 'summary',
+      if (!detailed) 'mode': 'summary',
       if (stream != null) 'stream': stream,
     }).query;
     final response = await _client.get(
@@ -515,6 +519,7 @@ class RecruitmentApi {
     List<String> stations = const [],
     List<String> clusters = const [],
     List<String> roles = const [],
+    List<String> adIds = const [],
     String archive = 'active',
     bool unmapped = false,
     bool stale24 = false,
@@ -533,6 +538,7 @@ class RecruitmentApi {
       if (stations.isNotEmpty) 'station': stations.join(','),
       if (clusters.isNotEmpty) 'cluster': clusters.join(','),
       if (roles.isNotEmpty) 'role': roles.join(','),
+      if (adIds.isNotEmpty) 'adIds': adIds.join(','),
       if (unmapped) 'unmapped': 'true',
       if (stale24) 'stale24': 'true',
       if (facets) 'facets': 'true',

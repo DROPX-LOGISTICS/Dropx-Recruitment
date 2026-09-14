@@ -146,7 +146,7 @@ export default function AuthPanel() {
       <div className="or"><i /><em>or</em><i /></div>
       <div className="google-button" ref={googleButton} aria-label="Continue with Google" />
       {message ? <small className="auth-message">{message}</small> : null}
-      <a className="android-download" href="/downloads/dropx-recruitment-android.apk?v=131" download>
+      <a className="android-download" href="/downloads/dropx-recruitment-android.apk?v=132" download>
         Download DropX Recruitment for Android 64-bit · v1.4.1 (build 131)
       </a>
     </section>

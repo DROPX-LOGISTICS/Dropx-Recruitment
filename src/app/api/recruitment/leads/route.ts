@@ -66,6 +66,7 @@ export async function GET(request: Request) {
     const stream = url.searchParams.get("stream");
     const menu = resolveLeadMenu(url);
     const status = url.searchParams.get("status");
+    const adIds = csv(url.searchParams.get("adIds"));
     const finalStatus = url.searchParams.get("finalStatus");
     const archive = url.searchParams.get("archive") ?? "active";
     const search = url.searchParams.get("search")?.trim();
@@ -145,6 +146,7 @@ export async function GET(request: Request) {
       if (statuses.includes("new") && !statuses.includes("")) statuses.push("");
       query = statuses.length > 1 ? query.in("status", statuses) : query.eq("status", statuses[0]);
     }
+    if (adIds.length) query = query.in("ad_id", adIds);
     if (finalStatus) query = query.in("final_status", csv(finalStatus));
     if (leadFrom) query = query.gte("lead_created_at", startOfIstDay(leadFrom));
     if (leadTo) query = query.lte("lead_created_at", endOfIstDay(leadTo));

@@ -20,6 +20,11 @@ import { workspaceRoleCatalog } from "@/lib/recruitment-role-catalog";
 import { HR_PIPELINE_STAGES, candidateJourney, hrLifecycleFilterOptions, hrQueueStatusQuery } from "@/lib/hr-ats-product";
 import { allowedHrFirstCallOutcomeCodes } from "@/lib/hr-recruitment-lifecycle";
 import {
+  buildWorkforceActionRows,
+  noStatusSeverity,
+  workforceAdStatusOptions
+} from "@/lib/workforce-command-center";
+import {
   WORKFORCE_ACTIVE_INTERVIEW_STATUS_QUERY,
   workforceInterviewActionOptions,
   workforceInterviewFilterOptions
@@ -56,13 +61,10 @@ type Lead = {
 };
 type LeadDetail = { lead: any; history: any[]; interviews?: any[]; messages: any[]; sources: any[]; documents?: any[] };
 
-const metricLabels: Array<[keyof Metrics, string]> = [
-  ["total","Total Leads"],["noStatus","No Status"],["noResponse","No Response"],["callBack","Call Back"],
-  ["interviews","Interviews"],["joined","Joined"],["pending24h","24H+ Pending"],["unmapped","Unmapped"]
-];
 const emptyLeadFilters = {
   status: "",
   finalStatus: "",
+  adIds: "",
   station: "",
   cluster: "",
   role: "",
@@ -317,6 +319,7 @@ export default function RecruitmentApp() {
         if (active === "Archived Leads") params.set("archive", "archived");
         if (status) params.set("status", status);
         if (effectiveFilters.status) params.set("status", effectiveFilters.status);
+        if (effectiveFilters.adIds) params.set("adIds", effectiveFilters.adIds);
         if (effectiveFilters.station) params.set("station", effectiveFilters.station);
         if (effectiveFilters.cluster) params.set("cluster", effectiveFilters.cluster);
         if (effectiveFilters.role) params.set("role", effectiveFilters.role);
@@ -617,18 +620,6 @@ export default function RecruitmentApp() {
     setSearch(""); setFilters({...emptyLeadFilters}); setFacets(null); setPage(1);
     void load({ page: 1, filterValues: {...emptyLeadFilters}, searchValue: "" });
   };
-  const openWorkforceMetric = (key: keyof Metrics) => {
-    const next = {...emptyLeadFilters};
-    let route = "All Leads";
-    if (key === "noStatus") next.status = "__BLANK__";
-    if (key === "noResponse") { route = "No Response / Call Back"; next.status = "no_response"; }
-    if (key === "callBack") { route = "No Response / Call Back"; next.status = "call_back"; }
-    if (key === "interviews") { route = "Interviews"; next.status = "interview_scheduled,interview_rescheduled"; }
-    if (key === "joined") next.status = "joined";
-    if (key === "pending24h") next.stale24 = true;
-    if (key === "unmapped") route = "Unmapped";
-    setActive(route); setFilters(next); setSearch(""); setPage(1); setFacets(null);
-  };
   const pageTitle = active === "Dashboard"
     ? (stream === "workforce" ? "Recruitment Command Center" : "Talent Command Center")
     : active === "All Leads" ? (stream === "workforce" ? "Workforce Queue" : "HR Candidates")
@@ -663,22 +654,27 @@ export default function RecruitmentApp() {
       {error ? <div className="error-banner">{error}</div> : null}
       {!streamAllowed ? <section className="content-card access-denied-card"><h2>No access to this section</h2><p>This view is controlled by the user&apos;s company role and its Recruitment menu permissions.</p></section> : null}
       {streamAllowed && active === "Dashboard" && stream === "workforce" ? <>
-        <section className="metrics">{metricLabels.filter(([key])=>key!=="unmapped").map(([key,label]) => <button type="button" className={`metric-card metric-${key.toLowerCase()}`} key={key} onClick={()=>openWorkforceMetric(key)}><span>{label}</span><strong>{busy ? "…" : (metrics?.[key] ?? 0).toLocaleString("en-IN")}</strong><small>Open queue →</small></button>)}</section>
-        <section className="dash-tools-modern"><MultiFilter label="Stations" value={filters.station} options={options.locations.map((item:any)=>[item.code,`${item.code} — ${item.name}`])} onChange={(value)=>setFilters({...filters,station:value})}/><MultiFilter label="Operational owners" value={filters.cluster} options={[...new Set(options.locations.map((item:any)=>item.cluster).filter(Boolean))].map((value:any)=>[value,value])} onChange={(value)=>setFilters({...filters,cluster:value})}/><MultiFilter label="Designations" value={filters.role} options={streamRoles.map((item:any)=>[item.code,`${item.code} — ${item.name}`])} onChange={(value)=>setFilters({...filters,role:value})}/><button className="primary-action" disabled={busy} onClick={()=>void load()}>{busy?"Applying…":"Apply filters"}</button></section>
-        <section className="quick-queues">
-          <button onClick={()=>{setActive("All Leads");setFilters({...filters,role:"DA",status:"__BLANK__,no_response,call_back",stale24:false});}}>My DA pending</button>
-          <button onClick={()=>{setActive("Interviews");setFilters({...filters,interviewFrom:istDate(),interviewTo:istDate(),stale24:false});}}>Today interviews</button>
-          <button className="hot" onClick={()=>{setActive("All Leads");setFilters({...filters,status:"",stale24:true});}}>24h pending</button>
-        </section>
-        <PersonalPerformance token={token} user={user} />
-        <CapacityDemandPanel token={token} openStation={(stationCode)=>{
-          setActive("All Leads");
-          setFilters({...emptyLeadFilters,station:stationCode});
-          setSearch("");
-          setPage(1);
-          setFacets(null);
-        }}/>
-        <DashboardPanels data={moduleData} />
+        <WorkforceCommandCenter
+          token={token}
+          data={moduleData}
+          busy={busy}
+          filters={filters}
+          stationOptions={options.locations.map((item:any)=>[item.code,`${item.code} — ${item.name}`] as [string,string])}
+          designationOptions={streamRoles.map((item:any)=>[item.code,`${item.code} — ${item.name}`] as [string,string])}
+          updateFilters={(next)=>setFilters({...filters,...next})}
+          applyFilters={()=>void load()}
+          resetFilters={()=>{
+            setFilters({...emptyLeadFilters});
+            void load({filterValues:{...emptyLeadFilters}});
+          }}
+          openQueue={({station,designation,status,adIds,stale24=false,route="All Leads"})=>{
+            setActive(route);
+            setFilters({...emptyLeadFilters,station,role:designation,status,adIds,stale24});
+            setSearch("");
+            setPage(1);
+            setFacets(null);
+          }}
+        />
       </> : null}
       {streamAllowed && active === "Dashboard" && stream === "hr" ? <HRDashboard data={moduleData} metrics={metrics} busy={busy} openQueue={(status)=>{setActive("All Leads");setFilters({...emptyLeadFilters,status});}} openRequisitions={()=>setActive("Job Requisitions")} /> : null}
       {streamAllowed && active === "My Interviews" && stream === "hr" ? <MyInterviewAssignments data={moduleData} token={token} busy={busy} canEdit={canEditMenu("hr","My Interviews")} reload={load} /> : null}
@@ -695,6 +691,7 @@ export default function RecruitmentApp() {
           {active==="No Response / Call Back"?<MultiFilter label="Updated" value={filters.updatedAge} options={[["never","Never"],["lt30","Under 30 min"],["gt60","60+ min"],["gt120","120+ min"],["gt24h","24h+"],["gt2d","2 days+"]]} onChange={(value)=>setFilters({...filters,updatedAge:value})} onApply={applyLeadFilters} busy={busy}/>:null}
           {active==="Interviews"?<>{stream==="workforce"?<MultiFilter label="Outcome" value={filters.status} options={workforceInterviewFilterOptions(workforceStatusOptions(options)).map((item)=>[item.code,item.label])} onChange={(value)=>setFilters({...filters,status:value,finalStatus:""})} onApply={applyLeadFilters} busy={busy}/>:null}<label className="compact-date">From<input type="date" aria-label="Interview from" value={filters.interviewFrom} onChange={(event)=>setFilters({...filters,interviewFrom:event.target.value})}/></label><label className="compact-date">To<input type="date" aria-label="Interview to" value={filters.interviewTo} onChange={(event)=>setFilters({...filters,interviewTo:event.target.value})}/></label>{stream==="hr"?<MultiFilter label="Final status" value={filters.finalStatus} options={options.finalStatuses.map((item:string)=>[item,item])} onChange={(value)=>setFilters({...filters,finalStatus:value})} onApply={applyLeadFilters} busy={busy}/>:null}</>:null}
           {filters.stale24?<span className="filter-chip">24h+ pending</span>:null}
+          {filters.adIds?<span className="filter-chip">Dashboard ad selection</span>:null}
           <button onClick={applyLeadFilters} disabled={busy}>{busy ? "Applying…" : "Apply filters"}</button>
           <button className="reset-btn" onClick={resetLeadFilters} disabled={busy}>Reset filters</button>
         </div>
@@ -2112,6 +2109,161 @@ function MultiFilter({ label, value, options, onChange, onApply, busy = false }:
       {onApply?<footer><button type="button" disabled={busy} onClick={(event)=>{event.preventDefault();event.stopPropagation();detailsRef.current?.removeAttribute("open");setQuery("");onApply();}}>{busy?"Applying…":"Apply filters"}</button></footer>:null}
     </div>
   </details>;
+}
+
+type CommandQueueTarget = {
+  station: string;
+  designation: string;
+  status: string;
+  adIds: string;
+  stale24?: boolean;
+  route?: string;
+};
+
+function WorkforceCommandCenter({
+  token,
+  data,
+  busy,
+  filters,
+  stationOptions,
+  designationOptions,
+  updateFilters,
+  applyFilters,
+  resetFilters,
+  openQueue
+}: {
+  token:string;
+  data:any;
+  busy:boolean;
+  filters:typeof emptyLeadFilters;
+  stationOptions:Array<[string,string]>;
+  designationOptions:Array<[string,string]>;
+  updateFilters:(next:Partial<typeof emptyLeadFilters>)=>void;
+  applyFilters:()=>void;
+  resetFilters:()=>void;
+  openQueue:(target:CommandQueueTarget)=>void;
+}) {
+  const [adStatus,setAdStatus]=useState("active");
+  const [capacity,setCapacity]=useState<any>(null);
+  const [capacityLoading,setCapacityLoading]=useState(true);
+  const [capacityNotice,setCapacityNotice]=useState("");
+  useEffect(()=>{
+    let current=true;
+    setCapacityLoading(true);
+    setCapacityNotice("");
+    fetch("/api/recruitment/capacity-demand",{headers:headers(token),cache:"no-store"})
+      .then(async(response)=>{
+        const payload=await response.json();
+        if(!response.ok)throw new Error(payload.error||"Unable to load Ops capacity.");
+        return payload;
+      })
+      .then((payload)=>{if(current)setCapacity(payload);})
+      .catch((caught)=>{if(current)setCapacityNotice(caught instanceof Error?caught.message:"Unable to load Ops capacity.");})
+      .finally(()=>{if(current)setCapacityLoading(false);});
+    return()=>{current=false;};
+  },[token]);
+  const adRows=data?.adDesignationPendency??[];
+  const adStatuses=useMemo(()=>[...new Set(["active",...workforceAdStatusOptions(adRows)])],[adRows]);
+  const selectedAdStatuses=adStatus.split(",").map((value)=>value.trim()).filter(Boolean);
+  const actionRows=useMemo(
+    ()=>buildWorkforceActionRows(adRows,capacity?.rows??[],selectedAdStatuses),
+    [adRows,capacity?.rows,adStatus]
+  );
+  const highestNoStatus=actionRows[0]?.noStatus??0;
+  const visibleRows=actionRows.slice(0,100);
+  const activeMetrics=actionRows.reduce<Metrics>((total,row)=>({
+    total:total.total+row.totalLeads,
+    noStatus:total.noStatus+row.noStatus,
+    noResponse:total.noResponse+row.noResponse,
+    callBack:total.callBack+row.callBack,
+    interviews:total.interviews+row.interviews,
+    pending24h:total.pending24h+row.stale24h,
+    joined:0,
+    unmapped:0
+  }),{total:0,noStatus:0,noResponse:0,callBack:0,interviews:0,pending24h:0,joined:0,unmapped:0});
+  const selectedAdIds=[...new Set(actionRows.flatMap((row)=>row.adIds))].join(",");
+  const summaryCards:Array<[keyof Metrics,string,string]>=[
+    ["total","Total leads","All scoped leads"],
+    ["noStatus","No status","Untreated"],
+    ["noResponse","No response","Retry queue"],
+    ["callBack","Call back","Follow-ups"],
+    ["interviews","Interviews","In progress"],
+    ["pending24h","24h+ pending","Overdue"]
+  ];
+  const statusOptions=adStatuses.map((value)=>[value,statusLabel(value)] as [string,string]);
+  const openRowQueue=(row:any,status:string,route="All Leads",stale24=false)=>openQueue({
+    station:row.station,
+    designation:row.designation,
+    status,
+    adIds:row.adIds.join(","),
+    route,
+    stale24
+  });
+  const openSummaryQueue=(key:keyof Metrics)=>{
+    let status="";
+    let route="All Leads";
+    let stale24=false;
+    if(key==="noStatus")status="__BLANK__";
+    if(key==="noResponse"){status="no_response";route="No Response / Call Back";}
+    if(key==="callBack"){status="call_back";route="No Response / Call Back";}
+    if(key==="interviews"){status=WORKFORCE_ACTIVE_INTERVIEW_STATUS_QUERY;route="Interviews";}
+    if(key==="pending24h")stale24=true;
+    openQueue({station:"",designation:"",status,adIds:selectedAdIds,route,stale24});
+  };
+  return <section className="workforce-command">
+    <div className="command-summary" aria-label="Lead summary">
+      {summaryCards.map(([key,label,detail])=><button type="button" disabled={!selectedAdIds} className={`command-summary-card command-summary-${key.toLowerCase()}`} key={key} onClick={()=>openSummaryQueue(key)}><span>{label}</span><strong>{busy||data?.loadingDetails?"…":Number(activeMetrics[key]??0).toLocaleString("en-IN")}</strong><small>{detail} <i>→</i></small></button>)}
+    </div>
+    <section className="command-board">
+      <header className="command-board-head">
+        <div><span>ACT FIRST</span><h2>Lead pendency by station &amp; designation</h2><p>Highest untreated active-ad workload appears first. Select a number to open that queue.</p></div>
+        <div className="command-board-totals">
+          <strong>{busy?"…":actionRows.length.toLocaleString("en-IN")}<small>station groups</small></strong>
+          <strong className="need">{capacityLoading?"…":Number(capacity?.totalGap??0).toLocaleString("en-IN")}<small>net hires needed</small></strong>
+        </div>
+      </header>
+      <div className="command-filter-bar">
+        <MultiFilter label="Stations" value={filters.station} options={stationOptions} onChange={(station)=>updateFilters({station})}/>
+        <MultiFilter label="Designations" value={filters.role} options={designationOptions} onChange={(role)=>updateFilters({role})}/>
+        <MultiFilter label="Ad status" value={adStatus} options={statusOptions} onChange={setAdStatus}/>
+        <button type="button" className="primary-action" disabled={busy} onClick={applyFilters}>{busy?"Applying…":"Apply filters"}</button>
+        <button type="button" className="command-reset" disabled={busy} onClick={()=>{setAdStatus("active");resetFilters();}}>Reset</button>
+        <span className="command-filter-note"><i/> {adStatus==="active"?"Active ads only by default":selectedAdStatuses.length?`${selectedAdStatuses.length} ad statuses shown`:"All ad statuses shown"}</span>
+      </div>
+      <div className="command-column-head" aria-hidden="true"><span>Station / designation</span><span>Lead pendency</span><span>Ops capacity</span><span>Action</span></div>
+      <div className="command-action-rows">
+        {visibleRows.map((row)=>{
+          const severity=noStatusSeverity(row.noStatus,highestNoStatus);
+          const capacityRow=row.capacity;
+          return <article className="command-action-row" key={row.key}>
+            <div className="command-row-identity">
+              <span className="command-station-code">{row.station}</span>
+              <div><b>{row.stationName}</b><strong>{row.designation} · {row.designationName}</strong><small title={row.adNames.join(", ")}>{row.adCount} selected ad{row.adCount===1?"":"s"} · {row.totalLeads.toLocaleString("en-IN")} leads</small></div>
+            </div>
+            <div className="command-pendency">
+              <button type="button" className={`command-status command-status-${severity}`} onClick={()=>openRowQueue(row,"__BLANK__")}><span>No status</span><strong>{row.noStatus.toLocaleString("en-IN")}</strong></button>
+              <button type="button" className="command-status" onClick={()=>openRowQueue(row,"no_response","No Response / Call Back")}><span>No response</span><strong>{row.noResponse.toLocaleString("en-IN")}</strong></button>
+              <button type="button" className="command-status" onClick={()=>openRowQueue(row,"call_back","No Response / Call Back")}><span>Call back</span><strong>{row.callBack.toLocaleString("en-IN")}</strong></button>
+              <button type="button" className="command-status command-status-interview" onClick={()=>openRowQueue(row,WORKFORCE_ACTIVE_INTERVIEW_STATUS_QUERY,"Interviews")}><span>Interviews</span><strong>{row.interviews.toLocaleString("en-IN")}</strong></button>
+              <button type="button" className="command-status command-status-stale" onClick={()=>openRowQueue(row,"", "All Leads",true)}><span>24h+</span><strong>{row.stale24h.toLocaleString("en-IN")}</strong></button>
+            </div>
+            <div className="command-capacity">
+              {capacityLoading?<span className="command-capacity-loading">Loading Ops…</span>:capacityRow?<>
+                <span><small>Gap</small><strong className={Number(capacityRow.capacityGap)>0?"gap":"clear"}>{Number(capacityRow.capacityGap??0).toLocaleString("en-IN")}</strong></span>
+                <span><small>Training</small><strong>{Number(capacityRow.trainingHeadcount??0).toLocaleString("en-IN")}</strong></span>
+                <span><small>Net hire</small><strong className={Number(capacityRow.netHiringNeed)>0?"need":"clear"}>{Number(capacityRow.netHiringNeed??0).toLocaleString("en-IN")}</strong></span>
+                <small className="command-capacity-detail">HC {Number(capacityRow.currentHeadcount??0).toLocaleString("en-IN")} / {Number(capacityRow.requiredHeadcount??0).toLocaleString("en-IN")} required</small>
+              </>:<span className="command-capacity-missing">Capacity not configured</span>}
+            </div>
+            <button type="button" className="command-open" onClick={()=>openRowQueue(row,"__BLANK__,no_response,call_back")}>Open leads <span>→</span></button>
+          </article>;
+        })}
+      </div>
+      {!busy&&!visibleRows.length?<div className="command-empty"><strong>No station-designation groups match these filters.</strong><span>Active ads are selected by default. Choose another ad status to inspect older campaigns.</span></div>:null}
+      {capacityNotice?<p className="command-capacity-notice">Lead pendency is available. Ops capacity could not be loaded: {capacityNotice}</p>:null}
+      {actionRows.length>visibleRows.length?<p className="command-limit-note">Showing the top {visibleRows.length} groups by untreated lead volume.</p>:null}
+    </section>
+  </section>;
 }
 
 function SearchSelect({label,value,options,onChange,placeholder="Search and select…"}:{label:string;value:string;options:Array<[string,string]>;onChange:(value:string)=>void;placeholder?:string}) {

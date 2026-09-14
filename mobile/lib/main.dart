@@ -586,6 +586,18 @@ class _RecruitmentHomePageState extends State<RecruitmentHomePage> {
   String? _switchError;
   Future<Map<String, dynamic>>? _planning;
 
+  Future<Map<String, dynamic>> _loadWorkforceOverview() async {
+    if (!_mobileAllowedFor(_user, 'Dashboard')) {
+      final capacity = await _api.workforcePlanning(widget.token);
+      return {'planningOnly': true, 'capacity': capacity};
+    }
+    final results = await Future.wait<Map<String, dynamic>>([
+      _api.dashboard(widget.token, stream: 'workforce', detailed: true),
+      _api.workforcePlanning(widget.token),
+    ]);
+    return {...results[0], 'capacity': results[1]};
+  }
+
   @override
   void initState() {
     super.initState();
@@ -593,14 +605,14 @@ class _RecruitmentHomePageState extends State<RecruitmentHomePage> {
     _stream = _user['workforce'] == true ? 'workforce' : 'hr';
     RecruitmentApi.activePreviewProfileId = null;
     if (_canViewWorkforcePlanFor(_user)) {
-      _planning = _api.workforcePlanning(widget.token);
+      _planning = _loadWorkforceOverview();
     }
     if (_user['canPreviewUsers'] == true) _loadPreviewUsers();
   }
 
   Future<void> _refreshHome() async {
     if (!_canViewWorkforcePlanFor(_user)) return;
-    final next = _api.workforcePlanning(widget.token);
+    final next = _loadWorkforceOverview();
     setState(() => _planning = next);
     await next;
   }
@@ -632,7 +644,7 @@ class _RecruitmentHomePageState extends State<RecruitmentHomePage> {
         _user = user;
         _stream = user['workforce'] == true ? 'workforce' : 'hr';
         _planning = _canViewWorkforcePlanFor(user)
-            ? _api.workforcePlanning(widget.token)
+            ? _loadWorkforceOverview()
             : null;
       });
     } catch (error) {
@@ -1070,12 +1082,17 @@ class _RecruitmentHomePageState extends State<RecruitmentHomePage> {
               FutureBuilder<Map<String, dynamic>>(
                 future: _planning,
                 builder: (context, snapshot) => _WorkforceHomeDashboard(
+                  token: widget.token,
                   data: snapshot.data,
                   loading: !snapshot.hasData && !snapshot.hasError,
                   error: snapshot.hasError ? snapshot.error.toString() : null,
                   fieldRecruiter: isFieldRecruiter,
                   openPlanning: () =>
                       _open(_WorkforcePlanningPage(token: widget.token)),
+                  openCommandCenter: () => _open(_DashboardPage(
+                      token: widget.token,
+                      stream: 'workforce',
+                      title: 'Recruitment Command Center')),
                   openPrimary: isFieldRecruiter
                       ? () => _open(_FieldDutyPage(
                             token: widget.token,
@@ -3726,116 +3743,72 @@ class _HomeIdentityHero extends StatelessWidget {
 
 class _WorkforceHomeDashboard extends StatelessWidget {
   const _WorkforceHomeDashboard({
+    required this.token,
     required this.data,
     required this.loading,
     required this.error,
     required this.fieldRecruiter,
     required this.openPlanning,
+    required this.openCommandCenter,
     required this.openPrimary,
     required this.openOnboarding,
   });
+  final String token;
   final Map<String, dynamic>? data;
   final bool loading;
   final String? error;
   final bool fieldRecruiter;
   final VoidCallback openPlanning;
+  final VoidCallback openCommandCenter;
   final VoidCallback openPrimary;
   final VoidCallback openOnboarding;
 
   @override
   Widget build(BuildContext context) {
-    final rows = data?['rows'] as List<dynamic>? ?? const [];
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-      Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-        Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(
-              fieldRecruiter
-                  ? 'Your assigned-station hiring picture'
-                  : 'Today’s hiring picture',
-              style:
-                  const TextStyle(fontSize: 17, fontWeight: FontWeight.w900)),
-          const Text('Capacity adjusted for associates in training',
-              style: TextStyle(color: Color(0xff667085), fontSize: 10)),
-        ]),
-        TextButton(onPressed: openPlanning, child: const Text('Open all')),
-      ]),
-      const SizedBox(height: 5),
+      if (fieldRecruiter)
+        const Padding(
+          padding: EdgeInsets.only(bottom: 7),
+          child: Text('Your assigned-station hiring picture',
+              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w900)),
+        ),
       if (error != null)
         Card(
           color: const Color(0xfffff3f1),
           child: ListTile(
               leading: const Icon(Icons.cloud_off_outlined, color: Colors.red),
-              title: const Text('Workforce plan unavailable'),
+              title: const Text('Command Center unavailable'),
               subtitle: Text(error!)),
         )
-      else
+      else if (loading || data == null)
+        const Padding(
+          padding: EdgeInsets.symmetric(vertical: 28),
+          child: Center(child: CircularProgressIndicator()),
+        )
+      else if (data!['planningOnly'] == true)
         Container(
-          padding: const EdgeInsets.all(12),
+          padding: const EdgeInsets.all(13),
           decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: dropxBorder),
-          ),
-          child: Column(children: [
-            Row(children: [
-              Expanded(
-                  child: _PlanningMetric(
-                      label: 'Net hire',
-                      value: loading ? '…' : '${data?['totalGap'] ?? 0}',
-                      color: dropxPink,
-                      icon: Icons.person_add_alt_1_outlined)),
-              Expanded(
-                  child: _PlanningMetric(
-                      label: 'Training',
-                      value: loading ? '…' : '${data?['totalTraining'] ?? 0}',
-                      color: dropxPurple,
-                      icon: Icons.school_outlined)),
-              Expanded(
-                  child: _PlanningMetric(
-                      label: 'At risk',
-                      value: loading ? '…' : '${data?['attritionRisk'] ?? 0}',
-                      color: dropxOrange,
-                      icon: Icons.warning_amber_rounded)),
-            ]),
-            if (!loading && rows.isNotEmpty) ...[
-              const Divider(height: 22),
-              ...rows
-                  .where((raw) => (raw as Map)['netHiringNeed'] != 0)
-                  .take(3)
-                  .map((raw) {
-                final row = raw as Map<String, dynamic>;
-                return Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 5),
-                  child: Row(children: [
-                    Container(
-                      width: 47,
-                      padding: const EdgeInsets.symmetric(vertical: 7),
-                      alignment: Alignment.center,
-                      decoration: BoxDecoration(
-                          color: const Color(0xffffedf2),
-                          borderRadius: BorderRadius.circular(10)),
-                      child: Text('${row['stationCode']}',
-                          style: const TextStyle(
-                              color: dropxPink,
-                              fontSize: 10,
-                              fontWeight: FontWeight.w900)),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                        child: Text(
-                            '${row['workload']} avg volume · ${row['currentHeadcount']}/${row['requiredHeadcount']} active',
-                            style: const TextStyle(
-                                color: Color(0xff475467), fontSize: 10))),
-                    Text('${row['netHiringNeed']} hire',
-                        style: const TextStyle(
-                            color: dropxPink,
-                            fontSize: 11,
-                            fontWeight: FontWeight.w900)),
-                  ]),
-                );
-              }),
-            ],
+              color: Colors.white,
+              border: Border.all(color: dropxBorder),
+              borderRadius: BorderRadius.circular(15)),
+          child: Row(children: [
+            _HomePlanningValue(
+                'Capacity gap', data!['capacity']?['totalCapacityGap'] ?? 0),
+            _HomePlanningValue(
+                'Training', data!['capacity']?['totalTraining'] ?? 0),
+            _HomePlanningValue('Net hire', data!['capacity']?['totalGap'] ?? 0,
+                alert: true),
           ]),
+        )
+      else
+        _WorkforceCommandPanel(
+          token: token,
+          data: data!,
+          onRefresh: () async {},
+          embedded: true,
+          maxRows: 5,
+          onOpenAll: openCommandCenter,
         ),
       const SizedBox(height: 12),
       Row(children: [
@@ -3866,27 +3839,22 @@ class _WorkforceHomeDashboard extends StatelessWidget {
   }
 }
 
-class _PlanningMetric extends StatelessWidget {
-  const _PlanningMetric(
-      {required this.label,
-      required this.value,
-      required this.color,
-      required this.icon});
+class _HomePlanningValue extends StatelessWidget {
+  const _HomePlanningValue(this.label, this.value, {this.alert = false});
   final String label;
-  final String value;
-  final Color color;
-  final IconData icon;
+  final dynamic value;
+  final bool alert;
+
   @override
-  Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+  Widget build(BuildContext context) => Expanded(
         child: Column(children: [
-          Icon(icon, color: color, size: 21),
-          const SizedBox(height: 4),
-          Text(value,
+          Text('$value',
               style: TextStyle(
-                  color: color, fontSize: 24, fontWeight: FontWeight.w900)),
+                  color: alert ? dropxPink : dropxInk,
+                  fontSize: 22,
+                  fontWeight: FontWeight.w900)),
           Text(label,
-              style: const TextStyle(color: Color(0xff667085), fontSize: 9)),
+              style: const TextStyle(color: Color(0xff667085), fontSize: 9))
         ]),
       );
 }
@@ -5467,7 +5435,7 @@ class _PersonalPerformancePageState extends State<_PersonalPerformancePage> {
   }
 }
 
-class _DashboardPage extends StatelessWidget {
+class _DashboardPage extends StatefulWidget {
   const _DashboardPage(
       {required this.token, required this.stream, required this.title});
   final String token;
@@ -5475,12 +5443,36 @@ class _DashboardPage extends StatelessWidget {
   final String title;
 
   @override
+  State<_DashboardPage> createState() => _DashboardPageState();
+}
+
+class _DashboardPageState extends State<_DashboardPage> {
+  final _api = RecruitmentApi(baseUrl: apiBaseUrl);
+  late Future<Map<String, dynamic>> _result = _load();
+
+  Future<Map<String, dynamic>> _load() async {
+    final dashboard = await _api.dashboard(widget.token,
+        stream: widget.stream, detailed: true);
+    if (widget.stream != 'workforce') return dashboard;
+    final capacity = await _api.workforcePlanning(widget.token);
+    return {...dashboard, 'capacity': capacity};
+  }
+
+  Future<void> _refresh() async {
+    final next = _load();
+    setState(() => _result = next);
+    await next;
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final api = RecruitmentApi(baseUrl: apiBaseUrl);
     return Scaffold(
-      appBar: AppBar(title: Text(title)),
+      appBar: AppBar(
+        title: Text(widget.title),
+        actions: [IconButton(onPressed: _refresh, icon: const Icon(Icons.refresh))],
+      ),
       body: FutureBuilder<Map<String, dynamic>>(
-        future: api.dashboard(token, stream: stream),
+        future: _result,
         builder: (context, snapshot) {
           if (!snapshot.hasData && !snapshot.hasError) {
             return const Center(child: CircularProgressIndicator());
@@ -5488,265 +5480,53 @@ class _DashboardPage extends StatelessWidget {
           if (snapshot.hasError) {
             return Center(child: Text(snapshot.error.toString()));
           }
-          final metrics = snapshot.data!['metrics'] as Map<String, dynamic>;
-          final adPendency =
-              ((snapshot.data!['adDesignationPendency'] as List<dynamic>?) ??
-                      const <dynamic>[])
-                  .whereType<Map>()
-                  .map((row) => Map<String, dynamic>.from(row))
-                  .toList();
-          String statusText(dynamic value) {
-            final raw = (value?.toString().trim().isNotEmpty ?? false)
-                ? value.toString().trim()
-                : 'not active';
-            return raw
-                .replaceAll('_', ' ')
-                .split(' ')
-                .map((part) => part.isEmpty
-                    ? part
-                    : '${part[0].toUpperCase()}${part.substring(1)}')
-                .join(' ');
+          final data = snapshot.data!;
+          if (widget.stream == 'workforce') {
+            return _WorkforceCommandPanel(
+              token: widget.token,
+              data: data,
+              onRefresh: _refresh,
+            );
           }
-
-          Color statusColor(dynamic value) {
-            switch (value?.toString().toLowerCase()) {
-              case 'active':
-                return const Color(0xff067647);
-              case 'paused':
-                return const Color(0xff925800);
-              case 'disapproved':
-              case 'rejected':
-              case 'inactive':
-              case 'not_active':
-                return const Color(0xffb42318);
-              default:
-                return const Color(0xff475467);
-            }
-          }
-
-          const labels = <String, String>{
-            'total': 'Total Leads',
-            'noStatus': 'No Status',
-            'noResponse': 'No Response',
-            'callBack': 'Call Back',
+          final metrics =
+              data['metrics'] as Map<String, dynamic>? ?? <String, dynamic>{};
+          const labels = {
+            'total': 'Total leads',
+            'noStatus': 'New profiles',
             'interviews': 'Interviews',
             'joined': 'Joined',
-            'pending24h': '24H+ Pending',
-            'unmapped': 'Unmapped',
+            'pending24h': '24h+ pending',
+            'unmapped': 'Unmapped'
           };
-          const metricStatus = <String, String?>{
-            'total': null,
-            'noStatus': '__BLANK__',
-            'noResponse': 'no_response',
-            'callBack': 'call_back',
-            'interviews': 'interview_scheduled,interview_rescheduled',
-            'joined': 'joined',
-            'pending24h': null,
-            'unmapped': null,
-          };
-          const metricColors = <String, Color>{
-            'total': dropxInk,
-            'noStatus': Color(0xffc0282a),
-            'noResponse': Color(0xffe09200),
-            'callBack': dropxPink,
-            'interviews': Color(0xff12a55e),
-            'joined': dropxInk,
-            'pending24h': Color(0xffc0282a),
-            'unmapped': Color(0xff7f56d9),
-          };
-          Widget metricGrid(List<String> keys) => GridView.count(
+          return ListView(
+            padding: const EdgeInsets.all(14),
+            children: [
+              GridView.count(
                 shrinkWrap: true,
                 physics: const NeverScrollableScrollPhysics(),
                 crossAxisCount: 2,
-                mainAxisSpacing: 8,
-                crossAxisSpacing: 8,
-                childAspectRatio: 1.62,
-                children: keys.map((key) {
-                  final entry = MapEntry(key, labels[key]!);
-                  return Card(
-                    clipBehavior: Clip.antiAlias,
-                    child: InkWell(
-                      onTap: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => _LeadListPage(
-                            token: token,
-                            stream: stream,
-                            title: entry.value,
-                            status: metricStatus[entry.key],
-                            stale24: entry.key == 'pending24h',
-                            unmapped: entry.key == 'unmapped',
+                childAspectRatio: 1.7,
+                children: labels.entries
+                    .map((entry) => Card(
+                          child: Padding(
+                            padding: const EdgeInsets.all(14),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(entry.value,
+                                    style: const TextStyle(
+                                        color: Color(0xff667085), fontSize: 11)),
+                                const Spacer(),
+                                Text('${metrics[entry.key] ?? 0}',
+                                    style: const TextStyle(
+                                        fontSize: 24,
+                                        fontWeight: FontWeight.w900)),
+                              ],
+                            ),
                           ),
-                        ),
-                      ),
-                      child: Container(
-                        decoration: BoxDecoration(
-                            border: Border(
-                                top: BorderSide(
-                                    color: metricColors[entry.key]!,
-                                    width: 3))),
-                        padding: const EdgeInsets.all(14),
-                        child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(entry.value,
-                                  style: const TextStyle(
-                                      color: Color(0xff667085),
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w700)),
-                              const Spacer(),
-                              Text('${metrics[entry.key] ?? 0}',
-                                  style: Theme.of(context)
-                                      .textTheme
-                                      .headlineMedium
-                                      ?.copyWith(
-                                          color: metricColors[entry.key],
-                                          fontWeight: FontWeight.w800)),
-                              const Text('Open queue →',
-                                  style: TextStyle(
-                                      color: Color(0xff98a2b3), fontSize: 10)),
-                            ]),
-                      ),
-                    ),
-                  );
-                }).toList(),
-              );
-          return ListView(
-            padding: const EdgeInsets.fromLTRB(14, 14, 14, 24),
-            children: [
-              Container(
-                padding: const EdgeInsets.all(17),
-                decoration: BoxDecoration(
-                  gradient: const LinearGradient(
-                    colors: [dropxInk, Color(0xff49335d), dropxPink],
-                  ),
-                  borderRadius: BorderRadius.circular(18),
-                ),
-                child: const Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('RECRUITMENT COMMAND CENTER',
-                        style: TextStyle(
-                            color: Color(0xffffcada),
-                            fontSize: 10,
-                            fontWeight: FontWeight.w900,
-                            letterSpacing: 1.05)),
-                    SizedBox(height: 5),
-                    Text('Source. Connect. Hire. Scale.',
-                        style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 20,
-                            fontWeight: FontWeight.w900)),
-                    SizedBox(height: 4),
-                    Text('Today’s pipeline and the work that needs action.',
-                        style:
-                            TextStyle(color: Color(0xffe7e4ed), fontSize: 11)),
-                  ],
-                ),
-              ),
-              const Padding(
-                padding: EdgeInsets.fromLTRB(3, 17, 3, 7),
-                child: Text('Action queue',
-                    style:
-                        TextStyle(fontSize: 15, fontWeight: FontWeight.w900)),
-              ),
-              metricGrid(
-                  ['interviews', 'callBack', 'noResponse', 'pending24h']),
-              const Padding(
-                padding: EdgeInsets.fromLTRB(3, 17, 3, 7),
-                child: Text('Pipeline health',
-                    style:
-                        TextStyle(fontSize: 15, fontWeight: FontWeight.w900)),
-              ),
-              metricGrid(['total', 'noStatus', 'joined', 'unmapped']),
-              const Padding(
-                padding: EdgeInsets.fromLTRB(3, 17, 3, 2),
-                child: Text('Designation pendency by ad',
-                    style:
-                        TextStyle(fontSize: 15, fontWeight: FontWeight.w900)),
-              ),
-              const Padding(
-                padding: EdgeInsets.fromLTRB(3, 0, 3, 7),
-                child: Text('Current ad status and open lead workload.',
-                    style: TextStyle(color: Color(0xff667085), fontSize: 10)),
-              ),
-              if (adPendency.isEmpty)
-                const Card(
-                  child: Padding(
-                    padding: EdgeInsets.all(14),
-                    child: Text('No ads are mapped to this scope.'),
-                  ),
-                ),
-              ...adPendency.map((row) {
-                final status = row['adStatus'];
-                final pending = int.tryParse('${row['pending'] ?? 0}') ?? 0;
-                return Card(
-                  margin: const EdgeInsets.only(bottom: 7),
-                  clipBehavior: Clip.antiAlias,
-                  child: ExpansionTile(
-                    tilePadding:
-                        const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-                    childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-                    title: Text(row['adName']?.toString() ?? 'Unnamed ad',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                            fontSize: 12, fontWeight: FontWeight.w800)),
-                    subtitle: Text(
-                        '${row['station'] ?? 'Unmapped'} · ${row['designation'] ?? 'Unmapped'}',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                            color: Color(0xff667085), fontSize: 9)),
-                    trailing: SizedBox(
-                      width: 88,
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                          Text('$pending pending',
-                              style: TextStyle(
-                                  color: pending > 0
-                                      ? const Color(0xffb42318)
-                                      : const Color(0xff067647),
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w900)),
-                          const SizedBox(height: 3),
-                          Text(statusText(status),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                  color: statusColor(status),
-                                  fontSize: 8,
-                                  fontWeight: FontWeight.w800)),
-                        ],
-                      ),
-                    ),
-                    children: [
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.all(10),
-                        decoration: BoxDecoration(
-                          color: const Color(0xfff7f8fa),
-                          borderRadius: BorderRadius.circular(9),
-                        ),
-                        child: Wrap(
-                          spacing: 16,
-                          runSpacing: 9,
-                          children: [
-                            _CompactFact('No status', row['noStatus']),
-                            _CompactFact('No response', row['noResponse']),
-                            _CompactFact('Call back', row['callBack']),
-                            _CompactFact('24h+', row['stale24h']),
-                            _CompactFact('Total leads', row['totalLeads']),
-                            _CompactFact('Station', row['stationName']),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                );
-              }),
+                        ))
+                    .toList(),
+              )
             ],
           );
         },
@@ -5755,33 +5535,607 @@ class _DashboardPage extends StatelessWidget {
   }
 }
 
-class _CompactFact extends StatelessWidget {
-  const _CompactFact(this.label, this.value);
-  final String label;
-  final dynamic value;
+class _WorkforceCommandPanel extends StatefulWidget {
+  const _WorkforceCommandPanel(
+      {required this.token,
+      required this.data,
+      required this.onRefresh,
+      this.embedded = false,
+      this.maxRows = 100,
+      this.onOpenAll});
+  final String token;
+  final Map<String, dynamic> data;
+  final Future<void> Function() onRefresh;
+  final bool embedded;
+  final int maxRows;
+  final VoidCallback? onOpenAll;
 
   @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: 92,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(label.toUpperCase(),
-              style: const TextStyle(
-                  color: Color(0xff98a2b3),
-                  fontSize: 7,
-                  fontWeight: FontWeight.w900)),
-          const SizedBox(height: 2),
-          Text('${value ?? '—'}',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style:
-                  const TextStyle(fontSize: 10, fontWeight: FontWeight.w800)),
-        ],
+  State<_WorkforceCommandPanel> createState() =>
+      _WorkforceCommandPanelState();
+}
+
+class _WorkforceCommandPanelState extends State<_WorkforceCommandPanel> {
+  Set<String> _stations = {};
+  Set<String> _designations = {};
+  Set<String> _adStatuses = {'active'};
+
+  int _number(dynamic value) =>
+      value is num ? value.toInt() : int.tryParse('${value ?? 0}') ?? 0;
+
+  String _label(dynamic value) => statusLabel(
+      (value?.toString().trim().isNotEmpty ?? false)
+          ? value.toString().trim()
+          : 'not_active');
+
+  List<Map<String, dynamic>> get _sourceRows =>
+      (widget.data['adDesignationPendency'] as List<dynamic>? ?? const [])
+          .whereType<Map>()
+          .map((row) => Map<String, dynamic>.from(row))
+          .toList();
+
+  List<Map<String, dynamic>> _rows() {
+    final capacityData = widget.data['capacity'];
+    final capacityRows = capacityData is Map
+        ? (capacityData['rows'] as List<dynamic>? ?? const [])
+        : const <dynamic>[];
+    final capacityByStation = <String, Map<String, dynamic>>{
+      for (final raw in capacityRows.whereType<Map>())
+        '${raw['stationCode'] ?? ''}'.toUpperCase():
+            Map<String, dynamic>.from(raw)
+    };
+    final groups = <String, Map<String, dynamic>>{};
+    for (final row in _sourceRows) {
+      final adStatus = '${row['adStatus'] ?? 'not_active'}'.toLowerCase();
+      final station = '${row['station'] ?? 'Unmapped'}';
+      final designation = '${row['designation'] ?? 'Unmapped'}';
+      if (_adStatuses.isNotEmpty && !_adStatuses.contains(adStatus)) continue;
+      if (_stations.isNotEmpty && !_stations.contains(station)) continue;
+      if (_designations.isNotEmpty &&
+          !_designations.contains(designation)) continue;
+      final key = '${station.toUpperCase()}|${designation.toUpperCase()}';
+      final group = groups.putIfAbsent(
+          key,
+          () => {
+                'station': station,
+                'stationName': row['stationName'] ?? station,
+                'designation': designation,
+                'designationName': row['designationName'] ?? designation,
+                'adCount': 0,
+                'adIds': <String>[],
+                'totalLeads': 0,
+                'pending': 0,
+                'noStatus': 0,
+                'noResponse': 0,
+                'callBack': 0,
+                'interviews': 0,
+                'stale24h': 0,
+                'capacity': capacityByStation[station.toUpperCase()]
+              });
+      group['adCount'] = _number(group['adCount']) + 1;
+      final adId = '${row['adId'] ?? ''}'.trim();
+      if (adId.isNotEmpty) (group['adIds'] as List<String>).add(adId);
+      for (final field in [
+        'totalLeads',
+        'pending',
+        'noStatus',
+        'noResponse',
+        'callBack',
+        'interviews',
+        'stale24h'
+      ]) {
+        group[field] = _number(group[field]) + _number(row[field]);
+      }
+    }
+    final rows = groups.values.toList();
+    rows.sort((left, right) {
+      final untreated = _number(right['noStatus']) - _number(left['noStatus']);
+      if (untreated != 0) return untreated;
+      final pending = _number(right['pending']) - _number(left['pending']);
+      if (pending != 0) return pending;
+      return '${left['station']}'.compareTo('${right['station']}');
+    });
+    return rows;
+  }
+
+  Future<void> _openFilters() async {
+    final stations = _sourceRows
+        .map((row) => '${row['station'] ?? 'Unmapped'}')
+        .toSet()
+        .toList()
+      ..sort();
+    final designations = _sourceRows
+        .map((row) => '${row['designation'] ?? 'Unmapped'}')
+        .toSet()
+        .toList()
+      ..sort();
+    final statuses = <String>{
+      'active',
+      ..._sourceRows.map((row) => '${row['adStatus'] ?? 'not_active'}'.toLowerCase())
+    }.toList();
+    final selectedStations = {..._stations};
+    final selectedDesignations = {..._designations};
+    final selectedStatuses = {..._adStatuses};
+    final result = await showModalBottomSheet<List<Set<String>>>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (context) => StatefulBuilder(builder: (context, setSheetState) {
+        Widget filters(String title, List<String> values,
+                Set<String> selected) =>
+            Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Padding(
+                padding: const EdgeInsets.only(top: 13, bottom: 7),
+                child: Text(title,
+                    style: const TextStyle(
+                        fontSize: 12, fontWeight: FontWeight.w900)),
+              ),
+              Wrap(
+                spacing: 6,
+                runSpacing: 4,
+                children: values
+                    .map((value) => FilterChip(
+                          label: Text(title == 'Ad status' ? _label(value) : value),
+                          selected: selected.contains(value),
+                          onSelected: (_) => setSheetState(() =>
+                              selected.contains(value)
+                                  ? selected.remove(value)
+                                  : selected.add(value)),
+                        ))
+                    .toList(),
+              )
+            ]);
+        return DraggableScrollableSheet(
+          expand: false,
+          initialChildSize: .82,
+          maxChildSize: .94,
+          builder: (context, controller) => ListView(
+            controller: controller,
+            padding: const EdgeInsets.fromLTRB(18, 14, 18, 24),
+            children: [
+              Row(children: [
+                const Expanded(
+                    child: Text('Command Center filters',
+                        style: TextStyle(
+                            fontSize: 18, fontWeight: FontWeight.w900))),
+                TextButton(
+                    onPressed: () => setSheetState(() {
+                          selectedStations.clear();
+                          selectedDesignations.clear();
+                          selectedStatuses
+                            ..clear()
+                            ..add('active');
+                        }),
+                    child: const Text('Reset'))
+              ]),
+              const Text('Multi-select station, designation and ad status.',
+                  style: TextStyle(color: Color(0xff667085), fontSize: 10)),
+              filters('Stations', stations, selectedStations),
+              filters('Designations', designations, selectedDesignations),
+              filters('Ad status', statuses, selectedStatuses),
+              const SizedBox(height: 18),
+              FilledButton(
+                onPressed: () => Navigator.pop(context, [
+                  selectedStations,
+                  selectedDesignations,
+                  selectedStatuses
+                ]),
+                child: const Text('Apply filters'),
+              )
+            ],
+          ),
+        );
+      }),
+    );
+    if (result == null || !mounted) return;
+    setState(() {
+      _stations = result[0];
+      _designations = result[1];
+      _adStatuses = result[2];
+    });
+  }
+
+  void _openQueue(List<Map<String, dynamic>> rows,
+      {required String title, String? status, bool stale24 = false}) {
+    final adIds = rows
+        .expand((row) => (row['adIds'] as List<String>? ?? const <String>[]))
+        .toSet()
+        .toList();
+    final stations = rows.map((row) => '${row['station']}').toSet().toList();
+    final designations =
+        rows.map((row) => '${row['designation']}').toSet().toList();
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => _LeadListPage(
+          token: widget.token,
+          stream: 'workforce',
+          title: title,
+          status: status,
+          stale24: stale24,
+          adIds: adIds,
+          initialStations: rows.length == 1 ? stations : const [],
+          initialRoles: rows.length == 1 ? designations : const [],
+        ),
       ),
     );
   }
+
+  @override
+  Widget build(BuildContext context) {
+    final rows = _rows();
+    final highestNoStatus = rows.isEmpty ? 0 : _number(rows.first['noStatus']);
+    final summary = <String, int>{
+      for (final field in [
+        'totalLeads',
+        'noStatus',
+        'noResponse',
+        'callBack',
+        'interviews',
+        'stale24h'
+      ])
+        field: rows.fold(0, (total, row) => total + _number(row[field]))
+    };
+    final allAdIds = rows
+        .expand((row) => (row['adIds'] as List<String>? ?? const []))
+        .toSet();
+    final filterCount =
+        _stations.length + _designations.length + _adStatuses.length;
+    final capacity = widget.data['capacity'] as Map<String, dynamic>?;
+    const summaryItems = [
+      ('totalLeads', 'Total'),
+      ('noStatus', 'No status'),
+      ('noResponse', 'No response'),
+      ('callBack', 'Call back'),
+      ('interviews', 'Interviews'),
+      ('stale24h', '24h+')
+    ];
+    final content = <Widget>[
+          GridView.count(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            crossAxisCount: 3,
+            mainAxisSpacing: 6,
+            crossAxisSpacing: 6,
+            childAspectRatio: 1.48,
+            children: summaryItems.map((item) {
+              final key = item.$1;
+              final status = key == 'noStatus'
+                  ? '__BLANK__'
+                  : key == 'noResponse'
+                      ? 'no_response'
+                      : key == 'callBack'
+                          ? 'call_back'
+                          : key == 'interviews'
+                              ? 'interview_scheduled,interview_rescheduled'
+                              : null;
+              final color = key == 'noStatus' || key == 'stale24h'
+                  ? const Color(0xffb42318)
+                  : key == 'interviews'
+                      ? dropxGreen
+                      : dropxInk;
+              return Material(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(12),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(12),
+                  onTap: allAdIds.isEmpty
+                      ? null
+                      : () => _openQueue(rows,
+                          title: item.$2,
+                          status: status,
+                          stale24: key == 'stale24h'),
+                  child: Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                        border: Border.all(color: dropxBorder),
+                        borderRadius: BorderRadius.circular(12)),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(item.$2,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                                color: Color(0xff667085), fontSize: 9)),
+                        const Spacer(),
+                        Text('${summary[key] ?? 0}',
+                            style: TextStyle(
+                                color: color,
+                                fontSize: 20,
+                                fontWeight: FontWeight.w900)),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            }).toList(),
+          ),
+          const SizedBox(height: 9),
+          Container(
+            padding: const EdgeInsets.all(13),
+            decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                    colors: [dropxInk, Color(0xff3d2d50), dropxPink]),
+                borderRadius: BorderRadius.circular(15)),
+            child: Row(children: [
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('ACT FIRST',
+                        style: TextStyle(
+                            color: Color(0xffffc5d7),
+                            fontSize: 8,
+                            fontWeight: FontWeight.w900)),
+                    SizedBox(height: 3),
+                    Text('Station × designation pendency',
+                        style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 15,
+                            fontWeight: FontWeight.w900)),
+                    Text('Highest untreated active-ad work first',
+                        style: TextStyle(
+                            color: Color(0xffe2dce6), fontSize: 9)),
+                  ],
+                ),
+              ),
+              Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                Text('${capacity?['totalGap'] ?? 0} net hires',
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w900)),
+                Text('${rows.length} groups',
+                    style: const TextStyle(
+                        color: Color(0xffe2dce6), fontSize: 8))
+              ])
+            ]),
+          ),
+          const SizedBox(height: 7),
+          Row(children: [
+            Expanded(
+              child: Text(
+                  _adStatuses.length == 1 && _adStatuses.contains('active')
+                      ? 'Active ads only'
+                      : '${_adStatuses.isEmpty ? 'All' : _adStatuses.length} ad status selected',
+                  style: const TextStyle(
+                      color: Color(0xff067647),
+                      fontSize: 10,
+                      fontWeight: FontWeight.w800)),
+            ),
+            OutlinedButton.icon(
+              onPressed: _openFilters,
+              icon: const Icon(Icons.tune, size: 16),
+              label: Text('Filters ($filterCount)'),
+            )
+          ]),
+          if (rows.isEmpty)
+            const Card(
+              child: Padding(
+                padding: EdgeInsets.all(18),
+                child: Text('No station-designation groups match these filters.'),
+              ),
+            ),
+          ...rows.take(widget.maxRows).map((row) {
+            final noStatus = _number(row['noStatus']);
+            final criticalFloor =
+                (highestNoStatus * .5).ceil().clamp(10, 1 << 30);
+            final critical = noStatus >= criticalFloor;
+            final capacityRow = row['capacity'] as Map<String, dynamic>?;
+            return Card(
+              margin: const EdgeInsets.only(bottom: 7),
+              clipBehavior: Clip.antiAlias,
+              child: Padding(
+                padding: const EdgeInsets.all(11),
+                child: Column(children: [
+                  Row(children: [
+                    Container(
+                      width: 54,
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                          color: dropxInk,
+                          borderRadius: BorderRadius.circular(9)),
+                      child: Text('${row['station']}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w900)),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('${row['designation']} · ${row['designationName']}',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                  fontSize: 11, fontWeight: FontWeight.w900)),
+                          Text('${row['adCount']} selected ads · ${row['totalLeads']} leads',
+                              style: const TextStyle(
+                                  color: Color(0xff667085), fontSize: 8))
+                        ],
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: () => _openQueue([row],
+                          title: '${row['station']} pending leads',
+                          status: '__BLANK__,no_response,call_back'),
+                      child: const Text('Open →'),
+                    )
+                  ]),
+                  const SizedBox(height: 7),
+                  Row(children: [
+                    _MobileCommandFact(
+                        label: 'No status',
+                        value: noStatus,
+                        color: const Color(0xffb42318),
+                        critical: critical,
+                        onTap: () => _openQueue([row],
+                            title: '${row['station']} no status',
+                            status: '__BLANK__')),
+                    _MobileCommandFact(
+                        label: 'No resp.',
+                        value: _number(row['noResponse']),
+                        onTap: () => _openQueue([row],
+                            title: '${row['station']} no response',
+                            status: 'no_response')),
+                    _MobileCommandFact(
+                        label: 'Callback',
+                        value: _number(row['callBack']),
+                        onTap: () => _openQueue([row],
+                            title: '${row['station']} call back',
+                            status: 'call_back')),
+                    _MobileCommandFact(
+                        label: 'Interview',
+                        value: _number(row['interviews']),
+                        color: dropxGreen,
+                        onTap: () => _openQueue([row],
+                            title: '${row['station']} interviews',
+                            status:
+                                'interview_scheduled,interview_rescheduled')),
+                    _MobileCommandFact(
+                        label: '24h+',
+                        value: _number(row['stale24h']),
+                        color: const Color(0xffb42318),
+                        onTap: () => _openQueue([row],
+                            title: '${row['station']} 24h pending',
+                            stale24: true)),
+                  ]),
+                  const SizedBox(height: 7),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 9, vertical: 7),
+                    decoration: BoxDecoration(
+                        color: const Color(0xfff7f8fa),
+                        borderRadius: BorderRadius.circular(8)),
+                    child: capacityRow == null
+                        ? const Align(
+                            alignment: Alignment.centerLeft,
+                            child: Text('Ops capacity not configured',
+                                style: TextStyle(
+                                    color: Color(0xff667085), fontSize: 8)))
+                        : Row(children: [
+                            _MobileCapacityFact(
+                                'Gap', _number(capacityRow['capacityGap'])),
+                            _MobileCapacityFact('Training',
+                                _number(capacityRow['trainingHeadcount'])),
+                            _MobileCapacityFact('Net hire',
+                                _number(capacityRow['netHiringNeed']),
+                                alert: _number(
+                                        capacityRow['netHiringNeed']) >
+                                    0),
+                            Expanded(
+                              child: Text(
+                                  'HC ${capacityRow['currentHeadcount'] ?? 0}/${capacityRow['requiredHeadcount'] ?? 0}',
+                                  textAlign: TextAlign.right,
+                                  style: const TextStyle(
+                                      color: Color(0xff667085), fontSize: 8)),
+                            )
+                          ]),
+                  )
+                ]),
+              ),
+            );
+          }),
+          if (widget.onOpenAll != null && rows.length > widget.maxRows)
+            Padding(
+              padding: const EdgeInsets.only(top: 3),
+              child: OutlinedButton(
+                  onPressed: widget.onOpenAll,
+                  child: Text('Open all ${rows.length} groups')),
+            )
+        ];
+    if (widget.embedded) {
+      return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch, children: content);
+    }
+    return RefreshIndicator(
+      onRefresh: widget.onRefresh,
+      child: ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
+        children: content,
+      ),
+    );
+  }
+}
+
+class _MobileCommandFact extends StatelessWidget {
+  const _MobileCommandFact(
+      {required this.label,
+      required this.value,
+      required this.onTap,
+      this.color = dropxInk,
+      this.critical = false});
+  final String label;
+  final int value;
+  final VoidCallback onTap;
+  final Color color;
+  final bool critical;
+
+  @override
+  Widget build(BuildContext context) => Expanded(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 2),
+          child: Material(
+            color: critical ? const Color(0xffffe9e7) : const Color(0xfff7f8fa),
+            borderRadius: BorderRadius.circular(7),
+            child: InkWell(
+              onTap: onTap,
+              borderRadius: BorderRadius.circular(7),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 7),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            color: Color(0xff667085), fontSize: 7)),
+                    const SizedBox(height: 2),
+                    Text('$value',
+                        style: TextStyle(
+                            color: color,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w900))
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+}
+
+class _MobileCapacityFact extends StatelessWidget {
+  const _MobileCapacityFact(this.label, this.value, {this.alert = false});
+  final String label;
+  final int value;
+  final bool alert;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.only(right: 13),
+        child: RichText(
+          text: TextSpan(
+            style: const TextStyle(color: Color(0xff667085), fontSize: 8),
+            children: [
+              TextSpan(text: '$label '),
+              TextSpan(
+                  text: '$value',
+                  style: TextStyle(
+                      color: alert ? const Color(0xffb42318) : dropxInk,
+                      fontWeight: FontWeight.w900))
+            ],
+          ),
+        ),
+      );
 }
 
 class _FieldExecutiveOnboardingPage extends StatefulWidget {
@@ -6278,6 +6632,9 @@ class _LeadListPage extends StatefulWidget {
       required this.stream,
       required this.title,
       this.status,
+      this.adIds = const [],
+      this.initialStations = const [],
+      this.initialRoles = const [],
       this.archive = 'active',
       this.unmapped = false,
       this.stale24 = false});
@@ -6285,6 +6642,9 @@ class _LeadListPage extends StatefulWidget {
   final String stream;
   final String title;
   final String? status;
+  final List<String> adIds;
+  final List<String> initialStations;
+  final List<String> initialRoles;
   final String archive;
   final bool unmapped;
   final bool stale24;
@@ -6297,9 +6657,9 @@ class _LeadListPageState extends State<_LeadListPage> {
   final _api = RecruitmentApi(baseUrl: apiBaseUrl);
   final _search = TextEditingController();
   int _page = 1;
-  List<String> _stations = [];
+  late List<String> _stations = [...widget.initialStations];
   List<String> _clusters = [];
-  List<String> _roles = [];
+  late List<String> _roles = [...widget.initialRoles];
   late List<String> _statuses =
       widget.status?.split(',').where((value) => value.isNotEmpty).toList() ??
           <String>[];
@@ -6381,6 +6741,7 @@ class _LeadListPageState extends State<_LeadListPage> {
           stations: _stations,
           clusters: _clusters,
           roles: _roles,
+          adIds: widget.adIds,
           archive: widget.archive,
           unmapped: widget.unmapped,
           stale24: widget.stale24,
@@ -6556,7 +6917,9 @@ class _LeadListPageState extends State<_LeadListPage> {
                   padding: const EdgeInsets.symmetric(horizontal: 16),
                   child: Row(children: [
                     Expanded(
-                        child: Text('$total unique leads',
+                        child: Text(widget.adIds.isNotEmpty
+                            ? '$total unique leads · Dashboard ad selection'
+                            : '$total unique leads',
                             style:
                                 const TextStyle(fontWeight: FontWeight.w700))),
                     Text(widget.stream == 'hr' ? 'HR' : 'WORKFORCE',
