@@ -3,6 +3,10 @@ import { assertMetaTargeting } from "./meta-targeting";
 import { metaDeliveryStatus, type MetaDeliverySnapshot } from "./meta-ad-delivery";
 import { getConnectionConfig } from "./connection-config";
 import { withMetaObjectEditGate } from "./meta-graph-throttle";
+import {
+  META_AUDIENCE_RADIUS_MAX_KM,
+  META_AUDIENCE_RADIUS_MIN_KM
+} from "./meta-audience-radius";
 
 export type MetaAdBuilderCatalog = {
   connected: boolean;
@@ -42,10 +46,6 @@ export type MetaAdDraft = {
   callToAction: "APPLY_NOW" | "SIGN_UP" | "LEARN_MORE";
   audience: MetaLocationAudience;
 };
-
-export const META_AUDIENCE_RADIUS_MIN_KM = 15;
-export const META_AUDIENCE_RADIUS_MAX_KM = 18;
-export const META_AUDIENCE_RADIUS_DEFAULT_KM = 15;
 
 export type MetaLocationAudience = {
   locationId: string;

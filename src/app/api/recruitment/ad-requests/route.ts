@@ -13,6 +13,7 @@ import {
 } from "@/lib/meta-ad-builder";
 import { resolveRecruitmentAdAudience } from "@/lib/recruitment-ad-audience";
 import { requireMetaFormForDesignation } from "@/lib/meta-form-matching";
+import { metaAudienceAdSetName } from "@/lib/meta-audience-radius";
 import {
   allowedAdRequestLifecycleActions,
   nextAdRequestStatus,
@@ -644,7 +645,7 @@ export async function PATCH(request: Request) {
             dailyBudget: approvedBudget,
             daysRequired: approvedDays,
             adName: String(sourceDraft.adName || `${code}_${dateCode}`).trim(),
-            adSetName: String(sourceDraft.adSetName || `${code}_Local_${audience.radiusKm}KM`).trim(),
+            adSetName: String(sourceDraft.adSetName || metaAudienceAdSetName(code, audience.radiusKm)).trim(),
             creativeName: String(sourceDraft.creativeName || `${code}_Creative_${dateCode}`).trim(),
             primaryText: String(sourceDraft.primaryText || "").trim(),
             headline: String(sourceDraft.headline || "").trim(),

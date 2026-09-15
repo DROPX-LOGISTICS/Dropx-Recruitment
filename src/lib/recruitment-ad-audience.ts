@@ -1,8 +1,5 @@
-import {
-  META_AUDIENCE_RADIUS_DEFAULT_KM,
-  validateMetaLocationAudience,
-  type MetaLocationAudience
-} from "./meta-ad-builder";
+import { validateMetaLocationAudience, type MetaLocationAudience } from "./meta-ad-builder";
+import { META_AUDIENCE_RADIUS_DEFAULT_KM } from "./meta-audience-radius";
 import { supabaseAdmin } from "./supabase-admin";
 
 export async function resolveRecruitmentAdAudience(input: {

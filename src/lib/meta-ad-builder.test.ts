@@ -88,23 +88,41 @@ describe("Meta recruitment ad builder", () => {
     expect(encoded.getAll("is_adset_budget_sharing_enabled")).toEqual(["false"]);
   });
 
-  it("accepts the maximum editable station radius", () => {
+  it("accepts preset and custom multi-district radii", () => {
     const result = validateMetaAdDraft({
       ...validDraft,
-      audience: { ...validDraft.audience, radiusKm: 18 }
+      audience: { ...validDraft.audience, radiusKm: 80 }
     });
-    expect(result.audience.radiusKm).toBe(18);
+    expect(result.audience.radiusKm).toBe(80);
+    expect(validateMetaAdDraft({
+      ...validDraft,
+      audience: { ...validDraft.audience, radiusKm: 47 }
+    }).audience.radiusKm).toBe(47);
+    const targeting = buildEmploymentAdSetValues({
+      name: "Wide coverage",
+      campaignId: "123",
+      dailyBudget: 500,
+      pageId: "456",
+      daysRequired: 7,
+      audience: { ...validDraft.audience, radiusKm: 80 },
+      now: new Date("2026-08-01T00:00:00.000Z")
+    });
+    expect(JSON.parse(targeting.targeting).geo_locations.custom_locations[0].radius).toBe(80);
   });
 
-  it("rejects audiences below 15 km or above 18 km", () => {
+  it("rejects audiences below 15 km, above 80 km or with decimal radii", () => {
     expect(() => validateMetaAdDraft({
       ...validDraft,
       audience: { ...validDraft.audience, radiusKm: 14 }
-    })).toThrow("between 15 and 18 km");
+    })).toThrow("between 15 and 80 km");
     expect(() => validateMetaAdDraft({
       ...validDraft,
-      audience: { ...validDraft.audience, radiusKm: 19 }
-    })).toThrow("between 15 and 18 km");
+      audience: { ...validDraft.audience, radiusKm: 81 }
+    })).toThrow("between 15 and 80 km");
+    expect(() => validateMetaAdDraft({
+      ...validDraft,
+      audience: { ...validDraft.audience, radiusKm: 47.5 }
+    })).toThrow("between 15 and 80 km");
   });
 
   it("rejects missing or invalid station-contact coordinates", () => {
