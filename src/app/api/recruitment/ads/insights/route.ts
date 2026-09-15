@@ -13,6 +13,18 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
+// This endpoint is polled every 5 minutes by every open Active Ads / Performance Center tab
+// (RecruitmentApp.tsx's reload timer), and each call re-reads recruitment_ads, recruitment_leads,
+// recruitment_ad_creative_changes, recruitment_ad_requests and recruitment_ad_guard_events in
+// full (scoped by company/ad ids, but unbounded within that scope) -- expensive to repeat for
+// every simultaneously-open tab within the same short window. A short TTL cache (matching
+// fetchRecentMetaInsights' own 120s cache in meta-ad-insights.ts, an existing pattern in this
+// codebase) means N tabs opened within the same ~2 minutes share one computed result instead of
+// each re-running every query and the per-ad health/guard computation from scratch. Never staler
+// than what the client would see between its own 5-minute polls anyway.
+const responseCache = new Map<string, { expires: number; body: Promise<any> }>();
+const CACHE_TTL_MS = 120_000;
+
 function adWithinScope(session: NonNullable<Awaited<ReturnType<typeof recruitmentSession>>>, ad: any, stream: string | null) {
   const role = Array.isArray(ad.recruitment_roles) ? ad.recruitment_roles[0] : ad.recruitment_roles;
   const adStream = String(role?.stream || "");
@@ -40,26 +52,52 @@ export async function GET(request: Request) {
     }
     const companyId=requiredEnv("RECRUITMENT_COMPANY_ID");
     const admin = supabaseAdmin;
-    const allAds = await recruitmentQueryPages((from,to) => admin.from("recruitment_ads")
-      .select("id,meta_ad_id,raw_payload,status,daily_budget,created_on,last_synced_at,location_id,role_id,recruitment_roles(stream)")
-      .eq("company_id",companyId).not("meta_ad_id","is",null).order("id").range(from,to));
+    // Fetched for the WHOLE company (not scoped to this request's visible ads) so the result is
+    // safe to cache and share across every user/session/stream hitting this endpoint -- unlike
+    // the final JSON response, none of this raw data is itself permission-filtered, and the
+    // per-ad lookups below (leads.filter/changes.filter/etc.) work identically whether these
+    // arrays hold every company ad's data or only one session's visible subset. This is what
+    // collapses N users' open tabs onto one shared set of DB reads within the cache TTL instead
+    // of each tab re-scanning recruitment_ads/leads/ad_creative_changes/ad_requests/
+    // ad_guard_events from scratch every 5 minutes.
+    const cacheKey = companyId;
+    const cached = responseCache.get(cacheKey);
+    const fetchAll = async () => {
+      const allAds = await recruitmentQueryPages((from,to) => admin.from("recruitment_ads")
+        .select("id,meta_ad_id,raw_payload,status,daily_budget,created_on,last_synced_at,location_id,role_id,recruitment_roles(stream)")
+        .eq("company_id",companyId).not("meta_ad_id","is",null).order("id").range(from,to));
+      const ids = allAds.map(ad => ad.id);
+      const since = new Date(Date.now()-30*86400000).toISOString();
+      const [leads, policiesResult, changes, requests, events, meta] = await Promise.all([
+        ids.length ? recruitmentQueryPages((from,to) => admin.from("recruitment_leads").select("id,ad_id,total_attempts,lead_created_at,created_at")
+          .eq("company_id",companyId).in("ad_id",ids).eq("archived",false).order("id").range(from,to)) : [],
+        admin.from("recruitment_ad_guard_policies").select("*").eq("company_id",companyId).eq("enabled",true),
+        ids.length ? recruitmentQueryPages((from,to) => admin.from("recruitment_ad_creative_changes").select("id,ad_id,status,created_at,completed_at")
+          .eq("company_id",companyId).in("ad_id",ids).gte("created_at",since).order("id").range(from,to)) : [],
+        ids.length ? recruitmentQueryPages((from,to) => admin.from("recruitment_ad_requests").select("id,ad_id,request_type,status,updated_at")
+          .eq("company_id",companyId).in("ad_id",ids).gte("updated_at",since).order("id").range(from,to)) : [],
+        ids.length ? recruitmentQueryPages((from,to) => admin.from("recruitment_ad_guard_events").select("id,ad_id,recommendation_code,evidence,reviewed_at,created_at,action_taken")
+          .eq("company_id",companyId).in("ad_id",ids).eq("action_taken","monitor_48h").gte("created_at",since).order("id").range(from,to)) : [],
+        fetchRecentMetaInsights()
+      ]);
+      if (policiesResult.error) throw policiesResult.error;
+      return { allAds, leads, policies: policiesResult.data || [], changes, requests, events, meta };
+    };
+    let all: Awaited<ReturnType<typeof fetchAll>>;
+    if (cached && cached.expires > Date.now()) {
+      all = await cached.body;
+    } else {
+      const body = fetchAll();
+      // Evict on failure so one bad fetch doesn't keep every request in this window failing
+      // for the rest of the TTL -- the next request gets a clean retry instead.
+      body.catch(() => { if (responseCache.get(cacheKey)?.body === body) responseCache.delete(cacheKey); });
+      responseCache.set(cacheKey, { expires: Date.now() + CACHE_TTL_MS, body });
+      for (const [k, value] of responseCache) if (value.expires <= Date.now()) responseCache.delete(k);
+      all = await body;
+    }
+    const { allAds, leads, policies, changes, requests, events, meta } = all;
     const visibleAds = allAds.map(ad => storedAdDelivery(ad)).filter(ad => adWithinScope(session,ad,stream));
-    const ids = visibleAds.map(ad => ad.id);
-    const since = new Date(Date.now()-30*86400000).toISOString();
-    const [leads, policiesResult, changes, requests, events, meta] = await Promise.all([
-      ids.length ? recruitmentQueryPages((from,to) => admin.from("recruitment_leads").select("id,ad_id,total_attempts,lead_created_at,created_at")
-        .eq("company_id",companyId).in("ad_id",ids).eq("archived",false).order("id").range(from,to)) : [],
-      admin.from("recruitment_ad_guard_policies").select("*").eq("company_id",companyId).eq("enabled",true),
-      ids.length ? recruitmentQueryPages((from,to) => admin.from("recruitment_ad_creative_changes").select("id,ad_id,status,created_at,completed_at")
-        .eq("company_id",companyId).in("ad_id",ids).gte("created_at",since).order("id").range(from,to)) : [],
-      ids.length ? recruitmentQueryPages((from,to) => admin.from("recruitment_ad_requests").select("id,ad_id,request_type,status,updated_at")
-        .eq("company_id",companyId).in("ad_id",ids).gte("updated_at",since).order("id").range(from,to)) : [],
-      ids.length ? recruitmentQueryPages((from,to) => admin.from("recruitment_ad_guard_events").select("id,ad_id,recommendation_code,evidence,reviewed_at,created_at,action_taken")
-        .eq("company_id",companyId).in("ad_id",ids).eq("action_taken","monitor_48h").gte("created_at",since).order("id").range(from,to)) : [],
-      fetchRecentMetaInsights()
-    ]);
-    if (policiesResult.error) throw policiesResult.error;
-    const policies = policiesResult.data || [], now = Date.now();
+    const now = Date.now();
     const insights: Record<string,any> = {}, recommendations: Record<string,any> = {}, health: Record<string,any> = {};
     for (const ad of visibleAds) {
       const metaId = String(ad.meta_ad_id), dailyRows = meta.rows.filter(row => row.ad_id === metaId);

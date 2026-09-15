@@ -1,6 +1,6 @@
 import { storedAdDelivery } from "@/lib/meta-ad-delivery";
 import { NextResponse } from "next/server";
-import { applyLeadScope, canAccessLead, canUseRecruitmentMenu, recruitmentSession, requiredEnv } from "@/lib/recruitment-api";
+import { applyLeadScope, canAccessLead, canUseRecruitmentMenu, hasFullLeadAccess, recruitmentSession, requiredEnv } from "@/lib/recruitment-api";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { currentRequisitionStatuses, remainingRequisitionOpenings } from "@/lib/hr-recruitment-overview";
 import { loadMainDashboardStations } from "@/lib/main-dashboard-masters";
@@ -9,6 +9,19 @@ import { loadAllSupabaseRows } from "@/lib/supabase-pagination";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 60;
+
+// Non-summary mode pages through every non-archived lead and every ad in scope (a company with
+// ~20k leads needs ~20 sequential pages -- see the comment further down) and re-derives every
+// metric/queue/station rollup in Node on each request. That's unavoidable without a much larger
+// SQL-aggregation rewrite, but this dashboard is loaded on essentially every app open and every
+// filter change, often by several people looking at the same station/cluster/role scope within
+// minutes of each other -- and none of these numbers need to be more current than a couple of
+// minutes old. A short TTL cache, keyed by the exact scope (company/stream/session's own
+// location+role scope/station+cluster+role filters), means those repeated identical loads share
+// one computed result instead of each re-scanning the same rows. Summary mode already does its
+// own count-based query per request and is comparatively cheap, so it's left uncached here.
+const dashboardCache = new Map<string, { expires: number; body: Promise<Record<string, unknown>> }>();
+const DASHBOARD_CACHE_TTL_MS = 120_000;
 
 type DashboardLead = {
   id: string;
@@ -181,37 +194,63 @@ export async function GET(request: Request) {
           generatedAt: new Date().toISOString()
         });
       }
-      const metricQuery = () => {
-        let query: any = supabaseAdmin!.from("recruitment_leads")
-          .select("id", { count: "exact", head: true })
-          .eq("company_id", companyId)
-          .eq("archived", false);
-        query = applyLeadScope(query, session, stream);
-        if (locationIds) query = query.in("location_id", locationIds);
-        if (roleIds) query = query.in("role_id", roleIds);
-        return query;
-      };
-      const countOf = async (query: any) => {
-        const result = await query;
-        if (result.error) throw new Error(result.error.message);
-        return result.count ?? 0;
-      };
+      // Mirrors applyLeadScope()'s own logic exactly (see recruitment-api.ts) rather than
+      // re-deriving any permission decision in SQL: hasFullLeadAccess() bypasses the session's
+      // own location/role scope entirely (both params stay null = "no restriction"); otherwise
+      // session.allLocations opts out of the location restriction the same way, and an empty
+      // session.roleIds means "no role restriction" (not "matches nothing" -- only an explicit
+      // station/cluster/role *filter* resolving to zero ids means that, via hasEmptyFilter,
+      // already handled above). The RPC (recruitment_dashboard_summary_counts) applies no
+      // access control of its own; it only ever receives the scope this route already decided.
+      const fullAccess = hasFullLeadAccess(session);
+      const scopeLocationIds = fullAccess || session.allLocations ? null : session.locationIds;
+      const scopeRoleIds = fullAccess || !session.roleIds.length ? null : session.roleIds;
       const staleBefore = new Date(Date.now() - 24 * 60 * 60_000).toISOString();
-      const [total, noStatus, noResponse, callBack, interviews, joined, pending24h, unmapped] = await Promise.all([
-        countOf(metricQuery()),
-        countOf(metricQuery().in("status", ["", "new"])),
-        countOf(metricQuery().eq("status", "no_response")),
-        countOf(metricQuery().eq("status", "call_back")),
-        countOf(metricQuery().like("status", "interview_%")),
-        countOf(metricQuery().or("status.eq.joined,final_status.eq.joined")),
-        countOf(metricQuery().in("status", ["", "new", "no_response", "call_back"]).lt("lead_created_at", staleBefore)),
-        countOf(metricQuery().or("location_id.is.null,role_id.is.null"))
-      ]);
+      const summary = await supabaseAdmin!.rpc("recruitment_dashboard_summary_counts", {
+        p_company_id: companyId,
+        p_stream: stream === "workforce" || stream === "hr" ? stream : null,
+        p_scope_location_ids: scopeLocationIds,
+        p_scope_role_ids: scopeRoleIds,
+        p_filter_location_ids: locationIds,
+        p_filter_role_ids: roleIds,
+        p_stale_before: staleBefore
+      }).single();
+      if (summary.error) throw new Error(summary.error.message);
+      const row = summary.data as {
+        total: number; no_status: number; no_response: number; call_back: number;
+        interviews: number; joined: number; pending_24h: number; unmapped: number;
+      };
       return NextResponse.json({
-        metrics: { total, noStatus, noResponse, callBack, interviews, joined, pending24h, unmapped },
+        metrics: {
+          total: Number(row.total), noStatus: Number(row.no_status), noResponse: Number(row.no_response),
+          callBack: Number(row.call_back), interviews: Number(row.interviews), joined: Number(row.joined),
+          pending24h: Number(row.pending_24h), unmapped: Number(row.unmapped)
+        },
         generatedAt: new Date().toISOString()
       });
     }
+    // Cache key covers every input that changes the query or the result: the resolved
+    // location/role filters (not just the raw station/cluster/role query params, since those
+    // resolve through mainStations/ownerByStationCode which could themselves change) and the
+    // requesting session's own effective lead scope (owner/all-locations bypass everything;
+    // otherwise the specific location/role ids that scope their view) -- two users with
+    // different scopes must never share a cached result. Sorting the id arrays before joining
+    // means the same *set* of ids always produces the same key regardless of what order
+    // Supabase happened to return them in.
+    const scopeKey = JSON.stringify({
+      companyId, stream,
+      locationIds: locationIds ? [...locationIds].sort() : null,
+      roleIds: roleIds ? [...roleIds].sort() : null,
+      sessionOwner: session.isOwner,
+      sessionAllLocations: session.allLocations,
+      sessionLocationIds: [...session.locationIds].sort(),
+      sessionRoleIds: [...session.roleIds].sort()
+    });
+    const cachedDashboard = dashboardCache.get(scopeKey);
+    if (cachedDashboard && cachedDashboard.expires > Date.now()) {
+      return NextResponse.json(await cachedDashboard.body);
+    }
+    const dashboardBody = (async (): Promise<Record<string, unknown>> => {
     const dashboardQuery = () => {
       let query: any = supabaseAdmin!.from("recruitment_leads")
         .select("id,full_name,phone,status,final_status,lead_created_at,updated_at,callback_at,follow_up_at,location_id,role_id,ad_id,assigned_profile_id,recruitment_locations(code,name,poc_name,poc_mobile),recruitment_roles(code,name,stream)")
@@ -481,7 +520,7 @@ export async function GET(request: Request) {
         attentionScore: station.stale + station.retryDue * 3 + station.callbackDue * 4 + station.interviewsToday * 2
       };
     }).sort((a, b) => b.attentionScore - a.attentionScore || b.total - a.total);
-    return NextResponse.json({
+    return {
       metrics,
       queues,
       statusBreakdown: ranked(byStatus, 50),
@@ -507,7 +546,14 @@ export async function GET(request: Request) {
       },
       filters: { stream: stream ?? "", stations: stationCodes, clusters, roles: roleCodes },
       generatedAt: new Date().toISOString()
-    });
+    };
+    })();
+    // Evict on failure so one bad fetch doesn't keep every request for this scope failing for
+    // the rest of the TTL -- the next request gets a clean retry instead.
+    dashboardBody.catch(() => { if (dashboardCache.get(scopeKey)?.body === dashboardBody) dashboardCache.delete(scopeKey); });
+    dashboardCache.set(scopeKey, { expires: Date.now() + DASHBOARD_CACHE_TTL_MS, body: dashboardBody });
+    for (const [k, value] of dashboardCache) if (value.expires <= Date.now()) dashboardCache.delete(k);
+    return NextResponse.json(await dashboardBody);
   } catch (error) {
     console.error("Recruitment dashboard failed", error);
     return NextResponse.json({ error: "Unable to load dashboard." }, { status: 500 });
