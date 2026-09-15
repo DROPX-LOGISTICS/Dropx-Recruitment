@@ -11,6 +11,19 @@ import { WORKFORCE_ACTIVE_INTERVIEW_STATUS_QUERY } from "@/lib/workforce-intervi
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
+// facets=true pages through every lead matching the current scope (up to loadAllSupabaseRows's
+// ceiling) just to compute facet counts in Node via buildLeadFacets -- already documented above
+// (see the comment at its call site) as having caused connection-pool exhaustion in production
+// on a large queue. The leads list itself is requested on essentially every queue view and
+// filter change, often by several people looking at the same queue/filters within a short
+// window, and facet counts don't need to be more current than a couple of minutes old. A short
+// TTL cache, keyed by everything that changes the facet query (scope + every filter that reaches
+// the facet computation), means repeated identical facet requests share one full scan instead of
+// each re-running it. The main paginated lead list itself is left uncached -- it's a bounded
+// .range() query already, not a full scan.
+const facetsCache = new Map<string, { expires: number; body: Promise<unknown> }>();
+const FACETS_CACHE_TTL_MS = 120_000;
+
 const leadMenus = new Set<RecruitmentMenuId>([
   "All Leads", "Archived Leads", "No Response / Call Back", "Interviews",
   "Unmapped", "Screening", "Documents", "Offers", "Hired"
@@ -221,6 +234,26 @@ export async function GET(request: Request) {
 
     let facets = null;
     if (includeFacets) {
+      // Cache key covers every input that changes the facet scan or its JS-side filtering:
+      // the requesting session's own effective lead scope (two sessions with different
+      // location/role access must never share a cached result), archive mode, the interview-id
+      // restriction, and every filter applied inside the commonRows.filter() below.
+      const facetsScopeKey = JSON.stringify({
+        companyId, stream, archive,
+        structuredInterviewIds: structuredInterviewIds ? [...structuredInterviewIds].sort() : null,
+        sessionOwner: session.isOwner,
+        sessionAllLocations: session.allLocations,
+        sessionLocationIds: [...session.locationIds].sort(),
+        sessionRoleIds: [...session.roleIds].sort(),
+        status, finalStatus, stale24, unmapped,
+        interviewFrom, interviewTo, updatedAge: [...updatedAge].sort(), search,
+        stationCodes: [...stationCodes].sort(), clusters: [...clusters].sort(), roleCodes: [...roleCodes].sort()
+      });
+      const cachedFacets = facetsCache.get(facetsScopeKey);
+      if (cachedFacets && cachedFacets.expires > Date.now()) {
+        facets = await cachedFacets.body;
+      } else {
+        const facetsBody = (async () => {
       const facetQuery = () => {
         let scoped: any = supabaseAdmin!
           .from("recruitment_leads")
@@ -294,7 +327,15 @@ export async function GET(request: Request) {
           roleCode: role?.code ?? null
         };
       });
-      facets = buildLeadFacets(commonRows, { stationCodes, clusters, roleCodes });
+      return buildLeadFacets(commonRows, { stationCodes, clusters, roleCodes });
+        })();
+        // Evict on failure so one bad fetch doesn't keep every request for this scope failing
+        // for the rest of the TTL -- the next request gets a clean retry instead.
+        facetsBody.catch(() => { if (facetsCache.get(facetsScopeKey)?.body === facetsBody) facetsCache.delete(facetsScopeKey); });
+        facetsCache.set(facetsScopeKey, { expires: Date.now() + FACETS_CACHE_TTL_MS, body: facetsBody });
+        for (const [k, value] of facetsCache) if (value.expires <= Date.now()) facetsCache.delete(k);
+        facets = await facetsBody;
+      }
     }
 
     const receivedTimes = includeMetaIntake
