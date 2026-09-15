@@ -9,12 +9,13 @@
 -- 20260914120000_recruitment_lead_history_performance_indexes.sql), this index prevents the same
 -- statement_timeout failure mode from recurring here.
 
--- CONCURRENTLY avoids holding a write lock on recruitment_leads while the index builds, since
--- this table takes inserts/updates continuously in production. It cannot run inside a
--- transaction block, so if you are applying this through a tool that wraps migrations in a
--- transaction (Supabase CLI `db push` does), run this statement directly in the Supabase SQL
--- Editor instead.
-create index concurrently if not exists recruitment_leads_updated_at_idx
+-- Originally written with CONCURRENTLY to avoid holding a write lock while the index builds,
+-- but Supabase's SQL Editor always wraps a pasted script in a transaction and
+-- CREATE INDEX CONCURRENTLY refuses to run inside one (error 25001) -- confirmed by hitting that
+-- exact error when applying this migration. Dropped CONCURRENTLY so this runs as pasted; it
+-- takes a brief write lock on recruitment_leads for the duration of the build, which is fine at
+-- this table's current size (seconds, not minutes).
+create index if not exists recruitment_leads_updated_at_idx
   on public.recruitment_leads(company_id, updated_at desc);
 
 analyze public.recruitment_leads;
