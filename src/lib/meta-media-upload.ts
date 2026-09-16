@@ -23,11 +23,27 @@ function mediaDetails(url: string, kind: MetaMediaKind) {
     const video = document.createElement("video");
     video.preload = "auto"; video.muted = true; video.playsInline = true;
     video.onerror = () => fail(new Error("This video cannot be played. Export an H.264 MP4 with AAC audio."));
+    // videoWidth/videoHeight are only spec-guaranteed to be set once loadedmetadata has fired,
+    // not by onloadeddata alone — some .mov/QuickTime files still report 0x0 at that point.
+    let metadataReady = false;
+    video.onloadedmetadata = () => { metadataReady = true; };
     video.onloadeddata = () => {
       if (!Number.isFinite(video.duration) || video.duration < 1 || video.duration > 180) {
         fail(new Error("Use a video between 1 second and 3 minutes.")); return;
       }
-      const width = video.videoWidth, height = video.videoHeight;
+      const readDimensions = () => ({ width: video.videoWidth, height: video.videoHeight });
+      let { width, height } = readDimensions();
+      if ((width === 0 || height === 0) && !metadataReady) {
+        // Dimensions not resolved yet — wait for loadedmetadata, then re-read.
+        video.addEventListener("loadedmetadata", () => {
+          ({ width, height } = readDimensions());
+          finish(width, height);
+        }, { once: true });
+        return;
+      }
+      finish(width, height);
+    };
+    const finish = (width: number, height: number) => {
       const canvas = document.createElement("canvas");
       const ratio = Math.min(1,1280/Math.max(width,height));
       canvas.width = Math.round(width*ratio); canvas.height = Math.round(height*ratio);
