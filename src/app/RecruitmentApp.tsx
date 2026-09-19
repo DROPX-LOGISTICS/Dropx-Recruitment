@@ -2150,7 +2150,9 @@ function WorkforceCommandCenter({
   resetFilters:()=>void;
   openQueue:(target:CommandQueueTarget)=>void;
 }) {
-  const [adStatus,setAdStatus]=useState("active");
+  // The command centre is the pendency view: include every ad status unless a
+  // planner deliberately narrows it. Active-only remains available as a filter.
+  const [adStatus,setAdStatus]=useState("");
   const [showActiveAds,setShowActiveAds]=useState(false);
   const [capacity,setCapacity]=useState<any>(null);
   const [capacityLoading,setCapacityLoading]=useState(true);
@@ -2178,7 +2180,7 @@ function WorkforceCommandCenter({
     [adRows,capacity?.rows,adStatus]
   );
   const highestNoStatus=actionRows[0]?.noStatus??0;
-  const visibleRows=actionRows.slice(0,100);
+  const visibleRows=actionRows;
   const activeAds=useMemo(()=>(adRows as any[])
     .filter((row)=>String(row.adStatus||"").toLowerCase()==="active")
     .sort((left,right)=>Number(right.totalSpend||0)-Number(left.totalSpend||0)||String(left.adName||"").localeCompare(String(right.adName||""))),[adRows]);
@@ -2232,7 +2234,7 @@ function WorkforceCommandCenter({
     </div>
     <section className="command-board">
       <header className="command-board-head">
-        <div><span>ACT FIRST · {periodLabel}</span><h2>Lead pendency by station &amp; designation</h2><p>Current-month active-ad counts appear first. Select a number to open its lifetime queue.</p></div>
+        <div><span>ACT FIRST · {periodLabel}</span><h2>Lead pendency by station &amp; designation</h2><p>All ad statuses and their open-lifetime queues are shown. Select a number to open its queue.</p></div>
         <div className="command-board-totals">
           <strong>{busy?"…":actionRows.length.toLocaleString("en-IN")}<small>station groups</small></strong>
           <strong className="need">{capacityLoading?"…":Number(capacity?.totalGap??0).toLocaleString("en-IN")}<small>net hires needed</small></strong>
@@ -2243,9 +2245,9 @@ function WorkforceCommandCenter({
         <MultiFilter label="Designations" value={filters.role} options={designationOptions} onChange={(role)=>updateFilters({role})}/>
         <MultiFilter label="Ad status" value={adStatus} options={statusOptions} onChange={setAdStatus}/>
         <button type="button" className="primary-action" disabled={busy} onClick={applyFilters}>{busy?"Applying…":"Apply filters"}</button>
-        <button type="button" className="command-reset" disabled={busy} onClick={()=>{setAdStatus("active");resetFilters();}}>Reset</button>
+        <button type="button" className="command-reset" disabled={busy} onClick={()=>{setAdStatus("");resetFilters();}}>Reset</button>
         <button type="button" className="command-ads-toggle" aria-expanded={showActiveAds} onClick={()=>setShowActiveAds((current)=>!current)}>Active ads ({activeAds.length})</button>
-        <span className="command-filter-note"><i/> {adStatus==="active"?"Active ads only by default":selectedAdStatuses.length?`${selectedAdStatuses.length} ad statuses shown`:"All ad statuses shown"}</span>
+        <span className="command-filter-note"><i/> {selectedAdStatuses.length?`${selectedAdStatuses.length} ad statuses shown`:"All ad statuses shown"}</span>
       </div>
       {showActiveAds?<section className="command-active-ads" aria-label="Scoped active ads">
         <header><div><b>Active ads in this scope</b><span>{periodLabel} leads with current Meta spend</span></div><div><strong>₹{activeDailyBudget.toLocaleString("en-IN")}<small>daily budget</small></strong><strong>₹{Math.round(activeAdSpend).toLocaleString("en-IN")}<small>lifetime spend</small></strong><button type="button" aria-label="Close active ads" onClick={()=>setShowActiveAds(false)}>×</button></div></header>
@@ -2290,9 +2292,8 @@ function WorkforceCommandCenter({
           </article>;
         })}
       </div>
-      {!busy&&!visibleRows.length?<div className="command-empty"><strong>No station-designation groups match these filters.</strong><span>Active ads are selected by default. Choose another ad status to inspect older campaigns.</span></div>:null}
+      {!busy&&!visibleRows.length?<div className="command-empty"><strong>No station-designation groups match these filters.</strong><span>Adjust a station, designation, or ad-status filter to inspect the matching pendency.</span></div>:null}
       {capacityNotice?<p className="command-capacity-notice">Lead pendency is available. Ops capacity could not be loaded: {capacityNotice}</p>:null}
-      {actionRows.length>visibleRows.length?<p className="command-limit-note">Showing the top {visibleRows.length} groups by untreated lead volume.</p>:null}
     </section>
   </section>;
 }
