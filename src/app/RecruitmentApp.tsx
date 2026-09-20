@@ -273,7 +273,10 @@ export default function RecruitmentApp() {
     const effectiveSearch = overrides?.searchValue ?? search;
     setBusy(true); setError("");
     try {
-      if (active === "Dashboard") {
+      if (active === "Workforce Plan") {
+        // The planning panel loads its scoped endpoint independently.
+        setModuleData(null);
+      } else if (active === "Dashboard") {
         const params = new URLSearchParams();
         params.set("stream", stream);
         params.set("menu", active);
@@ -546,6 +549,7 @@ export default function RecruitmentApp() {
   if (!user || !token) return <main className="login-screen"><AuthPanel /></main>;
 
   const workforceNav: Array<[string,string,string]> = [
+    ["Overview","Workforce Plan","Workforce Plan"],
     ["Overview","Command Center","Dashboard"],["Leads","All Leads","All Leads"],["Leads","No Response / Call Back","No Response / Call Back"],
     ["Leads","Interviews","Interviews"],["Leads","Archived Leads","Archived Leads"],["Leads","Unmapped","Unmapped"],["Leads","Reports","Reports"],
     ["Communication","WhatsApp Messages","WhatsApp Messages"],
@@ -683,6 +687,7 @@ export default function RecruitmentApp() {
           }}
         />
       </> : null}
+      {streamAllowed && stream === 'workforce' && active === 'Workforce Plan' && canUseMenu('workforce','Workforce Plan') ? <CapacityDemandPanel token={token} openStation={(station)=>{navigate('All Leads');setFilters({...emptyLeadFilters,station});}}/> : null}
       {streamAllowed && active === "Dashboard" && stream === "hr" ? <HRDashboard data={moduleData} metrics={metrics} busy={busy} openQueue={(status)=>{setActive("All Leads");setFilters({...emptyLeadFilters,status});}} openRequisitions={()=>setActive("Job Requisitions")} /> : null}
       {streamAllowed && active === "My Interviews" && stream === "hr" ? <MyInterviewAssignments data={moduleData} token={token} busy={busy} canEdit={canEditMenu("hr","My Interviews")} reload={load} /> : null}
       {streamAllowed && showLeads ? <section className="content-card leads-card">
