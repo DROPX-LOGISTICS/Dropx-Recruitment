@@ -2150,7 +2150,7 @@ function WorkforceCommandCenter({
   resetFilters:()=>void;
   openQueue:(target:CommandQueueTarget)=>void;
 }) {
-  const [adStatus,setAdStatus]=useState("active");
+  const [adStatus,setAdStatus]=useState("");
   const [showActiveAds,setShowActiveAds]=useState(false);
   const [capacity,setCapacity]=useState<any>(null);
   const [capacityLoading,setCapacityLoading]=useState(true);
@@ -2184,7 +2184,7 @@ function WorkforceCommandCenter({
     .sort((left,right)=>Number(right.totalSpend||0)-Number(left.totalSpend||0)||String(left.adName||"").localeCompare(String(right.adName||""))),[adRows]);
   const activeAdSpend=activeAds.reduce((sum,row)=>sum+Number(row.totalSpend||0),0);
   const activeDailyBudget=activeAds.reduce((sum,row)=>sum+Number(row.dailyBudget||0),0);
-  const periodLabel=String(data?.period?.label||"MTD");
+  const periodLabel=String(data?.period?.label||"Overall");
   const activeMetrics=actionRows.reduce<Metrics>((total,row)=>({
     total:total.total+row.totalLeads,
     noStatus:total.noStatus+row.noStatus,
@@ -2197,13 +2197,13 @@ function WorkforceCommandCenter({
   }),{total:0,noStatus:0,noResponse:0,callBack:0,interviews:0,pending24h:0,joined:0,unmapped:0});
   const selectedAdIds=[...new Set(actionRows.flatMap((row)=>row.adIds))].join(",");
   const summaryCards:Array<[keyof Metrics,string,string]>=[
-    ["total","Total leads",`${periodLabel} · open lifetime`],
-    ["noStatus","No status",`${periodLabel} · open lifetime`],
-    ["noResponse","No response",`${periodLabel} · open lifetime`],
-    ["callBack","Call back",`${periodLabel} · open lifetime`],
-    ["interviews","Interviews",`${periodLabel} · open lifetime`],
-    ["joined","Joined",`${periodLabel} · open lifetime`],
-    ["pending24h","24h+ pending",`${periodLabel} · open lifetime`]
+    ["total","Total leads",`${periodLabel} · open leads`],
+    ["noStatus","No status",`${periodLabel} · open leads`],
+    ["noResponse","No response",`${periodLabel} · open leads`],
+    ["callBack","Call back",`${periodLabel} · open leads`],
+    ["interviews","Interviews",`${periodLabel} · open leads`],
+    ["joined","Joined",`${periodLabel} · open leads`],
+    ["pending24h","24h+ pending",`${periodLabel} · open leads`]
   ];
   const statusOptions=adStatuses.map((value)=>[value,statusLabel(value)] as [string,string]);
   const openRowQueue=(row:any,status:string,route="All Leads",stale24=false)=>openQueue({
@@ -2232,7 +2232,7 @@ function WorkforceCommandCenter({
     </div>
     <section className="command-board">
       <header className="command-board-head">
-        <div><span>ACT FIRST · {periodLabel}</span><h2>Lead pendency by station &amp; designation</h2><p>Current-month active-ad counts appear first. Select a number to open its lifetime queue.</p></div>
+        <div><span>ACT FIRST · {periodLabel.toUpperCase()}</span><h2>Lead pendency by station &amp; designation</h2><p>All open leads are shown by default. Select a number to open its queue.</p></div>
         <div className="command-board-totals">
           <strong>{busy?"…":actionRows.length.toLocaleString("en-IN")}<small>station groups</small></strong>
           <strong className="need">{capacityLoading?"…":Number(capacity?.totalGap??0).toLocaleString("en-IN")}<small>net hires needed</small></strong>
@@ -2243,9 +2243,9 @@ function WorkforceCommandCenter({
         <MultiFilter label="Designations" value={filters.role} options={designationOptions} onChange={(role)=>updateFilters({role})}/>
         <MultiFilter label="Ad status" value={adStatus} options={statusOptions} onChange={setAdStatus}/>
         <button type="button" className="primary-action" disabled={busy} onClick={applyFilters}>{busy?"Applying…":"Apply filters"}</button>
-        <button type="button" className="command-reset" disabled={busy} onClick={()=>{setAdStatus("active");resetFilters();}}>Reset</button>
+        <button type="button" className="command-reset" disabled={busy} onClick={()=>{setAdStatus("");resetFilters();}}>Reset</button>
         <button type="button" className="command-ads-toggle" aria-expanded={showActiveAds} onClick={()=>setShowActiveAds((current)=>!current)}>Active ads ({activeAds.length})</button>
-        <span className="command-filter-note"><i/> {adStatus==="active"?"Active ads only by default":selectedAdStatuses.length?`${selectedAdStatuses.length} ad statuses shown`:"All ad statuses shown"}</span>
+        <span className="command-filter-note"><i/> {selectedAdStatuses.length?`${selectedAdStatuses.length} ad statuses shown`:"All ad statuses shown"}</span>
       </div>
       {showActiveAds?<section className="command-active-ads" aria-label="Scoped active ads">
         <header><div><b>Active ads in this scope</b><span>{periodLabel} leads with current Meta spend</span></div><div><strong>₹{activeDailyBudget.toLocaleString("en-IN")}<small>daily budget</small></strong><strong>₹{Math.round(activeAdSpend).toLocaleString("en-IN")}<small>lifetime spend</small></strong><button type="button" aria-label="Close active ads" onClick={()=>setShowActiveAds(false)}>×</button></div></header>

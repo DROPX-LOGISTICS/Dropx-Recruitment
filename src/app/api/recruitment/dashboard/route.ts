@@ -324,11 +324,6 @@ export async function GET(request: Request) {
 
     const now = Date.now();
     const today = istDayBounds();
-    const monthStartDate = `${today.date.slice(0, 8)}01`;
-    const monthStart = new Date(`${monthStartDate}T00:00:00+05:30`).getTime();
-    const monthLabel = new Intl.DateTimeFormat("en-IN", {
-      month: "short", timeZone: "Asia/Kolkata"
-    }).format(new Date());
     const metrics = { total: rows.length, noStatus: 0, noResponse: 0, callBack: 0, interviews: 0, joined: 0, pending24h: 0, unmapped: 0 };
     const queues = { noStatus: 0, retryDue: 0, callbackDue: 0, interviewsToday: 0, noStatus12h: 0, noStatus24h: 0, noStatus48h: 0 };
     const byStatus = new Map<string, number>();
@@ -379,9 +374,7 @@ export async function GET(request: Request) {
       const updatedAge = ageHours(lead.updated_at, now);
       const createdAt = lead.lead_created_at ? new Date(lead.lead_created_at).getTime() : NaN;
       const updatedAt = lead.updated_at ? new Date(lead.updated_at).getTime() : NaN;
-      const isMtdLead = Number.isFinite(createdAt) && createdAt >= monthStart && createdAt <= now;
       const isJoined = status === "joined" || finalStatus === "joined";
-      const joinedMtd = isJoined && Number.isFinite(updatedAt) && updatedAt >= monthStart && updatedAt <= now;
       const isNoStatus = !status || status === "new";
       const isPending = isNoStatus || status === "no_response" || status === "call_back";
       if (isNoStatus) metrics.noStatus++;
@@ -448,16 +441,14 @@ export async function GET(request: Request) {
         lastSyncedAt: null
       };
       adGroup.lifetimeTotalLeads++;
-      if (isMtdLead) {
-        adGroup.totalLeads++;
-        if (isPending) adGroup.pending++;
-        if (isNoStatus) adGroup.noStatus++;
-        if (status === "no_response") adGroup.noResponse++;
-        if (status === "call_back") adGroup.callBack++;
-        if (status.startsWith("interview_")) adGroup.interviews++;
-        if (isPending && createdAge >= 24) adGroup.stale24h++;
-      }
-      if (joinedMtd) adGroup.joined++;
+      adGroup.totalLeads++;
+      if (isPending) adGroup.pending++;
+      if (isNoStatus) adGroup.noStatus++;
+      if (status === "no_response") adGroup.noResponse++;
+      if (status === "call_back") adGroup.callBack++;
+      if (status.startsWith("interview_")) adGroup.interviews++;
+      if (isPending && createdAge >= 24) adGroup.stale24h++;
+      if (isJoined) adGroup.joined++;
       adDesignation.set(adKey, adGroup);
       const station = stations.get(location) ?? {
         code: location,
@@ -537,7 +528,7 @@ export async function GET(request: Request) {
         edit: workspace === "hr" && canUseRecruitmentMenu(session, "Job Requisitions", "edit", "hr"),
         approve: workspace === "hr" && canUseRecruitmentMenu(session, "Job Requisitions", "all", "hr")
       },
-      period: { kind: "mtd", from: monthStartDate, to: today.date, label: `${monthLabel} MTD` },
+      period: { kind: "overall", from: null, to: today.date, label: "Overall" },
       health: {
         attended: rows.length - metrics.noStatus,
         attendedRate: rows.length ? Math.round(((rows.length - metrics.noStatus) / rows.length) * 1000) / 10 : 0,
