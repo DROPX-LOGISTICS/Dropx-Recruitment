@@ -161,7 +161,7 @@ export async function loadWorkforcePlanning(options: {
   )));
   const designationRows=await allRows(supabaseAdmin.from('designations').select('id,code,name,category:designation_categories!designations_designation_category_id_fkey(people_module)').eq('company_id',options.companyId).order('id'));
   const workforceDesignations=designationRows.filter(row=>related(row.category as {people_module:string}|{people_module:string}[])?.people_module==='delivery_network');
-  const roleIds=new Set(workforceDesignations.map(row=>row.id)),roleKeys=new Set(workforceDesignations.flatMap(row=>[row.code,row.name].map(value=>String(value??'').trim().toLowerCase())));
+  const roleIds=new Set(workforceDesignations.map(row=>row.id)),roleKeys=new Set(workforceDesignations.flatMap(row=>[row.code,row.name].map(value=>String(value??'').trim().toLowerCase()).filter(Boolean)));
   const executives = (executivePages.flat() as FieldExecutiveRow[]).filter(row=>row.designation_id?roleIds.has(row.designation_id):roleKeys.has(String(row.designation??'').trim().toLowerCase()));
   const executiveIds = executives.map((item) => item.id);
   const creatorIds = [...new Set(executives.map((item) => item.created_by).filter((value): value is string => Boolean(value)))];
