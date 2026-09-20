@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+// Request semantics use mocked HTTP; pacing is tested in meta-graph-throttle.test.ts.
+vi.mock("./meta-graph-throttle", () => ({ withMetaObjectEditGate: async (_id: string, run: () => Promise<unknown>) => run() }));
 vi.mock("./connection-config", () => ({ getConnectionConfig: async () => ({
   isEnabled: true, publicConfig: { ad_account_id: "11111", page_id: "22222", graph_version: "v25.0" }, secrets: { access_token: "test-token" }
 }) }));

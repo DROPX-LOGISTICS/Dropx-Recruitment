@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+// These tests verify creative/request semantics with mocked HTTP. The real
+// 30-second edit pacing is covered independently by meta-graph-throttle.test.ts.
+vi.mock("./meta-graph-throttle", () => ({ withMetaObjectEditGate: async (_id: string, run: () => Promise<unknown>) => run() }));
 vi.mock("./connection-config", () => ({ getConnectionConfig: async () => ({ isEnabled: true,
   publicConfig: { ad_account_id: "123", page_id: "456", graph_version: "v25.0" }, secrets: { access_token: "test-token" } }) }));
 import { publishMetaRecruitmentAd, sameMetaPublishDraft, type MetaAdDraft } from "./meta-ad-builder";

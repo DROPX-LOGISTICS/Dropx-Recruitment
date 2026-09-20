@@ -10,14 +10,20 @@ const noActivity = {
 };
 
 describe("workforce planning lifecycle", () => {
-  it("counts a recent joiner without an operations ID as training", () => {
+  it("never counts a pending applicant as training from joining date alone", () => {
     expect(classifyWorkforceLifecycle({
       reportingDate: "2026-08-03",
       dateOfJoin: "2026-07-29",
       isActive: true,
       onboardingStatus: "pending",
       activity: noActivity
-    }).stage).toBe("training");
+    }).stage).toBe("applicant");
+  });
+
+  it('uses the verified Workforce journey before activity-age heuristics',()=>{
+    for(const joiningStage of ['training','awaiting_arrival','awaiting_activation','applicant','offboarded','ready'] as const) {
+      expect(classifyWorkforceLifecycle({reportingDate:'2026-09-20',dateOfJoin:'2026-08-01',isActive:false,joiningStage,activity:noActivity}).stage).toBe(joiningStage);
+    }
   });
 
   it("does not keep an old zero-activity record in training", () => {

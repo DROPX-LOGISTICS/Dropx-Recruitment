@@ -71,7 +71,7 @@ export async function GET(request: Request) {
     }
     let stationQuery = supabaseAdmin
       .from("stations")
-      .select("id,station_code,station_name,providers(code,name),location_models(code,name)")
+      .select("id,station_code,station_name,provider_id,providers(code,name),location_models(code,name)")
       .eq("company_id", companyId)
       .eq("is_active", true)
       .order("station_code");
@@ -84,6 +84,7 @@ export async function GET(request: Request) {
       .filter(isAmazonCapacityStation)
       .map((station) => ({
         id: station.id,
+        providerId: station.provider_id,
         code: String(station.station_code ?? "").trim().toUpperCase(),
         name: String(station.station_name ?? station.station_code ?? "").trim()
       }));
@@ -153,12 +154,12 @@ export async function GET(request: Request) {
       stageCounts,
       visibility: visibleCreatorIds == null ? "all" : session.recruitmentFunction === "manager" ? "team" : "mine",
       unconfiguredStations: demand.unconfiguredStations,
-      source: "Ops Pulse 14-day capacity model, Field Executive onboarding and canonical associate delivery days",
+      source: "Ops Pulse capacity model, canonical Workforce joining plans, biometric attendance and effective provider mappings",
       definitions: {
-        training: "Joined within 14 days and fewer than 3 active delivery days in the latest 7 days.",
+        training: "Workforce-approved training plan with verified biometric arrival, before the effective provider mapping. Applicants and direct hires are not training headcount.",
         cooling: "No delivery activity for 4–7 days.",
         attritionRisk: "No delivery activity for 8–14 days.",
-        stopped: "Inactive, closed, or no delivery activity for more than 14 days after training.",
+        stopped: "An active Workforce profile with no recent mapped delivery activity. Offboarding is shown separately from activity risk.",
         netHiringNeed: "Positive capacity gap minus associates currently in training; never below zero."
       },
       generatedAt: new Date().toISOString()
