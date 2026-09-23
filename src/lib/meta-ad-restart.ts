@@ -75,8 +75,14 @@ export async function restartCompletedMetaAd(input: {
     throw new Error("This ad uses a shared or lifetime budget. Create a separate ad in Recruit with its own daily budget.");
   }
   const pin = (adset.targeting as { geo_locations?: { custom_locations?: { radius?: number; distance_unit?: string }[] } })?.geo_locations?.custom_locations?.[0];
-  const radiusKm = Number(pin?.radius) * (pin?.distance_unit === "mile" ? 1.609344 : 1);
-  if (!Number.isFinite(radiusKm) || radiusKm <= 0 || !["mile", "kilometer"].includes(String(pin?.distance_unit))) throw new Error("Review this ad's audience radius in Meta before restarting.");
+  // Meta returns both singular and plural unit values across Graph API versions.
+  // Treat those equivalent values consistently rather than blocking an otherwise
+  // verified station pin on a wording-only response difference.
+  const distanceUnit = String(pin?.distance_unit ?? "").trim().toLowerCase();
+  const isMiles = distanceUnit === "mile" || distanceUnit === "miles";
+  const isKilometers = distanceUnit === "kilometer" || distanceUnit === "kilometers" || distanceUnit === "km";
+  const radiusKm = Number(pin?.radius) * (isMiles ? 1.609344 : 1);
+  if (!Number.isFinite(radiusKm) || radiusKm <= 0 || (!isMiles && !isKilometers)) throw new Error("Review this ad's audience radius in Meta before restarting.");
   const audience = { ...input.audience, radiusKm };
   assertMetaTargeting(adset.targeting, audience);
   const endTime = adRunEndTime(terms.days, now)!;

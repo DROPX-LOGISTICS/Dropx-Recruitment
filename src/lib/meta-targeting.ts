@@ -13,7 +13,10 @@ export function assertMetaTargeting(targeting: any, audience: Point & { radiusKm
   const additional = Object.entries(geo || {}).some(([key, value]) =>
     !["custom_locations", "location_types"].includes(key) && Array.isArray(value) && value.length > 0);
   const pin = Array.isArray(pins) && pins.length === 1 ? pins[0] : null;
-  const radius = pin?.distance_unit === "mile" ? Number(pin.radius) * 1.609344 : Number(pin?.radius);
+  const distanceUnit = String(pin?.distance_unit ?? "").trim().toLowerCase();
+  const radius = distanceUnit === "mile" || distanceUnit === "miles"
+    ? Number(pin.radius) * 1.609344
+    : Number(pin?.radius);
   if (!pin || additional || targeting?.excluded_geo_locations || coordinateDistanceKm(pin, audience) > 0.1
     || !Number.isFinite(radius) || Math.abs(radius - audience.radiusKm) > 0.1) {
     throw new Error(`Meta targeting does not match the reviewed ${audience.stationCode} station pin and radius. The ad has not been activated. Review the ad set before retrying.`);

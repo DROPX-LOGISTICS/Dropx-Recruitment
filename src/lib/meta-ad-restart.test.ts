@@ -12,7 +12,7 @@ function echoAsIst(value: string) {
   return `${stamp}+0530`;
 }
 
-function fixture(options?: { echoEndInIst?: boolean }) {
+function fixture(options?: { echoEndInIst?: boolean; distanceUnit?: string }) {
   let ad: RestartAdSnapshot = {
     id: "ad-1", status: "ACTIVE", effective_status: "ACTIVE",
     campaign: { id: "campaign-1", status: "ACTIVE", effective_status: "ACTIVE", is_adset_budget_sharing_enabled: false },
@@ -20,7 +20,7 @@ function fixture(options?: { echoEndInIst?: boolean }) {
       id: "set-1", status: "ACTIVE", effective_status: "ACTIVE", end_time: expectedEndTime,
       start_time: "2026-08-30T01:58:08Z", daily_budget: "10000",
       ads: { data: [{ id: "ad-1" }] },
-      targeting: { geo_locations: { custom_locations: [{ latitude: 11.265875, longitude: 75.825172, radius: 17, distance_unit: "kilometer" }] } }
+      targeting: { geo_locations: { custom_locations: [{ latitude: 11.265875, longitude: 75.825172, radius: 17, distance_unit: options?.distanceUnit ?? "kilometer" }] } }
     }
   };
   const post = vi.fn(async (id: string, values: Record<string, string>) => {
@@ -62,6 +62,11 @@ describe("completed ad restart", () => {
     const result = await restartCompletedMetaAd(f.input);
     expect(result.endTime).toBe(metaEndTime);
     expect(Date.parse(String(result.after.adset?.end_time))).toBe(Date.parse(metaEndTime));
+  });
+
+  it("accepts the plural kilometer unit returned by Meta", async () => {
+    const f = fixture({ distanceUnit: "kilometers" });
+    await expect(restartCompletedMetaAd(f.input)).resolves.toMatchObject({ dailyBudget: 100 });
   });
 
   it.each([undefined, 0, -1, 1.5, 91, Infinity])("rejects invalid duration %s before contacting Meta", async (days) => {
