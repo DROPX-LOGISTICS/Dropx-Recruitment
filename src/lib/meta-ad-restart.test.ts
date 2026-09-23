@@ -69,6 +69,15 @@ describe("completed ad restart", () => {
     await expect(restartCompletedMetaAd(f.input)).resolves.toMatchObject({ dailyBudget: 100 });
   });
 
+  it.each(["kilometre", "kilometres", "km", "kms", "mi"])("accepts Meta's alternate distance unit %s", async (distanceUnit) => {
+    const f = fixture({ distanceUnit });
+    if (distanceUnit === "mi") {
+      f.input.audience = { ...f.input.audience, latitude: 11.265875, longitude: 75.825172 };
+      (f.ad.adset!.targeting as any).geo_locations.custom_locations[0].radius = 17 / 1.609344;
+    }
+    await expect(restartCompletedMetaAd(f.input)).resolves.toMatchObject({ dailyBudget: 100 });
+  });
+
   it.each([undefined, 0, -1, 1.5, 91, Infinity])("rejects invalid duration %s before contacting Meta", async (days) => {
     const f = fixture();
     await expect(restartCompletedMetaAd({ ...f.input, days })).rejects.toThrow("whole number");
