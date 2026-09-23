@@ -32,7 +32,7 @@ export async function GET(request: Request) {
     const [locations, roles, contacts, whatsapp, mainStations, workforceConfig, lifecycleRules, lifecycleSettings] = await Promise.all([
       supabaseAdmin.from("recruitment_locations").select("id,station_id,code,name,state,region,address,latitude,longitude,poc_name,poc_mobile,is_active").eq("company_id", companyId).not("station_id", "is", null).order("code"),
       supabaseAdmin.from("recruitment_roles").select("id,code,name,stream,aliases,required_fields,is_active").eq("company_id", companyId).order("code")
-      ,supabaseAdmin.from("recruitment_location_contacts").select("id,location_id,address,latitude,longitude,poc_name,poc_mobile").eq("company_id", companyId),
+      ,supabaseAdmin.from("recruitment_location_contacts").select("id,location_id,address,latitude,longitude,ad_latitude,ad_longitude,poc_name,poc_mobile").eq("company_id", companyId),
       getConnectionConfig("whatsapp"),
       loadMainDashboardStations(companyId),
       loadWorkforceConfig(companyId),
@@ -70,7 +70,11 @@ export async function GET(request: Request) {
               operationalOwnerStatus: "unmapped",
               operationalOwnerDesignation: null
             }),
-        contact: mergeRecruitmentLocationContact(contactByLocation.get(location.id), location)
+        contact: {
+          ...mergeRecruitmentLocationContact(contactByLocation.get(location.id), location),
+          ad_latitude: contactByLocation.get(location.id)?.ad_latitude ?? null,
+          ad_longitude: contactByLocation.get(location.id)?.ad_longitude ?? null
+        }
       })),
       roles: (roles.data ?? []).map((role) => ({
         ...role,
@@ -171,7 +175,7 @@ export async function PUT(request: Request) {
       if (location.error) throw location.error;
       if (!location.data) return NextResponse.json({ error: "Station was not found." }, { status: 404 });
       const current = await supabaseAdmin.from("recruitment_location_contacts")
-        .select("address,latitude,longitude,poc_name,poc_mobile")
+        .select("address,latitude,longitude,ad_latitude,ad_longitude,poc_name,poc_mobile")
         .eq("company_id", companyId).eq("location_id", locationId).maybeSingle();
       if (current.error) throw current.error;
       const submitted = {
@@ -181,20 +185,29 @@ export async function PUT(request: Request) {
         poc_name: optional(body.pocName, 160),
         poc_mobile: optional(body.pocMobile, 30)
       };
+      const adLatitude = coordinate(body.adLatitude);
+      const adLongitude = coordinate(body.adLongitude);
+      if ((adLatitude == null) !== (adLongitude == null)) {
+        return NextResponse.json({ error: "Enter both Meta ad pin latitude and longitude, or leave both blank." }, { status: 400 });
+      }
       const values = {
         ...mergeRecruitmentLocationContact(submitted, current.data ?? location.data),
         updated_at: now
       };
+      const adPin = adLatitude == null && adLongitude == null
+        ? { ad_latitude: current.data?.ad_latitude ?? null, ad_longitude: current.data?.ad_longitude ?? null }
+        : { ad_latitude: adLatitude, ad_longitude: adLongitude };
       const saved = await supabaseAdmin.from("recruitment_location_contacts").upsert({
         company_id: companyId,
         location_id: locationId,
-        ...values
+        ...values,
+        ...adPin
       }, { onConflict: "company_id,location_id" }).select("id").single();
       if (saved.error) throw saved.error;
       const mirrored = await supabaseAdmin.from("recruitment_locations").update(values)
         .eq("company_id", companyId).eq("id", locationId);
       if (mirrored.error) throw mirrored.error;
-      await auditMasterChange({ companyId, action: "station_contact_saved", changedFields: ["address", "coordinates", "poc_name", "poc_mobile"], message: `Station contact details saved for ${locationId}.`, actorProfileId: session.profileId, actorEmail: session.email });
+      await auditMasterChange({ companyId, action: "station_contact_saved", changedFields: ["address", "candidate_pin", "ad_pin", "poc_name", "poc_mobile"], message: `Station contact details and Meta ad pin saved for ${locationId}.`, actorProfileId: session.profileId, actorEmail: session.email });
       return NextResponse.json({ saved: true, resource, item: saved.data });
     }
 

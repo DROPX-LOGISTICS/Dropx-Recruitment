@@ -23,7 +23,7 @@ export async function resolveRecruitmentAdAudience(input: {
   const code = String(locationResult.data.code || "").trim().toUpperCase();
   if (!locationResult.data.station_id) throw new Error(`${code} is not linked to the Location Master. Correct its station mapping before publishing.`);
   const stationResult = await supabaseAdmin.from("stations")
-    .select("id,station_code,station_name,address,latitude,longitude")
+    .select("id,station_code,station_name")
     .eq("company_id", input.companyId).eq("id", locationResult.data.station_id)
     .eq("is_active", true).maybeSingle();
   if (stationResult.error) throw new Error(stationResult.error.message);
@@ -31,16 +31,26 @@ export async function resolveRecruitmentAdAudience(input: {
   if (!station || String(station.station_code).trim().toUpperCase() !== code) {
     throw new Error(`${code} does not match an active station in the Location Master. Correct the mapping before publishing.`);
   }
+  const adPinResult = await supabaseAdmin.from("recruitment_location_contacts")
+    .select("ad_latitude,ad_longitude")
+    .eq("company_id", input.companyId)
+    .eq("location_id", locationId)
+    .maybeSingle();
+  if (adPinResult.error) throw new Error(adPinResult.error.message);
+  const adPin = adPinResult.data;
+  if (adPin?.ad_latitude == null || adPin?.ad_longitude == null) {
+    throw new Error(`Add the Meta ad pin for ${code} in Station Contacts before publishing.`);
+  }
   return validateMetaLocationAudience({
     locationId,
     stationCode: code,
     stationName: String(station.station_name || code).trim(),
-    address: String(station.address || "").trim() || null,
-    latitude: station.latitude,
-    longitude: station.longitude,
+    address: null,
+    latitude: adPin.ad_latitude,
+    longitude: adPin.ad_longitude,
     radiusKm: input.radiusKm == null || String(input.radiusKm).trim() === ""
       ? META_AUDIENCE_RADIUS_DEFAULT_KM
       : Number(input.radiusKm),
-    source: "location_master"
+    source: "station_contacts"
   });
 }
