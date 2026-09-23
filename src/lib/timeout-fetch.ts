@@ -10,10 +10,13 @@ const SUPABASE_FETCH_TIMEOUT_MS = 20_000;
  * connection can't hang an entire request. Composes with any signal the
  * caller already passed rather than replacing it.
  */
-export function timeoutFetch(fetcher: typeof fetch = (...args) => fetch(...args)): typeof fetch {
+export function timeoutFetch(
+  fetcher: typeof fetch = (...args) => fetch(...args),
+  timeoutMs = SUPABASE_FETCH_TIMEOUT_MS
+): typeof fetch {
   return async (input, init) => {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), SUPABASE_FETCH_TIMEOUT_MS);
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     const callerSignal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
     callerSignal?.addEventListener("abort", () => controller.abort(), { once: true });
     try {
