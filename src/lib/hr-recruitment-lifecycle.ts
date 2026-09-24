@@ -35,23 +35,31 @@ export const defaultHrWorkflowSettings: HrWorkflowSettings = {
 };
 
 export const defaultHrLifecycleRules: HrLifecycleRule[] = [
-  rule("new", "New profile", "intake", 10, ["contacting", "screening", "no_response", "call_back", "not_fit", "interview_scheduled", "selected"]),
-  rule("contacting", "Contacting", "screening", 20, ["screening", "no_response", "call_back", "not_fit", "interview_scheduled", "selected"]),
-  rule("screening", "Screening", "screening", 30, ["documents_pending", "interview_scheduled", "selected", "hold", "rejected"]),
-  rule("documents_pending", "Documents pending", "screening", 40, ["screening", "interview_scheduled", "rejected"]),
-  rule("interview_scheduled", "Interview scheduled", "interview", 50, ["interview_rescheduled", "interview_completed", "interview_no_show", "hold", "rejected"], { requiresSchedule: true, interviewerCanSet: true }),
-  rule("interview_rescheduled", "Interview rescheduled", "interview", 55, ["interview_rescheduled", "interview_completed", "interview_no_show", "hold", "rejected"], { requiresSchedule: true, interviewerCanSet: true }),
-  rule("interview_completed", "Interview completed", "interview", 60, ["round_2_pending", "selected", "hold", "rejected"], { interviewerCanSet: true }),
-  rule("round_2_pending", "Round 2 pending", "interview", 65, ["interview_scheduled", "rejected"]),
-  rule("interview_no_show", "Candidate did not attend", "interview", 70, ["interview_rescheduled", "rejected"], { interviewerCanSet: true }),
-  rule("selected", "Selected", "selection", 80, ["offer_pending", "rejected"]),
-  rule("offer_pending", "Offer pending", "offer", 90, ["offered", "rejected"]),
-  rule("offered", "Offer issued", "offer", 100, ["joined", "rejected"]),
+  rule("new", "New profile", "intake", 10, ["contacting", "screening", "no_response", "call_back", "not_fit", "not_interested", "interview_scheduled", "selected"]),
+  rule("contacting", "Contacting", "screening", 20, ["screening", "no_response", "call_back", "not_fit", "not_interested", "interview_scheduled", "selected"]),
+  rule("screening", "Screening", "screening", 30, ["documents_pending", "profile_shared", "interview_scheduled", "selected", "hold", "not_interested", "rejected"]),
+  rule("documents_pending", "Documents pending", "screening", 40, ["screening", "profile_shared", "interview_scheduled", "not_interested", "rejected"]),
+  rule("profile_shared", "Profile shared", "screening", 45, ["interview_scheduled", "hold", "not_interested", "rejected"]),
+  rule("interview_scheduled", "Interview scheduled", "interview", 50, ["interview_rescheduled", "interview_completed", "interview_no_show", "hold", "not_interested", "rejected"], { requiresSchedule: true, interviewerCanSet: true }),
+  rule("interview_rescheduled", "Interview rescheduled", "interview", 55, ["interview_rescheduled", "interview_completed", "interview_no_show", "hold", "not_interested", "rejected"], { requiresSchedule: true, interviewerCanSet: true }),
+  rule("interview_completed", "Interview completed", "interview", 60, ["round_2_pending", "selected", "hold", "not_interested", "rejected"], { interviewerCanSet: true }),
+  rule("round_2_pending", "Round 2 pending", "interview", 65, ["interview_scheduled", "not_interested", "rejected"]),
+  rule("interview_no_show", "Candidate did not attend", "interview", 70, ["interview_rescheduled", "not_interested", "rejected"], { interviewerCanSet: true }),
+  rule("selected", "Selected", "selection", 80, ["offer_pending", "not_interested", "rejected"]),
+  rule("offer_pending", "Offer pending", "offer", 90, ["offered", "not_interested", "rejected"]),
+  rule("offered", "Offer issued", "offer", 100, ["joined", "not_interested", "rejected"]),
   rule("joined", "Joined", "joining", 110, [], { isTerminal: true }),
-  rule("no_response", "No response", "follow_up", 120, ["contacting", "call_back", "not_fit", "interview_scheduled", "rejected"]),
-  rule("call_back", "Call back", "follow_up", 130, ["contacting", "screening", "no_response", "not_fit", "interview_scheduled", "rejected"]),
-  rule("hold", "On hold", "follow_up", 140, ["screening", "interview_scheduled", "rejected"]),
+  rule("no_response", "No response", "follow_up", 120, ["contacting", "call_back", "not_fit", "not_interested", "interview_scheduled", "rejected"]),
+  rule("call_back", "Call back", "follow_up", 130, ["contacting", "screening", "no_response", "not_fit", "not_interested", "interview_scheduled", "rejected"]),
+  rule("hold", "On hold", "follow_up", 140, ["screening", "interview_scheduled", "not_interested", "rejected"]),
   rule("not_fit", "Not fit", "closed", 150, [], { isTerminal: true }),
+  // Candidate explicitly declined / is no longer interested - distinct from
+  // "not_fit" (an HR-side assessment) and "rejected" (an HR-side decision):
+  // this represents the candidate's own response, matching the equivalent
+  // "not_interested" status already used in the workforce lead pipeline.
+  // Reachable from every active stage rather than only a narrow subset,
+  // since a candidate can withdraw interest at any point in the process.
+  rule("not_interested", "Not interested", "closed", 155, [], { isTerminal: true }),
   rule("rejected", "Rejected", "closed", 160, [], { isTerminal: true })
 ];
 
