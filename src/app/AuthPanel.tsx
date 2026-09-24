@@ -1,7 +1,7 @@
 "use client";
 
 import Script from "next/script";
-import { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 
 declare global {
   interface Window {
@@ -24,13 +24,15 @@ export default function AuthPanel() {
   const [busy, setBusy] = useState(false);
   const [googleClientId, setGoogleClientId] = useState("");
   const [googleLoaded, setGoogleLoaded] = useState(false);
+  const [googleConfigLoaded, setGoogleConfigLoaded] = useState(false);
   const googleButton = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     fetch("/api/auth/config")
       .then((response) => response.json())
       .then((payload) => setGoogleClientId(String(payload.googleClientId ?? "")))
-      .catch(() => setGoogleClientId(""));
+      .catch(() => setGoogleClientId(""))
+      .finally(() => setGoogleConfigLoaded(true));
   }, []);
 
   async function jsonRequest(url: string, body: object): Promise<{
@@ -117,37 +119,53 @@ export default function AuthPanel() {
       type: "standard",
       theme: "outline",
       size: "large",
-      width: 320,
+      width: Math.min(360, googleButton.current.clientWidth || 320),
       text: "continue_with"
     });
   }
 
   useEffect(() => {
-    if (googleLoaded && googleClientId) setupGoogle();
+    if (!googleLoaded || !googleClientId || !googleButton.current) return;
+    let lastWidth = 0;
+    const render = () => {
+      const width = Math.min(360, googleButton.current?.clientWidth || 320);
+      if (width !== lastWidth) { lastWidth = width; setupGoogle(); }
+    };
+    render();
+    const observer = new ResizeObserver(render);
+    observer.observe(googleButton.current);
+    return () => observer.disconnect();
   // setupGoogle intentionally depends on the loaded Google SDK and dynamic client ID.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [googleClientId, googleLoaded]);
 
   return (
-    <section className="auth-panel">
+    <section className="auth-panel" aria-labelledby="sign-in-title" aria-busy={busy}>
       <Script src="https://accounts.google.com/gsi/client" strategy="afterInteractive" onLoad={() => setGoogleLoaded(true)} />
-      <span>Secure sign in</span>
-      <h2>Access DropX Recruitment</h2>
-      <p>Use your registered mobile number first. Your OTP will arrive through DropX WhatsApp.</p>
-      <label>Mobile number</label>
-      <div className="mobile-field"><b>+91</b><input value={mobile} onChange={(event) => setMobile(event.target.value)} disabled={busy || !!challengeId} inputMode="numeric" /></div>
+      <span className="recruit-secure"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><rect x="5" y="10" width="14" height="11" rx="3"/><path d="M8 10V7a4 4 0 0 1 8 0v3m-4 4v3"/></svg>Secure workspace</span>
+      <h1 id="sign-in-title">Welcome back.</h1>
+      <p>Sign in to your DropX Recruit workspace.</p>
+      <form onSubmit={(event) => { event.preventDefault(); if (!busy) void (challengeId ? verifyOtp() : requestOtp()); }}>
+      <label htmlFor="recruit-mobile">Mobile number</label>
+      <div className="mobile-field"><b>+91</b><input id="recruit-mobile" name="mobile" type="tel" autoComplete="tel-national" placeholder="Enter your registered number" value={mobile} onChange={(event) => setMobile(event.target.value)} disabled={busy || !!challengeId} inputMode="numeric" required aria-describedby="recruit-otp-help" /></div>
+      <p id="recruit-otp-help" className="recruit-field-help">We’ll send a one-time code to your WhatsApp.</p>
       {challengeId ? (
         <>
-          <label>WhatsApp OTP</label>
-          <input className="otp-field" value={otp} onChange={(event) => setOtp(event.target.value)} maxLength={6} inputMode="numeric" />
-          <button className="primary" onClick={verifyOtp} disabled={busy}>Verify and sign in</button>
+          <label htmlFor="recruit-otp">WhatsApp verification code</label>
+          <input id="recruit-otp" name="otp" className="otp-field" value={otp} onChange={(event) => setOtp(event.target.value)} maxLength={6} inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" required disabled={busy} />
+          <button className="primary" type="submit" disabled={busy}>{busy ? "Verifying…" : "Verify and sign in"}<span aria-hidden="true">→</span></button>
+          <button className="recruit-change-number" type="button" disabled={busy} onClick={() => { setChallengeId(null); setOtp(""); setMessage(""); }}>Use a different number</button>
         </>
-      ) : <button className="primary" onClick={requestOtp} disabled={busy}>Send WhatsApp OTP</button>}
-      <div className="or"><i /><em>or</em><i /></div>
-      <div className="google-button" ref={googleButton} aria-label="Continue with Google" />
-      {message ? <small className="auth-message">{message}</small> : null}
+      ) : <button className="primary" type="submit" disabled={busy}>{busy ? "Sending code…" : "Send WhatsApp OTP"}<span aria-hidden="true">→</span></button>}
+      </form>
+      {message ? <p className="auth-message" role="status" aria-live="polite">{message}</p> : null}
+      <div className="or"><i /><em>or continue with</em><i /></div>
+      <div className="google-button" ref={googleButton} role="group" aria-label="Continue with Google" />
+      {!googleClientId ? <p className="recruit-google-status" role="status">{googleConfigLoaded ? "Google sign-in is unavailable. Please use WhatsApp above." : "Loading Google sign-in…"}</p> : null}
+      <p className="recruit-access-note">Use your authorised DropX account to continue.</p>
       <a className="android-download" href="/downloads/dropx-recruitment-android.apk?v=133" download>
-        Download DropX Recruitment for Android 64-bit · v1.4.1 (build 131)
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><rect x="6" y="2" width="12" height="20" rx="3"/><path d="M10 5h4m-3 14h2"/></svg>
+        <span><strong>Recruit, on the go</strong><small>Download for Android · v1.4.1</small></span><b aria-hidden="true">↗</b>
       </a>
     </section>
   );

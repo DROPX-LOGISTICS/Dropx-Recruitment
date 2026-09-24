@@ -1,0 +1,68 @@
+/* Recruit-only identity. The parent DropX logo stays unchanged for corporate use. */
+.recruit-brand-lockup{display:flex;align-items:center;gap:18px;flex:none}
+.recruit-brand-lockup .recruit-parent-logo{display:block;width:108px;height:auto;object-fit:contain}
+.recruit-brand-divider{display:block;height:30px;width:1px;background:#d5ccc8;flex:none}
+.recruit-product-logo{display:flex;align-items:center;gap:7px;font-size:25px;font-weight:750;letter-spacing:-1px;color:#242631}
+.recruit-product-logo img{width:40px;height:40px;object-fit:contain}
+.brand .recruit-brand-lockup{gap:10px}
+.brand .recruit-parent-logo{width:77px;height:auto}
+.brand .recruit-brand-divider{height:25px;background:#e5e7eb}
+.brand .recruit-product-logo{font-size:19px;gap:3px;letter-spacing:-.7px}
+.brand .recruit-product-logo img{width:25px;height:25px}
+.recruit-login{min-height:100vh;min-height:100dvh;display:grid;grid-template-columns:minmax(0,1.08fr) minmax(0,1fr);background:#fff;padding:20px;gap:20px}
+.recruit-story{position:relative;isolation:isolate;overflow:hidden;border-radius:24px;background:#faf1ec;padding:clamp(32px,5vw,80px);display:flex;flex-direction:column;justify-content:space-between;min-height:700px}
+.recruit-story>.recruit-brand-lockup{position:relative;z-index:1}
+.recruit-story-copy{position:relative;z-index:1;margin:64px 0 48px}
+.recruit-eyebrow{font-size:10px;letter-spacing:.18em;font-weight:750;color:#865652}
+.recruit-story h2{font-size:clamp(42px,4.5vw,70px);font-weight:750;letter-spacing:-.055em;line-height:1.08;margin:24px 0;color:#232632}
+.recruit-story h2 em{font-style:normal;color:#b91e50}
+.recruit-story-copy>p{font-size:16px;line-height:1.8;color:#71686b;margin:24px 0 0}
+.recruit-team-types{display:flex;flex-wrap:wrap;gap:8px;margin-top:26px;max-width:420px}.recruit-team-types>span{font-size:10px;border:1px solid #e6d9d1;background:#ffffff60;color:#795d58;padding:7px 10px;border-radius:5px}
+.recruit-journey{display:flex;align-items:center;gap:clamp(12px,2vw,32px);position:relative;z-index:1;margin-bottom:60px}
+.recruit-journey>span{display:flex;flex-direction:column;gap:15px;font-size:13px;font-weight:700;color:#393540}
+.recruit-journey b{display:grid;place-items:center;width:38px;height:38px;border:1px solid #e5d1c9;border-radius:50%;color:#925947;font-size:10px;background:#fff8f4}
+.recruit-journey>span:last-of-type b{color:#fff;border-color:#b91e50;background:#b91e50}
+.recruit-journey>i{font-style:normal;color:#bf9d90;font-size:20px;padding-bottom:27px}
+.recruit-story-footer{font-size:11px;color:#71686b;display:flex;gap:9px;align-items:center;position:relative;z-index:1}
+.recruit-status-dot{height:6px;width:6px;border-radius:50%;background:#b91e50;flex:none}
+.recruit-orbit{position:absolute;border:1px solid rgba(183,87,65,.12);border-radius:50%;pointer-events:none;z-index:0}
+.recruit-orbit-one{width:600px;height:600px;right:-400px;bottom:35px}
+.recruit-orbit-two{width:790px;height:790px;right:-495px;bottom:-60px}
+.recruit-entry{position:relative;min-width:0;display:flex;flex-direction:column;justify-content:center;align-items:center;padding:64px 32px 82px}
+.recruit-mobile-brand{display:none}
+.recruit-entry .auth-panel{width:100%;max-width:380px;border:0;box-shadow:none;padding:0;margin:0;gap:0;background:transparent}
+.recruit-entry .auth-panel>.recruit-secure{align-self:flex-start;display:inline-flex;align-items:center;gap:6px;background:#f6f7f9;border:1px solid #eaecf0;color:#667085;padding:6px 9px;border-radius:6px;font-size:9px;letter-spacing:.05em}
+.recruit-entry .auth-panel h1{text-align:left;margin:24px 0 9px;font-size:34px;letter-spacing:-.045em;color:#232632}
+.recruit-entry .auth-panel>p{text-align:left;font-size:13px;line-height:1.6;margin:0 0 30px;color:#7b7b86}
+.recruit-entry .auth-panel form{display:flex;flex-direction:column;gap:9px}
+.recruit-entry .auth-panel label{color:#343944;font-size:12px;font-weight:650;margin:0 0 1px}
+.recruit-entry .mobile-field{border-color:#dde0e6;border-radius:9px;background:#fff;min-height:52px;transition:border-color .15s,box-shadow .15s}
+.recruit-entry .mobile-field:focus-within{border-color:#bb1d50;box-shadow:0 0 0 3px #d4275a12}
+.recruit-entry .mobile-field b{display:flex;align-items:center;background:transparent;padding:0 15px;font-weight:600;font-size:13px;color:#434853;border-right:1px solid #eef0f3;margin:13px 0}
+.recruit-entry .mobile-field input{width:100%;background:transparent;font-size:14px;color:#232632;padding:15px}
+.recruit-entry input::placeholder{color:#9b9ca6;font-size:13px}
+.recruit-entry .recruit-field-help{font-size:11px;color:#7b7b86;margin:0 0 15px;line-height:1.6}
+.recruit-entry .auth-panel .primary{display:flex;align-items:center;justify-content:space-between;min-height:50px;background:#c82258;border-color:#c82258;border-radius:9px;padding:12px 17px;font-size:13px;transition:background .15s}
+.recruit-entry .auth-panel .primary:hover:not(:disabled){background:#a91b48;border-color:#a91b48}
+.recruit-entry .primary>span{font-size:19px;font-weight:400}
+.recruit-entry .otp-field{width:100%;font-size:22px;letter-spacing:.3em;min-height:50px;outline-offset:3px}
+.recruit-entry .auth-panel .recruit-change-number{border:0;background:transparent;color:#a51c49;font-size:12px;padding:5px;align-self:center}
+.recruit-entry .or{margin:25px 0 20px}.recruit-entry .or i{background:#ececf0}.recruit-entry .or em{font-size:10px;color:#9595a0}
+.recruit-entry .google-button{width:100%;min-height:44px;display:flex;justify-content:center;overflow:hidden}
+.recruit-entry .auth-panel>.recruit-access-note{text-align:center;font-size:10px;color:#9696a0;margin:13px 0 0}
+.recruit-entry .auth-panel>.auth-message{background:#f8f6f7;border:1px solid #e8dde1;border-radius:8px;padding:12px;margin:16px 0 0;color:#71364c;font-size:12px;overflow-wrap:anywhere}
+.recruit-entry .android-download{display:flex;align-items:center;gap:12px;border-top:1px solid #eeeef1;padding-top:24px;margin-top:35px;color:#676b77;text-decoration:none;text-align:left}
+.recruit-entry .android-download>svg{flex:none;color:#84848f}
+.recruit-entry .android-download>span{display:flex;flex-direction:column;gap:5px;flex:1}
+.recruit-entry .android-download strong{font-size:12px;color:#454955;font-weight:600}.recruit-entry .android-download small{font-size:10px;font-weight:400;color:#9898a2}.recruit-entry .android-download>b{font-size:18px;font-weight:400}
+.recruit-entry .android-download:hover strong{color:#b91e50}
+.recruit-entry-footer{position:absolute;bottom:24px;text-align:center;font-size:10px;line-height:1.8;color:#9a9aa4}.recruit-entry-footer>span{padding:0 7px}
+.recruit-session-check{text-align:center;color:#7b7b86;font-size:13px}.recruit-session-check .loader{margin:0 auto 24px}
+.recruit-login :is(button,a,input):focus-visible{outline:2px solid #b91e50;outline-offset:4px}
+.recruit-entry .auth-panel>p,.recruit-entry .recruit-field-help,.recruit-entry .or em,.recruit-entry .auth-panel>.recruit-access-note,.recruit-entry .android-download small,.recruit-entry-footer{color:#6d6e79}
+.recruit-entry input::placeholder{color:#757581}
+.recruit-entry .auth-panel>.recruit-google-status{font-size:11px;text-align:center;margin:-36px 0 5px;min-height:31px;line-height:1.5}
+@media(min-width:1600px){.recruit-login{padding:28px;gap:28px}.recruit-story{padding:70px 90px}.recruit-entry .auth-panel{max-width:400px}}
+@media(max-width:1000px){.recruit-story{padding:36px 28px;min-height:680px}.recruit-entry{padding:48px 20px 80px}.recruit-story h2{font-size:44px}.recruit-story-copy>p{font-size:14px}.recruit-journey{gap:15px}}
+@media(max-width:760px){.recruit-login{display:block;min-height:100dvh;padding:0;background:#fff}.recruit-story{display:none}.recruit-entry{min-height:100dvh;padding:36px 24px 80px;justify-content:center}.recruit-mobile-brand{display:block;align-self:center;width:100%;max-width:380px;margin-bottom:42px}.recruit-mobile-brand .recruit-brand-lockup{gap:13px}.recruit-mobile-brand .recruit-parent-logo{width:95px}.recruit-entry .auth-panel{max-width:380px}.recruit-entry .auth-panel h1{font-size:31px;margin-top:20px}.recruit-entry .mobile-field input{font-size:16px}.recruit-entry-footer{bottom:20px;padding:0 12px;font-size:9px}.recruit-entry .android-download{margin-top:28px;padding-top:22px}}
+@media(prefers-reduced-motion:reduce){.recruit-login *{transition:none!important}.recruit-session-check .loader{animation:none}}

@@ -33,7 +33,8 @@ import {
   workforceOnboardingStage,
   workforceOnboardingStatusLabel
 } from "@/lib/workforce-profile-changes";
-import AuthPanel from "./AuthPanel";
+import RecruitLogin from "./RecruitLogin";
+import RecruitBrand from "./RecruitBrand";
 import FieldRouteMap from "./FieldRouteMap";
 import MetaAdPublisher from "./MetaAdPublisher";
 import MetaAudienceRadiusPicker from "./MetaAudienceRadiusPicker";
@@ -545,8 +546,8 @@ export default function RecruitmentApp() {
     setError("");
   }
 
-  if (checking) return <main className="login-screen"><div className="loader" /></main>;
-  if (!user || !token) return <main className="login-screen"><AuthPanel /></main>;
+  if (checking) return <RecruitLogin checking />;
+  if (!user || !token) return <RecruitLogin />;
 
   const workforceNav: Array<[string,string,string]> = [
     ["Overview","Workforce Plan","Workforce Plan"],
@@ -642,7 +643,7 @@ export default function RecruitmentApp() {
 
   return <main className="shell">
     <aside className={`sidebar ${mobileMenuOpen ? "mobile-open" : ""}`} aria-label="Recruitment navigation">
-      <div className="brand"><img src="/dropx-logo.png" alt="DropX" /><small>Recruitment</small><button className="mobile-menu-close" aria-label="Close menu" onClick={()=>setMobileMenuOpen(false)}>×</button></div>
+      <div className="brand"><RecruitBrand /><button className="mobile-menu-close" aria-label="Close menu" onClick={()=>setMobileMenuOpen(false)}>×</button></div>
       <nav>{navGroups.map(([section,items]) => section === "Master"
         ? <details className="nav-submenu" key={section} open={items.some(([, ,route])=>route===active)}>
             <summary>Master</summary>
