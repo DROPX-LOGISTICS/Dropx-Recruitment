@@ -64,8 +64,15 @@ describe("HR recruitment lifecycle", () => {
 
   it("only presents first-call outcomes allowed from the current status", () => {
     expect(allowedHrFirstCallOutcomeCodes(defaultHrLifecycleRules, "no_response"))
-      .toEqual(["interview_scheduled", "no_response", "call_back", "not_fit"]);
+      .toEqual(["profile_shared", "interview_scheduled", "no_response", "call_back", "not_fit", "not_interested"]);
     expect(allowedHrFirstCallOutcomeCodes(defaultHrLifecycleRules, "not_fit")).toEqual([]);
+    expect(allowedHrFirstCallOutcomeCodes(defaultHrLifecycleRules, "not_interested")).toEqual([]);
+  });
+
+  it("offers Not interested and Profile shared as call outcomes for a new candidate", () => {
+    const codes = allowedHrFirstCallOutcomeCodes(defaultHrLifecycleRules, "new");
+    expect(codes).toContain("not_interested");
+    expect(codes).toContain("profile_shared");
   });
 
   it("allows marking a candidate not interested from an active stage, and it is terminal", () => {

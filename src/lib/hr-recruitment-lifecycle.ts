@@ -35,11 +35,11 @@ export const defaultHrWorkflowSettings: HrWorkflowSettings = {
 };
 
 export const defaultHrLifecycleRules: HrLifecycleRule[] = [
-  rule("new", "New profile", "intake", 10, ["contacting", "screening", "no_response", "call_back", "not_fit", "not_interested", "interview_scheduled", "selected"]),
-  rule("contacting", "Contacting", "screening", 20, ["screening", "no_response", "call_back", "not_fit", "not_interested", "interview_scheduled", "selected"]),
+  rule("new", "New profile", "intake", 10, ["contacting", "screening", "no_response", "call_back", "not_fit", "not_interested", "profile_shared", "interview_scheduled", "selected"]),
+  rule("contacting", "Contacting", "screening", 20, ["screening", "no_response", "call_back", "not_fit", "not_interested", "profile_shared", "interview_scheduled", "selected"]),
   rule("screening", "Screening", "screening", 30, ["documents_pending", "profile_shared", "interview_scheduled", "selected", "hold", "not_interested", "rejected"]),
   rule("documents_pending", "Documents pending", "screening", 40, ["screening", "profile_shared", "interview_scheduled", "not_interested", "rejected"]),
-  rule("profile_shared", "Profile shared", "screening", 45, ["interview_scheduled", "hold", "not_interested", "rejected"]),
+  rule("profile_shared", "Profile shared", "screening", 45, ["screening", "interview_scheduled", "call_back", "no_response", "hold", "not_fit", "not_interested", "rejected"]),
   rule("interview_scheduled", "Interview scheduled", "interview", 50, ["interview_rescheduled", "interview_completed", "interview_no_show", "hold", "not_interested", "rejected"], { requiresSchedule: true, interviewerCanSet: true }),
   rule("interview_rescheduled", "Interview rescheduled", "interview", 55, ["interview_rescheduled", "interview_completed", "interview_no_show", "hold", "not_interested", "rejected"], { requiresSchedule: true, interviewerCanSet: true }),
   rule("interview_completed", "Interview completed", "interview", 60, ["round_2_pending", "selected", "hold", "not_interested", "rejected"], { interviewerCanSet: true }),
@@ -49,9 +49,9 @@ export const defaultHrLifecycleRules: HrLifecycleRule[] = [
   rule("offer_pending", "Offer pending", "offer", 90, ["offered", "not_interested", "rejected"]),
   rule("offered", "Offer issued", "offer", 100, ["joined", "not_interested", "rejected"]),
   rule("joined", "Joined", "joining", 110, [], { isTerminal: true }),
-  rule("no_response", "No response", "follow_up", 120, ["contacting", "call_back", "not_fit", "not_interested", "interview_scheduled", "rejected"]),
-  rule("call_back", "Call back", "follow_up", 130, ["contacting", "screening", "no_response", "not_fit", "not_interested", "interview_scheduled", "rejected"]),
-  rule("hold", "On hold", "follow_up", 140, ["screening", "interview_scheduled", "not_interested", "rejected"]),
+  rule("no_response", "No response", "follow_up", 120, ["contacting", "call_back", "not_fit", "not_interested", "profile_shared", "interview_scheduled", "rejected"]),
+  rule("call_back", "Call back", "follow_up", 130, ["contacting", "screening", "no_response", "not_fit", "not_interested", "profile_shared", "interview_scheduled", "rejected"]),
+  rule("hold", "On hold", "follow_up", 140, ["screening", "interview_scheduled", "profile_shared", "not_interested", "rejected"]),
   rule("not_fit", "Not fit", "closed", 150, [], { isTerminal: true }),
   // Candidate explicitly declined / is no longer interested - distinct from
   // "not_fit" (an HR-side assessment) and "rejected" (an HR-side decision):
@@ -82,7 +82,7 @@ function rule(
     requiresSchedule: options.requiresSchedule ?? false,
     recruiterCanSet: !["interview_completed", "interview_no_show"].includes(code),
     interviewerCanSet: options.interviewerCanSet ?? false,
-    firstCallAvailable: ["no_response", "call_back", "not_fit", "interview_scheduled"].includes(code),
+    firstCallAvailable: ["no_response", "call_back", "not_fit", "not_interested", "profile_shared", "interview_scheduled"].includes(code),
     allowedNextCodes,
     notificationTrigger: code === "interview_scheduled" || code === "interview_rescheduled"
       ? "interview"

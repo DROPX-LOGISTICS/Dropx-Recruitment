@@ -11,7 +11,7 @@ describe("HR ATS product rules", () => {
   });
 
   it("keeps queue membership aligned to the HR lifecycle", () => {
-    expect(hrQueueStatusQuery("Screening")).toBe("new,contacting,screening,documents_pending");
+    expect(hrQueueStatusQuery("Screening")).toBe("new,contacting,screening,documents_pending,profile_shared");
     expect(hrQueueStatusQuery("Interviews")).toBe("");
     expect(hrQueueStatusQuery("Offers")).toBe("selected,offer_pending,offered");
   });

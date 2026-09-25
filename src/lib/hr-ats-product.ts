@@ -28,7 +28,7 @@ export function hrLifecycleFilterOptions(rules: HrLifecycleRule[] | null | undef
 }
 
 export function hrQueueStatusQuery(menu: string) {
-  if (menu === "Screening") return "new,contacting,screening,documents_pending";
+  if (menu === "Screening") return "new,contacting,screening,documents_pending,profile_shared";
   if (menu === "Documents") return "documents_pending";
   if (menu === "Offers") return "selected,offer_pending,offered";
   if (menu === "Hired") return "joined";
@@ -70,13 +70,14 @@ export function candidateJourney(
   let nextAction = "Start first call";
   if (["no_response", "call_back", "hold"].includes(status)) nextAction = "Complete follow-up";
   else if (["screening", "documents_pending"].includes(status)) nextAction = facts.hasResume ? "Complete screening" : "Collect resume";
+  else if (status === "profile_shared") nextAction = "Follow up on shared profile";
   else if (["interview_scheduled", "interview_rescheduled", "round_2_pending"].includes(status)) nextAction = "Complete interview round";
   else if (status === "interview_completed") nextAction = "Record hiring decision";
   else if (status === "selected") nextAction = "Create offer draft";
   else if (status === "offer_pending") nextAction = "Approve offer";
   else if (status === "offered") nextAction = "Confirm joining";
   else if (status === "joined") nextAction = "Send to People onboarding";
-  else if (["not_fit", "rejected"].includes(status)) nextAction = "Closed";
+  else if (["not_fit", "not_interested", "rejected"].includes(status)) nextAction = "Closed";
 
   return { status, label: rule?.label ?? status.replaceAll("_", " "), activeStage, nextAction, blockers };
 }
