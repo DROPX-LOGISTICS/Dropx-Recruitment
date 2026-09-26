@@ -52,6 +52,7 @@ type RecruitmentMenuAccessLevel = "none"|"view"|"edit"|"all";
 type RecruitmentPermissionAction = "view"|"add"|"edit";
 type RecruitmentMenuActionGrant = Record<RecruitmentPermissionAction,boolean>;
 type User = { profileId: string; name: string | null; email: string | null; workforce: boolean; hr: boolean; allLocations: boolean; manageMasters: boolean; manageAds: boolean; manageUsers: boolean; accessTemplate?: string; menuPermissions?: string[]; webMenuPermissions?: string[]; mobileMenuPermissions?: string[]; menuAccess?: Record<"workforce"|"hr",Record<string,RecruitmentMenuAccessLevel>>; menuActions?: Record<"workforce"|"hr",Record<string,RecruitmentMenuActionGrant>>; adRequestActions?: string[]; recruitmentFunction?: "telecaller"|"field_recruiter"|"influencer"|"manager"|"viewer"; trackPerformance?: boolean; reportingManagerProfileId?: string|null; designationName?: string|null; designationCode?: string|null; isOwner?: boolean; canPreviewUsers?: boolean; isPreview?: boolean; viewerProfileId?: string; previewProfileId?: string|null; readOnly?: boolean };
+const WORKFORCE_REGISTER_PENDING = "pending,submitted,under_review,returned,approved";
 type Metrics = { total: number; noStatus: number; noResponse: number; callBack: number; interviews: number; joined: number; pending24h: number; unmapped: number };
 type Lead = {
   id: string; full_name: string | null; phone: string | null; email: string | null; city: string | null; post_code: string | null; ad_name: string | null;
@@ -373,6 +374,8 @@ export default function RecruitmentApp() {
             ? `?stream=${stream}`
             : endpoint === "field-duty"
               ? `?from=${istDate().slice(0,7)}-01&to=${istDate()}`
+            : endpoint === "field-executives"
+              ? `?scope=mine&status=${encodeURIComponent(WORKFORCE_REGISTER_PENDING)}`
             : endpoint === "masters"
               ? `?resource=${encodeURIComponent(active)}&stream=${stream}`
               : "";
@@ -554,7 +557,7 @@ export default function RecruitmentApp() {
     ["Overview","Command Center","Dashboard"],["Leads","All Leads","All Leads"],["Leads","No Response / Call Back","No Response / Call Back"],
     ["Leads","Interviews","Interviews"],["Leads","Archived Leads","Archived Leads"],["Leads","Unmapped","Unmapped"],["Leads","Reports","Reports"],
     ["Communication","WhatsApp Messages","WhatsApp Messages"],
-    ["Onboarding",user.recruitmentFunction==="influencer"?"Refer an Associate":"Workforce Onboarding","Field Executive Onboarding"],
+    ["Onboarding",user.recruitmentFunction==="influencer"?"Refer an Associate":"Workforce Register","Field Executive Onboarding"],
     ["Onboarding","DA In-app Onboarding","DA In-app Onboarding"],
     ["Performance","Performance Center","Performance Center"],
     ["Performance","Telecaller Performance","Recruiter Performance"],
@@ -1034,7 +1037,8 @@ function FieldExecutiveOnboarding({initialData,token,user,canEdit}:{initialData:
   const [data,setData]=useState<any>(initialData);
   const [search,setSearch]=useState("");
   const [scope,setScope]=useState<"mine"|"team"|"all">("mine");
-  const [status,setStatus]=useState("");
+  const [status,setStatus]=useState(WORKFORCE_REGISTER_PENDING);
+  const [registerView,setRegisterView]=useState<"pending"|"active">("pending");
   const [station,setStation]=useState("");
   const [designation,setDesignation]=useState("");
   const [page,setPage]=useState(1);
@@ -1048,12 +1052,12 @@ function FieldExecutiveOnboarding({initialData,token,user,canEdit}:{initialData:
   const [reviewNotes,setReviewNotes]=useState<Record<string,string>>({});
   const [form,setForm]=useState({fullName:"",mobileCountryCode:"91",mobile:"",email:"",joiningDate:istDate(),locationCode:"",designation:""});
   const [editForm,setEditForm]=useState({fullName:"",mobileCountryCode:"91",mobile:"",email:"",joiningDate:"",locationCode:"",designation:""});
-  const load=useCallback(async(nextPage=page,nextScope=scope)=>{
+  const load=useCallback(async(nextPage=page,nextScope=scope,nextStatus=status)=>{
     setBusy(true);setNotice("");
     try{
       const params=new URLSearchParams({scope:nextScope,page:String(nextPage)});
       if(search.trim())params.set("search",search.trim());
-      if(status)params.set("status",status);
+      if(nextStatus)params.set("status",nextStatus);
       if(station)params.set("station",station);
       if(designation)params.set("designation",designation);
       const response=await fetch(`/api/recruitment/field-executives?${params}`,{headers:headers(token),cache:"no-store"});
@@ -1083,9 +1087,10 @@ function FieldExecutiveOnboarding({initialData,token,user,canEdit}:{initialData:
     finally{setBusy(false);}
   }
   async function resetFilters(){
-    setSearch("");setStatus("");setStation("");setDesignation("");setBusy(true);setNotice("");
+    const resetStatus=registerView==="active"?"active":WORKFORCE_REGISTER_PENDING;
+    setSearch("");setStatus(resetStatus);setStation("");setDesignation("");setBusy(true);setNotice("");
     try{
-      const response=await fetch(`/api/recruitment/field-executives?scope=${scope}&page=1`,{headers:headers(token),cache:"no-store"});
+      const response=await fetch(`/api/recruitment/field-executives?scope=${scope}&page=1&status=${encodeURIComponent(resetStatus)}`,{headers:headers(token),cache:"no-store"});
       const payload=await response.json();if(!response.ok)throw new Error(payload.error||"Unable to reset Associate History.");
       setData(payload);setPage(1);
     }catch(error){setNotice(error instanceof Error?error.message:"Unable to reset Associate History.");}
@@ -1156,7 +1161,7 @@ function FieldExecutiveOnboarding({initialData,token,user,canEdit}:{initialData:
   const editReady=editForm.fullName.trim()&&/^\d{10}$/.test(editForm.mobile)&&/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(editForm.email.trim())&&editForm.joiningDate&&editForm.locationCode&&editForm.designation;
   const influencer=user.recruitmentFunction==="influencer";
   return <section className="onboarding-view">
-    <header className="onboarding-hero"><div><span>{influencer?"INFLUENCER REFERRAL":"WORKFORCE ONBOARDING"}</span><h2>{influencer?"Refer a Delivery Associate":"Field Executive Onboarding"}</h2><p>{influencer?"Initiate a candidate registration. DropX verifies duplicates and completes screening, approval, onboarding and deployment.":"The same shared profile, location master, designation rules and ID lifecycle used by the main dashboard."}</p></div>{canEdit?<button className="primary-action" onClick={()=>setShowForm((value)=>!value)}>{showForm?"Close form":influencer?"+ Refer Candidate":"+ Onboard Field Executive"}</button>:null}</header>
+    <header className="onboarding-hero"><div><span>{influencer?"INFLUENCER REFERRAL":"WORKFORCE REGISTER"}</span><h2>{influencer?"Refer a Delivery Associate":"Workforce Register"}</h2><p>{influencer?"Initiate a candidate registration. DropX verifies duplicates and completes screening, approval, onboarding and deployment.":"Track only your initiations by default, then hand approved associates to the Amazon ID activation queue."}</p></div>{canEdit?<button className="primary-action" onClick={()=>setShowForm((value)=>!value)}>{showForm?"Close form":influencer?"+ Refer Candidate":"+ Onboard Associate"}</button>:null}</header>
     {canEdit&&showForm?<section className="content-card onboarding-form"><div className="access-section-head"><div><h2>{influencer?"New candidate referral":"New Field Executive"}</h2><p>{influencer?"Enter the candidate’s verified contact, preferred station and DA role. Existing or duplicate candidates remain with their original source.":"Create the core profile here. The associate completes the remaining identity, bank, vehicle and document fields through the existing onboarding flow."}</p></div></div><div className="onboarding-form-grid"><label>Full name<input autoFocus value={form.fullName} onChange={(event)=>setForm({...form,fullName:event.target.value})}/></label><label>Mobile number<span className="phone-entry"><input aria-label="Country code" inputMode="numeric" value={form.mobileCountryCode} onChange={(event)=>setForm({...form,mobileCountryCode:event.target.value.replace(/\D/g,"").slice(0,4)})}/><input aria-label="Mobile number" inputMode="numeric" value={form.mobile} onChange={(event)=>setForm({...form,mobile:event.target.value.replace(/\D/g,"").slice(0,15)})}/></span></label><label>Email<input type="email" value={form.email} onChange={(event)=>setForm({...form,email:event.target.value})}/></label><label>Expected joining date<input type="date" value={form.joiningDate} onChange={(event)=>setForm({...form,joiningDate:event.target.value})}/></label><SearchSelect label="Preferred station" value={form.locationCode} options={masterLocations.map((item:any)=>[item.code,`${item.code} — ${item.name}`])} onChange={(value)=>setForm({...form,locationCode:value,designation:""})}/><SearchSelect label="Role" value={form.designation} options={availableDesignations.map((item:any)=>[item.name,`${item.code} — ${item.name}`])} onChange={(value)=>setForm({...form,designation:value})}/></div><div className="form-actions"><button className="primary-action" disabled={busy||!form.fullName.trim()||form.mobile.length<6||!form.email.trim()||!form.locationCode||!form.designation||!form.joiningDate} onClick={()=>void create()}>{busy?"Checking and creating…":influencer?"Submit Referral":"Create Field Executive"}</button></div></section>:null}
     {data?.canApproveChanges&&(data?.approvalQueue??[]).length?<section className="content-card profile-change-approvals">
       <div className="onboarding-history-head"><div><h2>Profile change approvals</h2><p>Only invitation details are shown. A Business Head or Owner may approve or reject each correction.</p></div><strong>{data.approvalQueue.length} pending</strong></div>
@@ -1168,11 +1173,12 @@ function FieldExecutiveOnboarding({initialData,token,user,canEdit}:{initialData:
     </section>:null}
     {notice?<div className={/(created|sent|approved|applied|rejected)/i.test(notice)?"success-banner":"error-banner"}>{notice}</div>:null}
     <section className="content-card onboarding-history">
+      <nav className="workforce-register-tabs" aria-label="Workforce register status"><button className={registerView==="pending"?"selected":""} onClick={()=>{setRegisterView("pending");setStatus(WORKFORCE_REGISTER_PENDING);void load(1,scope,WORKFORCE_REGISTER_PENDING);}}>Pending <strong>{Number(data?.registerCounts?.pending??0)}</strong></button><button className={registerView==="active"?"selected":""} onClick={()=>{setRegisterView("active");setStatus("active");void load(1,scope,"active");}}>Active <strong>{Number(data?.registerCounts?.active??0)}</strong></button></nav>
       <div className="onboarding-history-head"><div><h2>{influencer?"My Referrals":"Associate History"}</h2><p>Only associates initiated by {user.name||"you"} are shown by default.</p></div><div className="scope-switch"><button className={scope==="mine"?"selected":""} onClick={()=>void load(1,"mine")}>My Initiations</button>{data?.canViewTeam?<button className={scope==="team"?"selected":""} onClick={()=>void load(1,"team")}>My Team</button>:null}{data?.canViewAll?<button className={scope==="all"?"selected":""} onClick={()=>void load(1,"all")}>All</button>:null}</div></div>
       <div className="toolbar filter-toolbar"><input placeholder="Name, mobile, email, DropX or biometric ID…" value={search} onChange={(event)=>setSearch(event.target.value)} onKeyDown={(event)=>{if(event.key==="Enter")void load(1);}}/><MultiFilter label="Status" value={status} options={statusOptions.map((item:string)=>[item,workforceOnboardingStatusLabel(item)])} onChange={setStatus}/><MultiFilter label="Locations" value={station} options={masterLocations.map((item:any)=>[item.code,`${item.code} — ${item.name}`])} onChange={setStation}/><MultiFilter label="Designations" value={designation} options={masterDesignations.map((item:any)=>[item.name,`${item.code} — ${item.name}`])} onChange={setDesignation}/><button disabled={busy} onClick={()=>void load(1)}>{busy?"Applying…":"Apply filters"}</button><button className="reset-btn" onClick={()=>void resetFilters()}>Reset</button></div>
       <div className="associate-history-grid">{executives.map((item:any)=>{
         const stage=workforceOnboardingStage(item);
-        return <article key={item.id}><header><span className={`status status-${stage.code}`}>{stage.label}</span><small>{item.date_of_join?new Date(`${item.date_of_join}T00:00:00`).toLocaleDateString("en-IN"):"—"}</small></header><h3>{item.full_name}</h3><a href={`tel:+${item.mobile_country_code||"91"}${item.mobile}`}>+{item.mobile_country_code||"91"} {item.mobile}</a><dl><span><dt>DropX ID</dt><dd>{item.dropx_id||"Pending"}</dd></span><span><dt>Biometric</dt><dd>{item.biometric_id||"Pending"}</dd></span><span><dt>Station</dt><dd>{item.stations?.station_code||"—"}</dd></span><span><dt>Designation</dt><dd>{item.designation||"—"}</dd></span></dl>{item.changeRequest?.status==="pending"?<p className="profile-change-state">Correction pending Business Head / Owner approval</p>:item.changeRequest?.status==="rejected"?<p className="profile-change-state rejected">Last correction rejected{item.changeRequest.review_note?`: ${item.changeRequest.review_note}`:""}</p>:null}{item.closure?<p className="invitation-closure-state"><b>{item.closure.metadata?.reason_label||"Invitation closed"}</b><span>{item.closure.closedBy} · {new Date(item.closure.created_at).toLocaleString("en-IN")}</span>{item.closure.metadata?.notes?<em>{item.closure.metadata.notes}</em>:null}</p>:null}<footer><span>Initiated by <b>{item.initiatedBy}</b></span><div><button onClick={()=>openExecutive(item,false)}>View</button>{item.canRequestEdit?<button onClick={()=>openExecutive(item,true)}>Edit</button>:null}{item.canCloseInvitation?<button className="close-invitation-action" onClick={()=>openClosure(item)}>Close invitation</button>:null}</div></footer></article>;
+        return <article key={item.id}><header><span className={`status status-${stage.code}`}>{stage.label}</span><small>{item.date_of_join?new Date(`${item.date_of_join}T00:00:00`).toLocaleDateString("en-IN"):"—"}</small></header><h3>{item.full_name}</h3><a href={`tel:+${item.mobile_country_code||"91"}${item.mobile}`}>+{item.mobile_country_code||"91"} {item.mobile}</a><dl><span><dt>DropX ID</dt><dd>{item.dropx_id||"Pending"}</dd></span><span><dt>Biometric</dt><dd>{item.biometric_id||"Pending"}</dd></span><span><dt>Station</dt><dd>{item.stations?.station_code||"—"}</dd></span><span><dt>Designation</dt><dd>{item.designation||"—"}</dd></span></dl>{item.changeRequest?.status==="pending"?<p className="profile-change-state">Correction pending Business Head / Owner approval</p>:item.changeRequest?.status==="rejected"?<p className="profile-change-state rejected">Last correction rejected{item.changeRequest.review_note?`: ${item.changeRequest.review_note}`:""}</p>:null}{item.closure?<p className="invitation-closure-state"><b>{item.closure.metadata?.reason_label||"Invitation closed"}</b><span>{item.closure.closedBy} · {new Date(item.closure.created_at).toLocaleString("en-IN")}</span>{item.closure.metadata?.notes?<em>{item.closure.metadata.notes}</em>:null}</p>:null}<footer><span>Initiated by <b>{item.initiatedBy}</b></span><div>{["approved","active"].includes(String(item.onboarding_status||""))&&item.dropx_id?<a className="amazon-id-action" href={`https://workforce.dropxlogistics.com/delivery-network/id-onboarding?view=pending&q=${encodeURIComponent(item.dropx_id)}`} target="_blank" rel="noreferrer">Create Amazon ID ↗</a>:null}<button onClick={()=>openExecutive(item,false)}>View</button>{item.canRequestEdit?<button onClick={()=>openExecutive(item,true)}>Edit</button>:null}{item.canCloseInvitation?<button className="close-invitation-action" onClick={()=>openClosure(item)}>Close invitation</button>:null}</div></footer></article>;
       })}</div>
       {!busy&&!executives.length?<div className="empty">No Field Executives match this view. “My Initiations” only shows associates created by your login.</div>:null}
       <div className="pager"><button disabled={page<=1||busy} onClick={()=>void load(page-1)}>Previous</button><span>Page {page} of {Math.max(1,Math.ceil(Number(data?.total||0)/50))}</span><button disabled={page*50>=Number(data?.total||0)||busy} onClick={()=>void load(page+1)}>Next</button></div>

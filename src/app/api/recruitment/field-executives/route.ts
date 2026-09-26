@@ -19,6 +19,7 @@ const csv = (value: string | null) => (value ?? "").split(",").map((item) => ite
 const clean = (value: unknown, limit = 180) => String(value ?? "").trim().slice(0, limit);
 const profileChangeColumns = "id,field_executive_id,requested_by,status,current_values,proposed_values,reviewed_by,review_note,reviewed_at,created_at,updated_at";
 const closureEventColumns = "field_executive_id,actor_user_id,remarks,metadata,created_at";
+const pendingRegisterStatuses = ["pending","submitted","under_review","returned","approved"];
 
 async function invitationCloseReasons(companyId: string) {
   const result = await supabaseAdmin!.from("workforce_invitation_close_reasons")
@@ -106,7 +107,7 @@ export async function GET(request: Request) {
         .eq("company_id", companyId).in("station_code", stationCodes);
       if (result.error) throw new Error(result.error.message);
       stationIds = (result.data ?? []).map((item) => item.id);
-      if (!stationIds.length) return NextResponse.json({ executives: [], total: 0, page, scope, facets: { statuses: [], stations: [], designations: [] } });
+      if (!stationIds.length) return NextResponse.json({ executives: [], total: 0, page, scope, registerCounts:{pending:0,active:0}, facets: { statuses: [], stations: [], designations: [] } });
     }
 
     let query = supabaseAdmin.from(WORKFORCE_PROFILE_TABLE)
@@ -132,6 +133,24 @@ export async function GET(request: Request) {
     }
     const result = await query.order("created_at", { ascending: false }).range((page - 1) * limit, page * limit - 1);
     if (result.error) throw new Error(result.error.message);
+    let pendingCountQuery = supabaseAdmin.from(WORKFORCE_PROFILE_TABLE).select("id", { count:"exact", head:true })
+      .eq("company_id", companyId).in("onboarding_status", pendingRegisterStatuses);
+    let activeCountQuery = supabaseAdmin.from(WORKFORCE_PROFILE_TABLE).select("id", { count:"exact", head:true })
+      .eq("company_id", companyId).eq("onboarding_status", "active").eq("is_active", true);
+    if (creatorIds.length) {
+      pendingCountQuery = pendingCountQuery.in("created_by", creatorIds);
+      activeCountQuery = activeCountQuery.in("created_by", creatorIds);
+    }
+    if (stationIds.length) {
+      pendingCountQuery = pendingCountQuery.in("location_id", stationIds);
+      activeCountQuery = activeCountQuery.in("location_id", stationIds);
+    }
+    if (designationFilters.length) {
+      pendingCountQuery = pendingCountQuery.in("designation", designationFilters);
+      activeCountQuery = activeCountQuery.in("designation", designationFilters);
+    }
+    const [pendingCount,activeCount] = await Promise.all([pendingCountQuery,activeCountQuery]);
+    if (pendingCount.error || activeCount.error) throw new Error(pendingCount.error?.message || activeCount.error?.message);
     const canApproveChanges = canApproveWorkforceProfileChanges(session);
     const executiveIds = (result.data ?? []).map((item: any) => item.id);
     const [visibleRequests, approvalRequests, closureEvents, closeReasons] = await Promise.all([
@@ -223,6 +242,7 @@ export async function GET(request: Request) {
       if (!permittedStationCodes.length) {
         return NextResponse.json({
           executives, total: result.count ?? 0, page, scope,
+          registerCounts: { pending:pendingCount.count??0, active:activeCount.count??0 },
           canViewTeam,
           canViewAll: fullScope,
           facets: { statuses: ["pending","submitted","under_review","returned","approved","rejected","cancelled","active","inactive"], stations: [], designations: [] },
@@ -259,6 +279,7 @@ export async function GET(request: Request) {
       }));
     return NextResponse.json({
       executives, total: result.count ?? 0, page, scope,
+      registerCounts: { pending:pendingCount.count??0, active:activeCount.count??0 },
       canViewTeam,
       canViewAll: fullScope,
       canApproveChanges,
