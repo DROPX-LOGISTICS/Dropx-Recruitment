@@ -153,12 +153,20 @@ export async function GET(request: Request) {
     if (pendingCount.error || activeCount.error) throw new Error(pendingCount.error?.message || activeCount.error?.message);
     const canApproveChanges = canApproveWorkforceProfileChanges(session);
     const executiveIds = (result.data ?? []).map((item: any) => item.id);
-    const [visibleRequests, approvalRequests, closureEvents, closeReasons] = await Promise.all([
+    const [visibleRequests, approvalRequests, closureEvents, closeReasons, invitationRequests] = await Promise.all([
       profileChangeRequests(companyId, executiveIds),
       pendingApprovalQueue(companyId, canApproveChanges),
       invitationClosureEvents(companyId, executiveIds),
-      invitationCloseReasons(companyId)
+      invitationCloseReasons(companyId),
+      executiveIds.length
+        ? supabaseAdmin.from("workforce_amazon_invitation_requests")
+            .select("id,workforce_id,status,error_message,requested_at")
+            .eq("company_id", companyId)
+            .in("workforce_id", executiveIds)
+            .order("requested_at", { ascending: false })
+        : Promise.resolve({ data: [], error: null })
     ]);
+    if (invitationRequests.error) throw new Error(invitationRequests.error.message);
     const approvalExecutiveIds = [...new Set(approvalRequests.map((item: any) => item.field_executive_id).filter(Boolean))];
     const approvalExecutives = approvalExecutiveIds.length
       ? await supabaseAdmin.from(WORKFORCE_PROFILE_TABLE)
@@ -179,6 +187,10 @@ export async function GET(request: Request) {
     if (profiles.error) throw new Error(profiles.error.message);
     const profileMap = new Map((profiles.data ?? []).map((item) => [item.id, item]));
     const latestRequests = latestRequestByExecutive(visibleRequests);
+    const latestAmazonInvitation = new Map<string, any>();
+    for (const invitation of invitationRequests.data ?? []) {
+      if (!latestAmazonInvitation.has(invitation.workforce_id)) latestAmazonInvitation.set(invitation.workforce_id, invitation);
+    }
     const latestClosures = new Map<string, any>();
     for (const event of closureEvents) {
       if (!latestClosures.has(event.field_executive_id)) latestClosures.set(event.field_executive_id, event);
@@ -188,6 +200,9 @@ export async function GET(request: Request) {
       : [];
     const executives = (result.data ?? []).map((item: any) => ({
       ...item,
+      amazonInvitation: latestAmazonInvitation.get(item.id) ?? null,
+      canQueueAmazonId: item.created_by === session.profileId
+        && ["approved", "active"].includes(String(item.onboarding_status ?? "")),
       initiatedBy: profileMap.get(item.created_by)?.full_name || profileMap.get(item.created_by)?.email || "DropX user",
       canRequestEdit: canRequestWorkforceProfileChange(session.profileId, item.created_by)
         && item.onboarding_status !== "cancelled"
@@ -405,6 +420,87 @@ export async function PATCH(request: Request) {
     const companyId = requiredEnv("RECRUITMENT_COMPANY_ID");
     const body = await request.json();
     const action = clean(body.action, 40).toLowerCase();
+
+    if (action === "queue_amazon_invitation") {
+      if (!canUseRecruitmentMenu(session, "Field Executive Onboarding", "add", "workforce")) {
+        return NextResponse.json({ error: "Recruitment onboarding access is required." }, { status: 403 });
+      }
+      const workforceId = clean(body.id, 80);
+      if (!workforceId) throw new Error("Associate is required.");
+      const target = await supabaseAdmin.from(WORKFORCE_PROFILE_TABLE)
+        .select("id,full_name,location_id,created_by,onboarding_status,stations(station_code)")
+        .eq("company_id", companyId)
+        .eq("id", workforceId)
+        .maybeSingle();
+      if (target.error) throw new Error(target.error.message);
+      if (!target.data) throw new Error("Associate was not found.");
+      if (target.data.created_by !== session.profileId) {
+        return NextResponse.json({ error: "Recruit can create Amazon IDs only for associates invited by this login." }, { status: 403 });
+      }
+      if (!["approved", "active"].includes(String(target.data.onboarding_status ?? ""))) {
+        throw new Error("Approve the associate before creating the Amazon ID.");
+      }
+      const station = Array.isArray(target.data.stations) ? target.data.stations[0] : target.data.stations;
+      if (!session.allLocations) {
+        const recruitmentLocation = await supabaseAdmin.from("recruitment_locations")
+          .select("id")
+          .eq("company_id", companyId)
+          .eq("code", station?.station_code ?? "")
+          .eq("is_active", true)
+          .maybeSingle();
+        if (recruitmentLocation.error) throw new Error(recruitmentLocation.error.message);
+        if (!recruitmentLocation.data || !session.locationIds.includes(recruitmentLocation.data.id)) {
+          return NextResponse.json({ error: "Associate is outside your station scope." }, { status: 403 });
+        }
+      }
+      const latest = await supabaseAdmin.from("workforce_amazon_invitation_requests")
+        .select("id,status")
+        .eq("company_id", companyId)
+        .eq("workforce_id", workforceId)
+        .order("requested_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (latest.error) throw new Error(latest.error.message);
+      if (latest.data && latest.data.status === "failed") {
+        const retried = await supabaseAdmin.rpc("workforce_retry_amazon_invitation", {
+          p_company: companyId,
+          p_actor: session.profileId,
+          p_request: latest.data.id,
+          p_locations: [target.data.location_id]
+        });
+        if (retried.error) throw new Error(retried.error.message);
+        return NextResponse.json({ message: "Amazon ID invitation retry queued from Recruit." });
+      }
+      if (latest.data && ["queued", "processing", "sent"].includes(latest.data.status)) {
+        return NextResponse.json({ message: `Amazon ID invitation is already ${latest.data.status}.` });
+      }
+      const settings = await supabaseAdmin.from("workforce_amazon_station_settings")
+        .select("associate_email_pattern,invitation_enabled")
+        .eq("company_id", companyId)
+        .eq("station_id", target.data.location_id)
+        .maybeSingle();
+      if (settings.error) throw new Error(settings.error.message);
+      if (!settings.data?.invitation_enabled || !settings.data.associate_email_pattern) {
+        throw new Error("Complete and enable the Amazon station invitation master first.");
+      }
+      const generated = await supabaseAdmin.rpc("workforce_amazon_email_from_pattern", {
+        p_pattern: settings.data.associate_email_pattern,
+        p_full_name: target.data.full_name,
+        p_station_code: station?.station_code ?? ""
+      });
+      if (generated.error || !generated.data) throw new Error(generated.error?.message || "Unable to generate the station email.");
+      const queued = await supabaseAdmin.rpc("workforce_queue_amazon_invitation", {
+        p_company: companyId,
+        p_actor: session.profileId,
+        p_actor_name: session.displayName || session.email || "Recruit",
+        p_workforce: workforceId,
+        p_email: generated.data,
+        p_source_portal: "recruit",
+        p_locations: [target.data.location_id]
+      });
+      if (queued.error) throw new Error(queued.error.message);
+      return NextResponse.json({ requestId: queued.data, message: "Amazon ID invitation queued from Recruit." });
+    }
 
     if (action === "close_invitation") {
       const fieldExecutiveId = clean(body.id, 80);
