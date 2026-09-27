@@ -2566,6 +2566,12 @@ function ConnectionMaster({ data, token, canEdit, reload }: { data: any; token: 
     <section className="content-card connection-intro"><div><h2>Connection Master</h2><p>Direct Meta and Indeed intake, WhatsApp messaging, Google login, and mobile services. Edit access is controlled from User Roles. Secret values are encrypted and never shown again.</p></div>
       <dl><dt>Meta webhook</dt><dd>{data?.endpoints?.metaWebhook || "—"}</dd><dt>Indeed webhook</dt><dd>{data?.endpoints?.indeedWebhook || "—"}</dd><dt>WhatsApp webhook</dt><dd>{data?.endpoints?.whatsappWebhook || "—"}</dd><dt>Authorized web origin</dt><dd>{data?.endpoints?.googleOrigin || "—"}</dd></dl>
     </section>
+    <section className="content-card">
+      <div className="access-section-head"><div><h2>WhatsApp templates</h2><p>Create and track approval in the shared template library. Use the same WhatsApp business account as Recruit, then enter the approved name in the workflow fields below. Existing recruitment messages stay unchanged.</p></div>
+        <a className="primary-action" href="https://dashboard.dropxlogistics.com/notifications/whatsapp/templates" target="_blank" rel="noopener noreferrer">Open template library ↗</a>
+      </div>
+      <a href="https://workforce.dropxlogistics.com/delivery-network/communications/whatsapp" target="_blank" rel="noopener noreferrer">Send a bulk message to associates ↗</a>
+    </section>
     <div className="connection-grid">{Object.entries(connectionDefinitions).map(([provider, definition]) =>
       <ConnectionCard key={provider} provider={provider} definition={definition} current={rows[provider]} token={token} canEdit={canEdit} reload={reload} />
     )}</div>
