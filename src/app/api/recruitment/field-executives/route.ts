@@ -1,3 +1,4 @@
+import { loadPartnerOnboardingStates } from "@/lib/partner-onboarding";
 import { NextResponse } from "next/server";
 import { canUseRecruitmentMenu, recruitmentSession, requiredEnv } from "@/lib/recruitment-api";
 import { loadWorkforceConfig, workforceTeamProfileIds } from "@/lib/recruitment-workforce-config";
@@ -92,14 +93,9 @@ export async function GET(request: Request) {
     let creatorIds = [session.profileId];
     let scope = "mine";
     const fullScope = canUseRecruitmentMenu(session, "Field Executive Onboarding", "all", "workforce");
-    const canViewTeam = fullScope || session.recruitmentFunction === "manager";
-    if (requestedScope === "team" && canViewTeam) {
-      creatorIds = workforceTeamProfileIds(session.profileId, config.userFunctions);
-      scope = "team";
-    } else if (requestedScope === "all" && fullScope) {
-      creatorIds = [];
-      scope = "all";
-    }
+    const canViewTeam = false;
+    // The onboarding register is personal to the initiating recruiter.
+    // Management approvals remain separately permission-controlled.
 
     let stationIds: string[] = [];
     if (stationCodes.length) {
@@ -116,41 +112,24 @@ export async function GET(request: Request) {
     if (creatorIds.length) query = query.in("created_by", creatorIds);
     if (stationIds.length) query = query.in("location_id", stationIds);
     if (designationFilters.length) query = query.in("designation", designationFilters);
-    if (statuses.length) {
-      const active = statuses.includes("active");
-      const inactive = statuses.includes("inactive");
-      const onboarding = statuses.filter((item) => !["active", "inactive"].includes(item));
-      if (active && !inactive && !onboarding.length) query = query.eq("is_active", true);
-      else if (inactive && !active && !onboarding.length) {
-        query = query.eq("is_active", false)
-          .or("onboarding_status.is.null,onboarding_status.in.(inactive,rejected,cancelled)");
-      }
-      else if (onboarding.length) query = query.in("onboarding_status", onboarding);
-    }
     if (search) {
       const safe = search.replace(/[,%()]/g, " ");
       query = query.or(`full_name.ilike.%${safe}%,mobile.ilike.%${safe}%,email.ilike.%${safe}%,dropx_id.ilike.%${safe}%,biometric_id.ilike.%${safe}%`);
     }
-    const result = await query.order("created_at", { ascending: false }).range((page - 1) * limit, page * limit - 1);
-    if (result.error) throw new Error(result.error.message);
-    let pendingCountQuery = supabaseAdmin.from(WORKFORCE_PROFILE_TABLE).select("id", { count:"exact", head:true })
-      .eq("company_id", companyId).in("onboarding_status", pendingRegisterStatuses);
-    let activeCountQuery = supabaseAdmin.from(WORKFORCE_PROFILE_TABLE).select("id", { count:"exact", head:true })
-      .eq("company_id", companyId).eq("onboarding_status", "active").eq("is_active", true);
-    if (creatorIds.length) {
-      pendingCountQuery = pendingCountQuery.in("created_by", creatorIds);
-      activeCountQuery = activeCountQuery.in("created_by", creatorIds);
+    const allRows:any[]=[];
+    for(let offset=0;;offset+=500){
+      const chunk=await query.order("created_at",{ascending:false}).order("id").range(offset,offset+499);
+      if(chunk.error)throw new Error(chunk.error.message);
+      allRows.push(...chunk.data??[]);if((chunk.data?.length??0)<500)break;
+      if(offset===9500)throw new Error("Narrow the register filters before loading this many associates.");
     }
-    if (stationIds.length) {
-      pendingCountQuery = pendingCountQuery.in("location_id", stationIds);
-      activeCountQuery = activeCountQuery.in("location_id", stationIds);
-    }
-    if (designationFilters.length) {
-      pendingCountQuery = pendingCountQuery.in("designation", designationFilters);
-      activeCountQuery = activeCountQuery.in("designation", designationFilters);
-    }
-    const [pendingCount,activeCount] = await Promise.all([pendingCountQuery,activeCountQuery]);
-    if (pendingCount.error || activeCount.error) throw new Error(pendingCount.error?.message || activeCount.error?.message);
+    const partnerStates=await loadPartnerOnboardingStates(supabaseAdmin,companyId,allRows.map(row=>row.id));
+    const isActive=(row:any)=>partnerStates.has(row.id)?Boolean(partnerStates.get(row.id)?.mapping_confirmed):row.is_active&&row.onboarding_status==='active';
+    const isPending=(row:any)=>!isActive(row)&&!["cancelled","rejected","inactive","offboarded","exited"].includes(row.onboarding_status);
+    const pendingCount={count:allRows.filter(isPending).length};const activeCount={count:allRows.filter(isActive).length};
+    const pendingTab=statuses.length>1&&statuses.every(value=>pendingRegisterStatuses.includes(value));
+    const visible=allRows.filter(row=>!statuses.length||(statuses.length===1&&statuses[0]==='active'?isActive(row):pendingTab?isPending(row):statuses.includes(row.onboarding_status)));
+    const result={data:visible.slice((page-1)*limit,page*limit),count:visible.length};
     const canApproveChanges = canApproveWorkforceProfileChanges(session);
     const executiveIds = (result.data ?? []).map((item: any) => item.id);
     const [visibleRequests, approvalRequests, closureEvents, closeReasons, invitationRequests] = await Promise.all([
@@ -200,9 +179,10 @@ export async function GET(request: Request) {
       : [];
     const executives = (result.data ?? []).map((item: any) => ({
       ...item,
+      partnerOnboarding: partnerStates.get(item.id) ?? null,
       amazonInvitation: latestAmazonInvitation.get(item.id) ?? null,
       canQueueAmazonId: item.created_by === session.profileId
-        && ["approved", "active"].includes(String(item.onboarding_status ?? "")),
+        && Boolean(partnerStates.get(item.id)?.can_trigger),
       initiatedBy: profileMap.get(item.created_by)?.full_name || profileMap.get(item.created_by)?.email || "DropX user",
       canRequestEdit: canRequestWorkforceProfileChange(session.profileId, item.created_by)
         && item.onboarding_status !== "cancelled"
@@ -259,7 +239,7 @@ export async function GET(request: Request) {
           executives, total: result.count ?? 0, page, scope,
           registerCounts: { pending:pendingCount.count??0, active:activeCount.count??0 },
           canViewTeam,
-          canViewAll: fullScope,
+          canViewAll: false,
           facets: { statuses: ["pending","submitted","under_review","returned","approved","rejected","cancelled","active","inactive"], stations: [], designations: [] },
           master: { locations: [], designations: [], invitationCloseReasons: closeReasons }
         });
@@ -296,7 +276,7 @@ export async function GET(request: Request) {
       executives, total: result.count ?? 0, page, scope,
       registerCounts: { pending:pendingCount.count??0, active:activeCount.count??0 },
       canViewTeam,
-      canViewAll: fullScope,
+      canViewAll: false,
       canApproveChanges,
       approvalQueue,
       facets: {
@@ -428,7 +408,7 @@ export async function PATCH(request: Request) {
       const workforceId = clean(body.id, 80);
       if (!workforceId) throw new Error("Associate is required.");
       const target = await supabaseAdmin.from(WORKFORCE_PROFILE_TABLE)
-        .select("id,full_name,location_id,created_by,onboarding_status,stations(station_code)")
+        .select("id,email,full_name,location_id,created_by,onboarding_status,stations(station_code)")
         .eq("company_id", companyId)
         .eq("id", workforceId)
         .maybeSingle();
@@ -437,8 +417,8 @@ export async function PATCH(request: Request) {
       if (target.data.created_by !== session.profileId) {
         return NextResponse.json({ error: "Recruit can create Amazon IDs only for associates invited by this login." }, { status: 403 });
       }
-      if (!["approved", "active"].includes(String(target.data.onboarding_status ?? ""))) {
-        throw new Error("Approve the associate before creating the Amazon ID.");
+      if (!["under_review", "approved", "active"].includes(String(target.data.onboarding_status ?? ""))) {
+        throw new Error("Complete registration before creating the partner ID.");
       }
       const station = Array.isArray(target.data.stations) ? target.data.stations[0] : target.data.stations;
       if (!session.allLocations) {
@@ -474,27 +454,12 @@ export async function PATCH(request: Request) {
       if (latest.data && ["queued", "processing", "sent"].includes(latest.data.status)) {
         return NextResponse.json({ message: `Amazon ID invitation is already ${latest.data.status}.` });
       }
-      const settings = await supabaseAdmin.from("workforce_amazon_station_settings")
-        .select("associate_email_pattern,invitation_enabled")
-        .eq("company_id", companyId)
-        .eq("station_id", target.data.location_id)
-        .maybeSingle();
-      if (settings.error) throw new Error(settings.error.message);
-      if (!settings.data?.invitation_enabled || !settings.data.associate_email_pattern) {
-        throw new Error("Complete and enable the Amazon station invitation master first.");
-      }
-      const generated = await supabaseAdmin.rpc("workforce_amazon_email_from_pattern", {
-        p_pattern: settings.data.associate_email_pattern,
-        p_full_name: target.data.full_name,
-        p_station_code: station?.station_code ?? ""
-      });
-      if (generated.error || !generated.data) throw new Error(generated.error?.message || "Unable to generate the station email.");
       const queued = await supabaseAdmin.rpc("workforce_queue_amazon_invitation", {
         p_company: companyId,
         p_actor: session.profileId,
         p_actor_name: session.displayName || session.email || "Recruit",
         p_workforce: workforceId,
-        p_email: generated.data,
+        p_email: target.data.email,
         p_source_portal: "recruit",
         p_locations: [target.data.location_id]
       });
