@@ -781,6 +781,20 @@ export async function PATCH(request: Request) {
         if (adResult.error) throw new Error(adResult.error.message);
         publishedAdId = adResult.data.id;
       } else {
+        if (raw.mailSource && current.data.request_type === "resume_ad") {
+          const linked = current.data.recruitment_ads as any;
+          if (!linked?.meta_ad_id) throw new AdChangeError("No Meta ad is mapped to this request.");
+          const snapshot = await getMetaAdDeliverySnapshot(linked.meta_ad_id);
+          if (metaDeliveryStatus(snapshot) === "COMPLETED") {
+            const draft = body.metaDraft as Record<string, unknown> | undefined;
+            const terms = validateRestartTerms(draft?.daysRequired, draft?.dailyBudget);
+            finalRaw = { ...raw, restartCompleted: true, expectedEndTime: snapshot.adset?.end_time };
+            const prepared = await supabaseAdmin.from("recruitment_ad_requests").update({
+              days_required: terms.days, requested_budget: terms.budgetMinor / 100, raw_payload: finalRaw
+            }).eq("company_id", companyId).eq("id", id);
+            if (prepared.error) throw new Error(prepared.error.message);
+          }
+        }
         await completeMetaChange(companyId, id);
       }
     }
