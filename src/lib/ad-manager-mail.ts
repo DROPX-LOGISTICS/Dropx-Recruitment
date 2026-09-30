@@ -3,17 +3,20 @@ import nodemailer from 'nodemailer';
 import { supabaseAdmin } from './supabase-admin';
 import { requiredEnv } from './recruitment-api';
 import { loadAllSupabaseRows } from './supabase-pagination';
-import { adBudget,eveningDue,hash,ist,mailGroups,morningDue,normalizeAds,renderManagerMail,signAction,verifyAction,type MailActivity,type MailGroup,type MailPerson } from './ad-manager-mail-model';
+import { adBudget,eveningDue,hash,ist,mailGroups,morningDue,normalizeAds,renderManagerMail,signAction,verifyAction,type MailActivity,type MailAd,type MailGroup,type MailPerson } from './ad-manager-mail-model';
 
 function db(){if(!supabaseAdmin) throw new Error('Database unavailable.');return supabaseAdmin;}
 function checked<T extends {error:any;data:any}>(result:T):NonNullable<T['data']> {if(result.error) throw new Error(result.error.message);return result.data as NonNullable<T['data']>;}
 
 export async function loadMailContext(company:string) {
- const [people,ads]=await Promise.all([
+ const [people,ads,leadRows]=await Promise.all([
   db().rpc('recruitment_ad_mail_people',{p_company:company}),
-  loadAllSupabaseRows<any>((from,to)=>db().from('recruitment_ads').select('id,ad_name,status,daily_budget,poster_url,raw_payload,last_synced_at,location_id,role_id,recruitment_roles(code,name,stream),recruitment_locations(code,station_id)').eq('company_id',company).order('id').range(from,to),{maxRows:10000})
+  loadAllSupabaseRows<any>((from,to)=>db().from('recruitment_ads').select('id,ad_name,status,daily_budget,poster_url,raw_payload,last_synced_at,created_on,location_id,role_id,recruitment_roles(code,name,stream),recruitment_locations(code,station_id)').eq('company_id',company).order('id').range(from,to),{maxRows:10000}),
+  loadAllSupabaseRows<{ad_id:string|null}>((from,to)=>db().from('recruitment_leads').select('ad_id').eq('company_id',company).not('ad_id','is',null).range(from,to),{maxRows:100000})
  ]);
- const audience=checked(people) as MailPerson[];const mapped=normalizeAds(ads);
+ const leadsByAd=new Map<string,number>();
+ for(const lead of leadRows) if(lead.ad_id) leadsByAd.set(lead.ad_id,(leadsByAd.get(lead.ad_id)||0)+1);
+ const audience=checked(people) as MailPerson[];const mapped=normalizeAds(ads.map(ad=>({...ad,lead_count:leadsByAd.get(ad.id)||0})));
  return {people:audience,ads:mapped,groups:mailGroups(audience,mapped)};
 }
 
@@ -25,6 +28,10 @@ async function enqueue(company:string,group:MailGroup,kind:'daily'|'event'|'samp
 }
 function payloadFor(group:MailGroup,now:Date):Payload {return {groupKey:group.key,stations:group.stations,adIds:group.ads.map(ad=>ad.id),date:ist(now).slice(0,10)};}
 function istDayStart(now:Date) {return new Date(`${ist(now).slice(0,10)}T00:00:00+05:30`).toISOString();}
+function creativeFingerprint(ad:MailAd) {
+ const creative=ad.raw_payload?.creative||{};
+ return hash(JSON.stringify([ad.poster_url||null,creative.id||null,creative.image_url||null,creative.thumbnail_url||null]));
+}
 
 async function recordActivity(company:string,context:Awaited<ReturnType<typeof loadMailContext>>,settings:any,now:Date) {
  const snapshots=await loadAllSupabaseRows<any>((from,to)=>db().from('recruitment_ad_mail_snapshots').select('*').eq('company_id',company).order('ad_id').range(from,to),{maxRows:10000});
@@ -36,16 +43,22 @@ async function recordActivity(company:string,context:Awaited<ReturnType<typeof l
   const hasBudgetBaseline=old&&old.budget_amount!==null&&old.budget_amount!==undefined&&old.budget_kind;
   const statusChanged=Boolean(old&&old.status!==ad.status);
   const budgetChanged=Boolean(hasBudgetBaseline&&(Number(old.budget_amount)!==budget.amount||old.budget_kind!==budget.kind));
-  const version=Number(old?.version||0)+(statusChanged||budgetChanged?1:old?0:1);
-  if(settings.baselined_at&&(statusChanged||budgetChanged)) {
+  const creativeKey=creativeFingerprint(ad);
+  // Existing rows gain a creative baseline once after this release; that first observation is not an update.
+  const posterChanged=Boolean(old?.poster_fingerprint&&old.poster_fingerprint!==creativeKey);
+  const newAd=Boolean(settings.baselined_at&&!old);
+  const changed=statusChanged||budgetChanged||posterChanged||newAd;
+  const version=Number(old?.version||0)+(changed?1:old?0:1);
+  if(settings.baselined_at&&changed) {
+   const changeTypes=[newAd?'new_ad':null,posterChanged?'poster':null,statusChanged?'status':null,budgetChanged?'budget':null].filter(Boolean);
    checked(await db().from('recruitment_ad_mail_activity').upsert({
     id:randomUUID(),company_id:company,ad_id:ad.id,station_id:ad.stationId,station:ad.station,ad_name:ad.ad_name,role:ad.role,
-    occurred_at:now.toISOString(),previous_status:old.status,current_status:ad.status,
-    previous_budget:hasBudgetBaseline?Number(old.budget_amount):null,current_budget:budget.amount,budget_kind:budget.kind,version
+    occurred_at:now.toISOString(),previous_status:old?.status||null,current_status:ad.status,
+    previous_budget:hasBudgetBaseline?Number(old.budget_amount):null,current_budget:budget.amount,budget_kind:budget.kind,change_types:changeTypes,version
    },{onConflict:'company_id,ad_id,version',ignoreDuplicates:true}));
    recorded++;
   }
-  checked(await db().from('recruitment_ad_mail_snapshots').upsert({company_id:company,ad_id:ad.id,status:ad.status,budget_amount:budget.amount,budget_kind:budget.kind,version},{onConflict:'company_id,ad_id'}));
+  checked(await db().from('recruitment_ad_mail_snapshots').upsert({company_id:company,ad_id:ad.id,status:ad.status,budget_amount:budget.amount,budget_kind:budget.kind,poster_fingerprint:creativeKey,version},{onConflict:'company_id,ad_id'}));
  }
  if(!settings.baselined_at) checked(await db().from('recruitment_ad_mail_settings').update({baselined_at:now.toISOString(),updated_at:now.toISOString()}).eq('company_id',company));
  return {baseline:!settings.baselined_at,recorded};
@@ -99,6 +112,24 @@ async function deliveryActivities(company:string,activityIds:string[]|undefined)
  return checked(result) as MailActivity[];
 }
 
+/** Embed only vetted, bounded images so a report never exposes an arbitrary remote URL to recipients. */
+export async function posterAttachment(ad:MailAd) {
+ try {
+  const creative=ad.raw_payload?.creative||{};
+  const url=new URL(ad.poster_url||creative.image_url||creative.thumbnail_url||'');
+  const storageHost=new URL(requiredEnv('NEXT_PUBLIC_SUPABASE_URL')).hostname;
+  const allowed=url.hostname.endsWith('.fbcdn.net')||(url.hostname===storageHost&&url.pathname.startsWith('/storage/v1/object/'));
+  if(url.protocol!=='https:'||url.username||url.password||url.port||!allowed)return null;
+  const response=await fetch(url,{redirect:'error',signal:AbortSignal.timeout(7000),cache:'no-store'});
+  const mime=(response.headers.get('content-type')||'').split(';')[0];
+  if(!response.ok||!['image/png','image/jpeg','image/webp'].includes(mime)||Number(response.headers.get('content-length'))>600_000)return null;
+  const reader=response.body?.getReader();if(!reader)return null;
+  const chunks:Uint8Array[]=[];let size=0;
+  while(true){const chunk=await reader.read();if(chunk.done)break;size+=chunk.value.length;if(size>600_000){await reader.cancel();return null;}chunks.push(chunk.value);}
+  return {filename:`${ad.station}-poster.${mime==='image/jpeg'?'jpg':mime.split('/')[1]}`,content:Buffer.concat(chunks),contentType:mime,cid:`poster-${ad.id}@dropx`};
+ }catch{return null;}
+}
+
 async function deliver(company:string,job:any,context:Awaited<ReturnType<typeof loadMailContext>>) {
  const payload=job.payload as Payload;const sample=job.kind==='sample';
  let group=context.groups.find(candidate=>candidate.key===payload.groupKey&&candidate.manager.id===job.recipient_id);
@@ -112,13 +143,20 @@ async function deliver(company:string,job:any,context:Awaited<ReturnType<typeof 
  try {
   const smtp=checked(await db().from('email_notification_settings').select('is_enabled,smtp_host,smtp_port,smtp_user,smtp_pass,smtp_from,from_name').eq('company_id',company).eq('id',true).single());
   if(!smtp.is_enabled||!smtp.smtp_host||!smtp.smtp_from)throw new Error('Company email service is disabled or incomplete.');
-  const mail=renderManagerMail({group,kind,date:payload.date,sample,activities});
+  const visualAds=(kind==='daily'?group.ads.filter(ad=>ad.status==='ACTIVE'):group.ads.filter(ad=>activities.some(activity=>activity.ad_id===ad.id))).slice(0,8);
+  const posters=await Promise.all(visualAds.map(posterAttachment));
+  const images:Record<string,string>={};const attachments:any[]=[];
+  for(let index=0;index<posters.length;index++) {
+   const attachment=posters[index];
+   if(attachment){attachments.push(attachment);images[visualAds[index].id]=attachment.cid;}
+  }
+  const mail=renderManagerMail({group,kind,date:payload.date,sample,activities,images});
   const previous=checked(await db().from('recruitment_ad_mail_deliveries').select('message_id').eq('company_id',company).eq('thread_key',job.thread_key).eq('status','sent').order('sent_at').limit(1).maybeSingle());
   const claimed=checked(await db().from('recruitment_ad_mail_deliveries').update({status:'sending',attempts:Number(job.attempts)+1,error:null}).eq('id',job.id).eq('company_id',company).eq('status','queued').select('id'));
   if(!claimed.length)return false;
   const transport=nodemailer.createTransport({host:smtp.smtp_host,port:smtp.smtp_port||587,secure:Number(smtp.smtp_port)===465,requireTLS:Number(smtp.smtp_port)!==465,auth:{user:smtp.smtp_user,pass:smtp.smtp_pass},connectionTimeout:15000,greetingTimeout:15000,socketTimeout:20000});
   try {
-   const result=await transport.sendMail({from:{name:smtp.from_name||'DropX Recruit',address:smtp.smtp_from},to:group.manager.email,cc:[],subject:mail.subject,text:mail.text,html:mail.html,messageId:job.message_id,...(previous?{inReplyTo:previous.message_id,references:[previous.message_id]}:{})});
+   const result=await transport.sendMail({from:{name:smtp.from_name||'DropX Recruit',address:smtp.smtp_from},to:group.manager.email,cc:[],subject:mail.subject,text:mail.text,html:mail.html,attachments,messageId:job.message_id,...(previous?{inReplyTo:previous.message_id,references:[previous.message_id]}:{})});
    const accepted=new Set((result.accepted||[]).map(value=>(typeof value==='string'?value:value.address).toLowerCase()));
    const rejected=result.rejected?.length||!accepted.has(group.manager.email.toLowerCase());
    checked(await db().from('recruitment_ad_mail_deliveries').update({status:rejected?'needs_review':'sent',sent_at:new Date().toISOString(),error:rejected?'SMTP rejected the recipient. Check provider delivery logs before retry.':null}).eq('id',job.id).eq('company_id',company));
@@ -137,14 +175,18 @@ export async function sendManagerSamples(company:string,profileId:string) {
  const context=await loadMailContext(company);
  const recipient=checked(await db().from('profiles').select('id,full_name,email,is_active').eq('company_id',company).eq('id',profileId).single());
  if(!recipient.is_active) throw new Error('Sample recipient is inactive.');
- const source=context.groups.find(group=>group.ads.some(ad=>ad.status==='ACTIVE'));
+ const source=context.groups.find(group=>group.manager.id===profileId&&group.ads.some(ad=>ad.status==='ACTIVE'))||context.groups.find(group=>group.ads.some(ad=>ad.status==='ACTIVE'));
  if(!source)throw new Error('No mapped Workforce ad is available for a sample.');
  const ads=source.ads.filter(ad=>ad.status==='ACTIVE').slice(0,2);
- const group={...source,key:hash(`sample:${profileId}`),stations:[...new Set(ads.map(ad=>ad.stationId))],manager:{...source.manager,id:profileId,name:recipient.full_name,email:recipient.email},ads,cc:[]};
+ const group={...source,key:hash(`sample:${profileId}`),manager:{...source.manager,id:profileId,name:recipient.full_name,email:recipient.email},cc:[]};
  const now=new Date();
- const activity:MailActivity[]=ads.map((ad,index)=>({ad_id:ad.id,station_id:ad.stationId,station:ad.station,ad_name:ad.ad_name,role:ad.role,occurred_at:new Date(now.getTime()-(index+1)*45*60_000).toISOString(),previous_status:index?'ACTIVE':'PAUSED',current_status:'ACTIVE',previous_budget:index?100:100,current_budget:index?150:100,budget_kind:'daily'}));
+ const activity:MailActivity[]=ads.map((ad,index)=>({
+  ad_id:ad.id,station_id:ad.stationId,station:ad.station,ad_name:ad.ad_name,role:ad.role,
+  occurred_at:new Date(now.getTime()-(index+1)*45*60_000).toISOString(),previous_status:index?'ACTIVE':'PAUSED',current_status:'ACTIVE',
+  previous_budget:index?100:100,current_budget:index?150:100,budget_kind:'daily',change_types:index?['new_ad','budget']:['poster','status']
+ }));
  for(const kind of ['daily','event'] as const) {
-  await enqueue(company,group,'sample',`sample:${ist(now).slice(0,10)}:${profileId}:${kind}`,{...payloadFor(group,now),sampleKind:kind,sampleActivities:kind==='event'?activity:undefined});
+  await enqueue(company,group,'sample',`sample-v2:${ist(now).slice(0,10)}:${profileId}:${kind}`,{...payloadFor(group,now),sampleKind:kind,sampleActivities:kind==='event'?activity:undefined});
  }
  const jobs=checked(await db().from('recruitment_ad_mail_deliveries').select('*').eq('company_id',company).eq('recipient_id',profileId).eq('kind','sample').eq('status','queued'));
  let sent=0;for(const job of jobs)if(await deliver(company,job,context))sent++;

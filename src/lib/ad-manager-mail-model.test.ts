@@ -1,7 +1,7 @@
 import {describe,it,expect} from 'vitest';
 import {adBudget,stationBudgets,morningDue,eveningDue,ist,mailGroups,normalizeAds,renderManagerMail,signAction,verifyAction,type MailPerson,type MailAd,type MailActivity} from './ad-manager-mail-model';
 const person=(id:string,role:string,stations:string[]):MailPerson=>({id,role,station_ids:stations,name:id,email:`${id}@example.com`,mobile:'1234567890'});
-const ad=(id:string,stationId:string,status='ACTIVE'):MailAd=>({id,stationId,station:stationId,role:'Delivery Associate',ad_name:id,status,daily_budget:250,poster_url:null,raw_payload:{},last_synced_at:null,location_id:stationId,role_id:'da',ends_at:null});
+const ad=(id:string,stationId:string,status='ACTIVE'):MailAd=>({id,stationId,station:stationId,role:'Delivery Associate',ad_name:id,status,daily_budget:250,poster_url:null,raw_payload:{},last_synced_at:null,created_on:'2026-09-20T00:00:00.000Z',lead_count:4,location_id:stationId,role_id:'da',ends_at:null,current_run_started_at:'2026-09-24T00:00:00.000Z'});
 describe('Workforce manager mail',()=>{
  it('counts shared campaign budgets only once at station level',()=>{
   const raw_payload={budget_source:'campaign',campaign:{id:'campaign',daily_budget:50000}};
@@ -56,9 +56,20 @@ describe('Workforce manager mail',()=>{
   const mail=renderManagerMail({group,kind:'daily',date:'2026-09-28',sample:true});
   expect(mail.html).toContain('Configured budget');expect(mail.text).toContain('STATION | LIVE | PAUSED / ENDED');expect(mail.html).not.toContain('cid:');expect(mail.subject).toContain('Morning status');expect(mail.subject).toContain('[SAMPLE]');
  });
+ it('adds active-ad detail and a safe inline creative preview to the morning report',()=>{
+  const group=mailGroups([person('manager','CLM',['S1'])],[ad('a','S1')])[0];
+  const mail=renderManagerMail({group,kind:'daily',date:'2026-09-28',images:{a:'poster-a@dropx'}});
+  expect(mail.html).toContain('Active ad details');expect(mail.html).toContain('cid:poster-a@dropx');expect(mail.html).toContain('LEADS');expect(mail.text).toContain('ACTIVE AD DETAILS');expect(mail.text).toContain('| 4 | 5');
+ });
  it('renders escaped evening activity rows without a per-change email',()=>{
   const group=mailGroups([person('manager','CLM',['S1'])],[ad('active','S1')])[0];
   const activity:MailActivity={ad_id:'active',station_id:'S1',station:'S1',ad_name:'<img onerror=bad>',role:'Delivery Associate',occurred_at:'2026-09-28T14:30:00.000Z',previous_status:'PAUSED',current_status:'ACTIVE',previous_budget:100,current_budget:150,budget_kind:'daily'};
-  const mail=renderManagerMail({group,kind:'event',date:'2026-09-28',activities:[activity]});expect(mail.html).toContain('&lt;img onerror=bad&gt;');expect(mail.html).toContain('Paused → Active · budget ₹100/day → ₹150/day');expect(mail.html).not.toContain('<img onerror');expect(mail.subject).toContain('Evening activity');
+  const mail=renderManagerMail({group,kind:'event',date:'2026-09-28',activities:[activity]});expect(mail.html).toContain('&lt;img onerror=bad&gt;');expect(mail.html).toContain('Paused → Active · Budget ₹100/day → ₹150/day');expect(mail.html).not.toContain('<img onerror');expect(mail.subject).toContain('Evening activity');
+ });
+ it('labels new ads and poster changes and includes affected-ad detail in the evening report',()=>{
+  const group=mailGroups([person('manager','CLM',['S1'])],[ad('active','S1')])[0];
+  const activity:MailActivity={ad_id:'active',station_id:'S1',station:'S1',ad_name:'New poster',role:'Delivery Associate',occurred_at:'2026-09-28T14:30:00.000Z',previous_status:null,current_status:'ACTIVE',previous_budget:null,current_budget:150,budget_kind:'daily',change_types:['new_ad','poster']};
+  const mail=renderManagerMail({group,kind:'event',date:'2026-09-28',activities:[activity],images:{active:'poster-active@dropx'}});
+  expect(mail.html).toContain('New ad posted · Poster updated');expect(mail.html).toContain('Affected ad details');expect(mail.html).toContain('cid:poster-active@dropx');expect(mail.text).toContain('AFFECTED AD DETAILS');
  });
 });
