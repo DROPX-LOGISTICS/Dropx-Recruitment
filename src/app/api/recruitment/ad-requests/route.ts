@@ -204,13 +204,11 @@ async function completeMetaChange(companyId: string, requestId: string) {
     const requestPayload = requestRaw(pending.data.raw_payload);
     if (requestPayload.restartCompleted === true) {
       try {
-        const audience = await resolveRecruitmentAdAudience({ companyId, locationId: ad.location_id });
         const result = await restartCompletedMetaAd({
           adId: ad.meta_ad_id,
           days: pending.data.days_required,
           budget: pending.data.requested_budget,
           expectedEndTime: String(requestPayload.expectedEndTime || ""),
-          audience,
           read: () => metaGet<RestartAdSnapshot>(ad.meta_ad_id, RESTART_AD_FIELDS),
           post: (id, values) => metaPost(id, values, "ad restart")
         });

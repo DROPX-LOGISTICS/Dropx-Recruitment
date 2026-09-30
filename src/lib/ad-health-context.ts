@@ -42,7 +42,7 @@ export function buildHealthContext(input: {
       available: input.available, statusFresh: validTime(ad.last_synced_at) > now - 45*60000,
       metrics, previous: insightTotals(input.previous), completeDays, period,
       comparableWeeks: anchor > 0 && anchor < Date.parse(`${input.previousPeriod.since}T00:00:00+05:30`),
-      dailyBudget: Number(ad.daily_budget || 0), sharedBudget, targetingReview: raw.targeting_check?.state === "review_required",
+      dailyBudget: Number(ad.daily_budget || 0), sharedBudget,
       targetCpl: Number(policy.target_cpl), spendWithoutLead: Number(policy.spend_without_lead), cplWarningMultiplier: Number(policy.cpl_warning_multiplier),
       lastChangeAt: latestChange?.at || null, lastChangeLabel: latestChange?.label || null
     }), history: history.slice(0, 5)

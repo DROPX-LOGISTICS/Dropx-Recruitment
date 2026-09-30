@@ -3,10 +3,10 @@ import { evaluateAdHealth, monitoringState, type HealthInput } from "./ad-health
 import { insightTotals } from "./ad-insight-metrics";
 const now=Date.parse("2026-09-09T12:00:00Z");
 const totals=(spend=700,impressions=20000,links=300,leads=30,reach=10000)=>insightTotals({spend:String(spend),impressions:String(impressions),reach:String(reach),inline_link_clicks:String(links),actions:[{action_type:"lead",value:String(leads)}]});
-const base:HealthInput={status:"ACTIVE",now,available:true,statusFresh:true,metrics:totals(),previous:totals(),completeDays:7,comparableWeeks:true,dailyBudget:100,sharedBudget:false,targetingReview:false,targetCpl:150,spendWithoutLead:750,cplWarningMultiplier:1.5,period:{since:"2026-09-02",until:"2026-09-08"}};
+const base:HealthInput={status:"ACTIVE",now,available:true,statusFresh:true,metrics:totals(),previous:totals(),completeDays:7,comparableWeeks:true,dailyBudget:100,sharedBudget:false,targetCpl:150,spendWithoutLead:750,cplWarningMultiplier:1.5,period:{since:"2026-09-02",until:"2026-09-08"}};
 const codes=(overrides:Partial<HealthInput>)=>evaluateAdHealth({...base,...overrides}).issues.map(x=>x.code);
 describe("independent ad health recommendations",()=>{
-  it("can surface several issues on one ad",()=>expect(codes({targetingReview:true,metrics:totals(900,10000,90,0)})).toEqual(expect.arrayContaining(["spend_no_leads","targeting_review","form_conversion"])));
+  it("can surface several performance issues on one ad",()=>expect(codes({metrics:totals(900,10000,90,0)})).toEqual(expect.arrayContaining(["spend_no_leads","form_conversion"])));
   it("shows low delivery even when lead cost is good",()=>expect(codes({dailyBudget:200,metrics:totals(254,4880,49,14,3460),sharedBudget:true})).toContain("low_delivery"));
   it("explains shared budget allocation without recommending a budget increase",()=>{
     const issue=evaluateAdHealth({...base,dailyBudget:200,sharedBudget:true,metrics:totals(200)}).issues.find(x=>x.code==="low_delivery")!;

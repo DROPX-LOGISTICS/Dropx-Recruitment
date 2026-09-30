@@ -1,5 +1,4 @@
 import { metaDeliveryStatus, type MetaDeliverySnapshot } from "./meta-ad-delivery";
-import { assertMetaTargeting, metaRadiusKm } from "./meta-targeting";
 import { adRunEndTime, sameMetaInstant, toMetaGraphDateTime } from "./ad-schedule";
 
 export type RestartAdSnapshot = MetaDeliverySnapshot & {
@@ -35,13 +34,29 @@ function sleep(ms: number) {
   return new Promise<void>((resolve) => setTimeout(resolve, ms));
 }
 
+function canonicalValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(canonicalValue).sort((left, right) =>
+      JSON.stringify(left).localeCompare(JSON.stringify(right)));
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, item]) => [key, canonicalValue(item)]));
+  }
+  return value;
+}
+
+function sameTargeting(left: unknown, right: unknown) {
+  return JSON.stringify(canonicalValue(left)) === JSON.stringify(canonicalValue(right));
+}
+
 /** Extend only an isolated, expired ad set. Keep the ad paused until read-back succeeds. */
 export async function restartCompletedMetaAd(input: {
   adId: string;
   days: unknown;
   budget: unknown;
   expectedEndTime: string;
-  audience: { stationCode: string; latitude: number; longitude: number };
   read: () => Promise<RestartAdSnapshot>;
   post: (id: string, values: Record<string, string>) => Promise<unknown>;
   now?: number;
@@ -74,11 +89,10 @@ export async function restartCompletedMetaAd(input: {
     || campaign.is_adset_budget_sharing_enabled !== false) {
     throw new Error("This ad uses a shared or lifetime budget. Create a separate ad in Recruit with its own daily budget.");
   }
-  const pin = (adset.targeting as { geo_locations?: { custom_locations?: { radius?: number; distance_unit?: string }[] } })?.geo_locations?.custom_locations?.[0];
-  const radiusKm = metaRadiusKm(pin?.radius, pin?.distance_unit);
-  if (radiusKm == null) throw new Error("Review this ad's audience radius in Meta before restarting.");
-  const audience = { ...input.audience, radiusKm };
-  assertMetaTargeting(adset.targeting, audience);
+  // Restart never edits the audience. Legacy ads may use a city, postal area, a
+  // pin without distance_unit, or a pin that no longer matches Location Master.
+  // Preserve Meta's current targeting exactly instead of blocking the run.
+  const originalTargeting = adset.targeting;
   const endTime = adRunEndTime(terms.days, now)!;
   const metaEndTime = toMetaGraphDateTime(endTime)!;
   const values = { end_time: metaEndTime, daily_budget: String(terms.budgetMinor), status: "ACTIVE" };
@@ -105,10 +119,8 @@ export async function restartCompletedMetaAd(input: {
       || Number(snapshot.campaign.lifetime_budget) > 0 || snapshot.campaign.is_adset_budget_sharing_enabled === true) {
       return "The ad's budget or schedule is now shared.";
     }
-    try {
-      assertMetaTargeting(snapshot.adset.targeting, audience);
-    } catch (error) {
-      return error instanceof Error ? error.message : "Audience targeting changed during the update.";
+    if (!sameTargeting(snapshot.adset.targeting, originalTargeting)) {
+      return "Audience targeting changed while restarting the ad.";
     }
     return null;
   };
@@ -139,10 +151,10 @@ export async function restartCompletedMetaAd(input: {
       || paused.adset.ads?.data?.length !== 1 || paused.adset.ads.data[0].id !== input.adId || paused.adset.ads.paging?.next
       || paused.campaign?.id !== campaign.id || String(paused.campaign.status) !== "ACTIVE"
       || Number(paused.campaign.daily_budget) > 0 || Number(paused.campaign.lifetime_budget) > 0
-      || paused.campaign.is_adset_budget_sharing_enabled !== false || Number(paused.adset.lifetime_budget) > 0) {
+      || paused.campaign.is_adset_budget_sharing_enabled !== false || Number(paused.adset.lifetime_budget) > 0
+      || !sameTargeting(paused.adset.targeting, originalTargeting)) {
       throw new Error("The ad changed while preparing the restart. Refresh Active Ads.");
     }
-    assertMetaTargeting(paused.adset.targeting, audience);
     await input.post(adset.id, values);
     await readVerified();
     await input.post(input.adId, { status: "ACTIVE" });

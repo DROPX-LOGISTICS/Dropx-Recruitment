@@ -6,7 +6,7 @@ import { insightTotals } from "@/lib/ad-insight-metrics";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 60;
-const codes = new Set(["data_unavailable","status_stale","targeting_review","ending_soon","delivery_blocked","new_run_observation","no_delivery","low_delivery","spend_no_leads","high_cpl","rising_cpm","low_exposure","audience_fatigue","weak_response","form_conversion","lead_decline"]);
+const codes = new Set(["data_unavailable","status_stale","ending_soon","delivery_blocked","new_run_observation","no_delivery","low_delivery","spend_no_leads","high_cpl","rising_cpm","low_exposure","audience_fatigue","weak_response","form_conversion","lead_decline"]);
 export async function POST(request:Request,{params}:{params:{id:string}}) {
   try {
     const scoped = await scopedRecruitmentAd(request,params.id,true);

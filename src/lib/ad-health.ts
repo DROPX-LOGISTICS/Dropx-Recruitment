@@ -10,7 +10,7 @@ export type HealthInput = {
   status: string; now: number; startsAt?: string | null; endsAt?: string | null;
   available: boolean; statusFresh: boolean; metrics: InsightTotals; previous: InsightTotals;
   completeDays: number; comparableWeeks: boolean; dailyBudget: number; sharedBudget: boolean;
-  targetingReview: boolean; targetCpl: number; spendWithoutLead: number; cplWarningMultiplier: number;
+  targetCpl: number; spendWithoutLead: number; cplWarningMultiplier: number;
   period: InsightPeriod; lastChangeAt?: string | null; lastChangeLabel?: string | null;
 };
 export type AdHealth = ReturnType<typeof evaluateAdHealth>;
@@ -27,7 +27,6 @@ export function evaluateAdHealth(x: HealthInput) {
   if (!x.available) add({ code: "data_unavailable", severity: "warning", title: "Performance data unavailable", evidence: "Meta did not return a complete performance window.", explanation: "Missing data cannot establish that reach or leads are zero.", suggestion: "Refresh performance before changing this ad.", ...inspect });
   else if (!x.statusFresh && active) add({ code: "status_stale", severity: "warning", title: "Verify current delivery", evidence: "The saved delivery status is more than 45 minutes old.", explanation: "The ad may have changed in Meta since the last refresh.", suggestion: "Check the live ad, ad set and campaign status first.", ...inspect });
 
-  if (active && x.targetingReview) add({ code: "targeting_review", severity: "warning", title: "Station targeting needs review", evidence: "The last verified targeting pin differs from the station reference.", explanation: "The selected audience may include the wrong service area. Performance alone cannot confirm the intended location.", suggestion: "Compare the live pin with the Location Master before editing the audience.", ...inspect });
   const end = Date.parse(x.endsAt || "");
   if (active && end > x.now && end - x.now <= 86400000) add({ code: "ending_soon", severity: "notice", title: "Run ends within 24 hours", evidence: "Delivery stops at the end time shown in Run schedule.", explanation: "An ended schedule stops impressions even when Meta's switch remains on.", suggestion: "Check whether recruitment is still required. Use Run again after the schedule ends.", ...inspect });
   if (!["ACTIVE", "PAUSED", "COMPLETED", "ARCHIVED", "DELETED", "UNKNOWN", "SCHEDULED"].includes(x.status)) add({ code: "delivery_blocked", severity: "warning", title: "Meta delivery needs attention", evidence: `Current delivery state: ${x.status.replaceAll("_", " ").toLowerCase()}.`, explanation: "Approval, account or ad-set restrictions can prevent impressions.", suggestion: "Read the live Meta diagnostic and address the specific restriction.", ...inspect });

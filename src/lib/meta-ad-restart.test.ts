@@ -12,7 +12,7 @@ function echoAsIst(value: string) {
   return `${stamp}+0530`;
 }
 
-function fixture(options?: { echoEndInIst?: boolean; distanceUnit?: string }) {
+function fixture(options?: { echoEndInIst?: boolean; targeting?: unknown }) {
   let ad: RestartAdSnapshot = {
     id: "ad-1", status: "ACTIVE", effective_status: "ACTIVE",
     campaign: { id: "campaign-1", status: "ACTIVE", effective_status: "ACTIVE", is_adset_budget_sharing_enabled: false },
@@ -20,7 +20,9 @@ function fixture(options?: { echoEndInIst?: boolean; distanceUnit?: string }) {
       id: "set-1", status: "ACTIVE", effective_status: "ACTIVE", end_time: expectedEndTime,
       start_time: "2026-08-30T01:58:08Z", daily_budget: "10000",
       ads: { data: [{ id: "ad-1" }] },
-      targeting: { geo_locations: { custom_locations: [{ latitude: 11.265875, longitude: 75.825172, radius: 17, distance_unit: options?.distanceUnit ?? "kilometer" }] } }
+      targeting: options && "targeting" in options
+        ? options.targeting
+        : { geo_locations: { custom_locations: [{ latitude: 11.265875, longitude: 75.825172, radius: 17, distance_unit: "kilometer" }] } }
     }
   };
   const post = vi.fn(async (id: string, values: Record<string, string>) => {
@@ -35,7 +37,6 @@ function fixture(options?: { echoEndInIst?: boolean; distanceUnit?: string }) {
   return {
     input: {
       adId: "ad-1", days: 7, budget: 100, expectedEndTime, now,
-      audience: { stationCode: "KOZA", latitude: 11.265875, longitude: 75.825172 },
       read, post, sleep: async () => undefined
     },
     get ad() { return ad; }
@@ -64,18 +65,16 @@ describe("completed ad restart", () => {
     expect(Date.parse(String(result.after.adset?.end_time))).toBe(Date.parse(metaEndTime));
   });
 
-  it("accepts the plural kilometer unit returned by Meta", async () => {
-    const f = fixture({ distanceUnit: "kilometers" });
-    await expect(restartCompletedMetaAd(f.input)).resolves.toMatchObject({ dailyBudget: 100 });
-  });
-
-  it.each(["kilometre", "kilometres", "km", "kms", "mi"])("accepts Meta's alternate distance unit %s", async (distanceUnit) => {
-    const f = fixture({ distanceUnit });
-    if (distanceUnit === "mi") {
-      f.input.audience = { ...f.input.audience, latitude: 11.265875, longitude: 75.825172 };
-      (f.ad.adset!.targeting as any).geo_locations.custom_locations[0].radius = 17 / 1.609344;
-    }
-    await expect(restartCompletedMetaAd(f.input)).resolves.toMatchObject({ dailyBudget: 100 });
+  it.each([
+    ["a pin without a distance unit", { geo_locations: { custom_locations: [{ latitude: 11.2, longitude: 75.8, radius: 17 }] } }],
+    ["a pin far from Location Master", { geo_locations: { custom_locations: [{ latitude: 28.6, longitude: 77.2, radius: 50, distance_unit: "kilometer" }] } }],
+    ["an area audience", { geo_locations: { cities: [{ key: "1021862" }] } }],
+    ["targeting omitted by Meta", undefined]
+  ])("preserves and restarts legacy targeting: %s", async (_label, targeting) => {
+    const f = fixture({ targeting });
+    const result = await restartCompletedMetaAd(f.input);
+    expect(result.after.adset?.targeting).toEqual(targeting);
+    expect(result.dailyBudget).toBe(100);
   });
 
   it.each([undefined, 0, -1, 1.5, 91, Infinity])("rejects invalid duration %s before contacting Meta", async (days) => {
@@ -103,7 +102,7 @@ describe("completed ad restart", () => {
     expect(f.input.post).not.toHaveBeenCalled();
   });
 
-  it.each(["shared ads", "more pages", "campaign budget", "lifetime budget", "budget sharing", "paused parent", "wrong station"])("blocks %s before any write", async (kind) => {
+  it.each(["shared ads", "more pages", "campaign budget", "lifetime budget", "budget sharing", "paused parent"])("blocks %s before any write", async (kind) => {
     const f = fixture();
     if (kind === "shared ads") f.ad.adset!.ads!.data!.push({ id: "another-ad" });
     if (kind === "more pages") f.ad.adset!.ads!.paging = { next: "more" };
@@ -111,7 +110,6 @@ describe("completed ad restart", () => {
     if (kind === "lifetime budget") f.ad.adset!.lifetime_budget = "70000";
     if (kind === "budget sharing") f.ad.campaign!.is_adset_budget_sharing_enabled = true;
     if (kind === "paused parent") f.ad.campaign!.effective_status = "PAUSED";
-    if (kind === "wrong station") f.input.audience.latitude = 10;
     await expect(restartCompletedMetaAd(f.input)).rejects.toThrow();
     expect(f.input.post).not.toHaveBeenCalled();
   });
@@ -129,7 +127,7 @@ describe("completed ad restart", () => {
     expect(f.input.post.mock.calls.some(([id, values]) => id === "ad-1" && values.status === "ACTIVE")).toBe(false);
   });
 
-  it("does not activate if the station pin changes during the update", async () => {
+  it("does not activate if the audience changes during the update", async () => {
     const f = fixture();
     const originalRead = f.input.read.getMockImplementation()!;
     f.input.read.mockImplementation(async () => {
