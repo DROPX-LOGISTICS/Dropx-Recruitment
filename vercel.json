@@ -1,6 +1,7 @@
 {
   "crons": [
-    { "path": "/api/cron/recruitment-ad-mail", "schedule": "*/5 * * * *" },
+    { "path": "/api/cron/recruitment-ad-mail", "schedule": "0 3 * * *" },
+    { "path": "/api/cron/recruitment-ad-mail", "schedule": "30 14 * * *" },
     {
       "path": "/api/cron/recruitment-meta",
       "schedule": "*/5 * * * *"

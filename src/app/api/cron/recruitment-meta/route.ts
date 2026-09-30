@@ -12,6 +12,7 @@ import { fetchMetaFormLeadsSince, mergeMetaFormIds, type MetaFormLead } from "@/
 import { getConnectionConfig } from "@/lib/connection-config";
 import { requiredEnv } from "@/lib/recruitment-api";
 import { supabaseAdmin } from "@/lib/supabase-admin";
+import { observeAdMailActivity } from "@/lib/ad-manager-mail";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -103,6 +104,14 @@ export async function GET(request: Request) {
         adSyncError = error instanceof Error ? error.message : "Unknown Meta ad sync error";
       })
     : Promise.resolve();
+  const recordAdMailObservation = async () => {
+    try {
+      return await observeAdMailActivity(companyId);
+    } catch (error) {
+      console.error("Recruitment ad mail observation failed", error);
+      return { error: error instanceof Error ? error.message : "Unknown ad mail observation error" };
+    }
+  };
 
   const [ads, sources] = await Promise.all([
     admin.from("recruitment_ads")
@@ -119,7 +128,8 @@ export async function GET(request: Request) {
   if (ads.error || sources.error) {
     const message = ads.error?.message || sources.error?.message || "Unable to read known Meta forms.";
     await adSyncTask;
-    await finishRun({ status: "failed", error_count: 1, error: message });
+    const adMailObservation = await recordAdMailObservation();
+    await finishRun({ status: "failed", error_count: 1, error: message, cursor: { ad_mail_observation: adMailObservation } });
     return NextResponse.json({ error: message }, { status: 500 });
   }
 
@@ -152,9 +162,10 @@ export async function GET(request: Request) {
   if (!formIds.length) {
     const message = [...discoveryErrors, "No Meta lead forms were found."].join(" | ");
     await adSyncTask;
+    const adMailObservation = await recordAdMailObservation();
     await finishRun({
       status: "failed",
-      cursor: { poller_version: POLLER_VERSION, watermark: watermark.toISOString(), forms: 0, adSync, adSyncError },
+      cursor: { poller_version: POLLER_VERSION, watermark: watermark.toISOString(), forms: 0, adSync, adSyncError, ad_mail_observation: adMailObservation },
       error_count: Math.max(1, discoveryErrors.length),
       error: message
     });
@@ -246,6 +257,7 @@ export async function GET(request: Request) {
     }
   }));
   await adSyncTask;
+  const adMailObservation = await recordAdMailObservation();
 
   const discoveryUnavailable = discoveryTasks.length === 0 || discoveredGroups.length === 0;
   const intakeFailed = discoveryUnavailable || errors.length > 0 || Boolean(adSyncError);
@@ -263,6 +275,7 @@ export async function GET(request: Request) {
     replays,
     adSync,
     adSyncError,
+    adMailObservation,
     discoveryErrors,
     discoveryUnavailable,
     errors: errors.slice(0, 20),
@@ -277,7 +290,8 @@ export async function GET(request: Request) {
       pages: summary.pages,
       discovered_forms: discoveredGroups.flat().length,
       adSync,
-      adSyncError
+      adSyncError,
+      ad_mail_observation: adMailObservation
     },
     scanned_count: fetchedLeads.length,
     inserted_count: saved,
