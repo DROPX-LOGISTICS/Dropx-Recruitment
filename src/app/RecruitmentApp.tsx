@@ -4,13 +4,14 @@ import { metaDeliveryStatus } from "@/lib/meta-ad-delivery";
 import { adRunEndTime, formatAdScheduleDate } from "@/lib/ad-schedule";
 import AdSchedule from "./AdSchedule";
 import AdMailPanel from "./AdMailPanel";
+import DaOnboardingMailPanel from "./DaOnboardingMailPanel";
 import MetaReceivedTime from "./MetaReceivedTime";
 import AdHealthPanel, { AdDeliveryDiagnostics } from "./AdHealthPanel";
 import type { HealthIssue } from "@/lib/ad-health";
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
-import { daDependencyLabel, daSubStatusOptions } from "@/lib/da-inapp-onboarding";
+import { DA_FINAL_OUTCOME_OPTIONS, daDependencyLabel, daSubStatusOptions } from "@/lib/da-inapp-onboarding";
 import { workforceStatusFilterOptions } from "@/lib/recruitment-workforce-status-filter";
 import {
   matchingMetaFormsForDesignation,
@@ -741,7 +742,7 @@ export default function RecruitmentApp() {
       {active === "Field Recruitment" && stream === "workforce" ? user.recruitmentFunction==="field_recruiter"?<><PersonalPerformance token={token} user={user}/><FieldRecruitment data={moduleData} token={token}/></>:<FieldRecruitment data={moduleData} token={token} showManualPunchApprovals /> : null}
       {active === "Influencer Performance" && stream === "workforce" ? <InfluencerPerformance token={token} user={user}/> : null}
       {active === "Field Executive Onboarding" && stream === "workforce" ? <FieldExecutiveOnboarding initialData={moduleData} token={token} user={user} canEdit={canEditMenu("workforce","Field Executive Onboarding")} /> : null}
-      {active === "DA In-app Onboarding" && stream === "workforce" ? <DaInAppOnboarding token={token} canEdit={canEditMenu("workforce","DA In-app Onboarding")} /> : null}
+      {active === "DA In-app Onboarding" && stream === "workforce" ? <><DaInAppOnboarding token={token} canEdit={canEditMenu("workforce","DA In-app Onboarding")} />{user.isOwner&&!user.readOnly&&!user.isPreview?<DaOnboardingMailPanel token={token}/>:null}</> : null}
       {active === "Incentive Master" && stream === "workforce" ? <IncentiveMaster data={moduleData} token={token} canEdit={canEditMenu("workforce","Incentive Master")} reload={load} /> : null}
     </section>
     {detailBusy && !selectedLead ? <div className="inline-loading"><div className="loader" /></div> : null}
@@ -1213,6 +1214,7 @@ function DaInAppOnboarding({token,canEdit}:{token:string;canEdit:boolean}) {
   const [actionStatus,setActionStatus]=useState("");
   const [videoStatusFilter,setVideoStatusFilter]=useState("");
   const [uanStatusFilter,setUanStatusFilter]=useState("");
+  const [finalOutcomeFilter,setFinalOutcomeFilter]=useState("");
   const [station,setStation]=useState("");
   const [cluster,setCluster]=useState("");
   const [sort,setSort]=useState("oldest");
@@ -1224,6 +1226,7 @@ function DaInAppOnboarding({token,canEdit}:{token:string;canEdit:boolean}) {
       if(actionStatus)params.set("actionStatus",actionStatus);
       if(videoStatusFilter)params.set("videoStatus",videoStatusFilter);
       if(uanStatusFilter)params.set("uanStatus",uanStatusFilter);
+      if(finalOutcomeFilter)params.set("finalOutcome",finalOutcomeFilter);
       if(station)params.set("station",station);
       if(cluster)params.set("cluster",cluster);
       params.set("sort",sort);
@@ -1233,7 +1236,7 @@ function DaInAppOnboarding({token,canEdit}:{token:string;canEdit:boolean}) {
       setReadiness(payload);
     }catch(error){setNotice(error instanceof Error?error.message:"Unable to load DA in-app onboarding.");}
     finally{setBusy(false);}
-  },[actionStatus,cluster,search,sort,station,status,token,uanStatusFilter,videoStatusFilter]);
+  },[actionStatus,cluster,finalOutcomeFilter,search,sort,station,status,token,uanStatusFilter,videoStatusFilter]);
   useEffect(()=>{void load();},[]); // eslint-disable-line react-hooks/exhaustive-deps
   const initialLoading=busy&&readiness===null;
   const metricValue=(value:unknown)=>initialLoading?"…":String(value??0);
@@ -1254,10 +1257,10 @@ function DaInAppOnboarding({token,canEdit}:{token:string;canEdit:boolean}) {
     <section className="content-card danap-readiness" aria-busy={initialLoading}>
       <div className="danap-source-banner"><div><strong>{initialLoading?"Loading latest DA In-App import…":latestSource?.fileName||"No DA In-App import found"}</strong><span>{initialLoading?"Checking Report Imports and applying your access scope.":latestSource?`Latest upload ${new Date(latestSource.uploadedAt).toLocaleString("en-IN")} • ${latestSource.importedCases} cases${latestSourceStatus&&latestSourceStatus.toLowerCase()!=="completed"?` • ${latestSourceStatus}`:""}`:"Upload the daily DA In-App file in Report Imports."}</span></div><em>{visibility}</em></div>
       {latestSourceHasIssue?<div className="danap-link-warning danap-contact-warning"><strong>The latest DA In-App upload did not produce usable cases.</strong><span>{latestSource?.message||"Check the uploaded columns and import result."} The dashboard is intentionally not showing records from an older file.</span></div>:null}
-      <div className="danap-metrics"><span><b>{metricValue(readiness?.metrics?.pending)}</b> Pending</span><span><b>{metricValue(readiness?.metrics?.cleared)}</b> Cleared</span><span><b>{metricValue(readiness?.metrics?.oldestPending)}</b> Oldest days</span><span><b>{metricValue(readiness?.metrics?.videoPending)}</b> Video pending</span><span><b>{metricValue(readiness?.metrics?.uanNotUpdated)}</b> UAN not updated</span><span><b>{metricValue(readiness?.metrics?.nhda)}</b> NHDA</span></div>
+      <div className="danap-metrics"><span><b>{metricValue(readiness?.metrics?.pending)}</b> Pending</span><span><b>{metricValue(readiness?.metrics?.cleared)}</b> Finalised</span><span><b>{metricValue(readiness?.metrics?.oldestPending)}</b> Oldest days</span><span><b>{metricValue(readiness?.metrics?.videoPending)}</b> Video pending</span><span><b>{metricValue(readiness?.metrics?.uanNotUpdated)}</b> UAN not yes</span><span><b>{metricValue(readiness?.metrics?.nhda)}</b> NHDA</span></div>
       {readiness?.visibility==="all"&&Number(readiness?.metrics?.unmatched||0)>0?<div className="danap-link-warning"><strong>{readiness.metrics.unmatched} imported legacy case{readiness.metrics.unmatched===1?"":"s"} are not yet linked to a recruiter initiation.</strong><span>They remain visible to oversight roles only; recruiter/telecaller access will never guess by name.</span></div>:null}
       {Number(readiness?.metrics?.missingContact||0)>0?<div className="danap-link-warning danap-contact-warning"><strong>{readiness.metrics.missingContact} case{readiness.metrics.missingContact===1?"":"s"} have no candidate or Station POC contact number.</strong><span>Add the missing number in Station Contacts master; the dashboard will use it automatically.</span></div>:null}
-      <div className="toolbar filter-toolbar danap-toolbar"><input placeholder="DA, contact, ID, station or owner…" value={search} onChange={(event)=>setSearch(event.target.value)} onKeyDown={(event)=>{if(event.key==="Enter")void load();}}/><FilterSelect label="Case: Pending" value={status} options={[["pending","Case: Pending"],["cleared","Case: Cleared"],["all","Case: All"]]} onChange={setStatus}/><FilterSelect label="Action: All" value={actionStatus} options={(readiness?.actionStatusOptions??[]).map((item:any)=>[item.value,item.label])} onChange={setActionStatus}/><FilterSelect label="Video: All" value={videoStatusFilter} options={[["pending","Video: Pending"],["done","Video: Completed"]]} onChange={setVideoStatusFilter}/><FilterSelect label="UAN: All" value={uanStatusFilter} options={[["yes","UAN: Yes"],["no","UAN: No"],["not_updated","UAN: Not updated"]]} onChange={setUanStatusFilter}/><MultiFilter label="Stations" value={station} options={(readiness?.stationOptions??[]).map((item:any)=>[item.code,`${item.code} — ${item.name}`])} onChange={setStation}/><MultiFilter label="Owners" value={cluster} options={(readiness?.clusters??[]).map((item:string)=>[item,item])} onChange={setCluster}/><FilterSelect label="Sort" value={sort} options={[["oldest","Oldest pending first"],["newest","Newest pending first"],["station","Station code"],["candidate","Candidate name"]]} onChange={setSort}/><button onClick={()=>void load()} disabled={busy}>{busy?"Loading…":"Apply"}</button>{station||cluster||actionStatus||videoStatusFilter||uanStatusFilter||status!=="pending"||sort!=="oldest"||search?<button className="reset-btn" onClick={()=>{setStation("");setCluster("");setActionStatus("");setVideoStatusFilter("");setUanStatusFilter("");setStatus("pending");setSort("oldest");setSearch("");}}>Reset</button>:null}</div>
+      <div className="toolbar filter-toolbar danap-toolbar"><input placeholder="DA, contact, ID, station or owner…" value={search} onChange={(event)=>setSearch(event.target.value)} onKeyDown={(event)=>{if(event.key==="Enter")void load();}}/><FilterSelect label="Case: Pending" value={status} options={[["pending","Case: Pending"],["cleared","Case: Finalised"],["all","Case: All"]]} onChange={setStatus}/><FilterSelect label="Action: All" value={actionStatus} options={(readiness?.actionStatusOptions??[]).map((item:any)=>[item.value,item.label])} onChange={setActionStatus}/><FilterSelect label="Video: All" value={videoStatusFilter} options={[["pending","Video: Pending"],["done","Video: Completed"]]} onChange={setVideoStatusFilter}/><FilterSelect label="UAN: All" value={uanStatusFilter} options={[["yes","UAN: Yes"],["no","UAN: No"],["not_updated","UAN: Not updated"]]} onChange={setUanStatusFilter}/><FilterSelect label="Final: All" value={finalOutcomeFilter} options={[["pending","Final: Not finalised"] as [string,string],...DA_FINAL_OUTCOME_OPTIONS.map((item)=>[item.value,item.label] as [string,string])]} onChange={setFinalOutcomeFilter}/><MultiFilter label="Stations" value={station} options={(readiness?.stationOptions??[]).map((item:any)=>[item.code,`${item.code} — ${item.name}`])} onChange={setStation}/><MultiFilter label="Owners" value={cluster} options={(readiness?.clusters??[]).map((item:string)=>[item,item])} onChange={setCluster}/><FilterSelect label="Sort" value={sort} options={[["oldest","Oldest pending first"],["newest","Newest pending first"],["station","Station code"],["candidate","Candidate name"]]} onChange={setSort}/><button onClick={()=>void load()} disabled={busy}>{busy?"Loading…":"Apply"}</button>{station||cluster||actionStatus||videoStatusFilter||uanStatusFilter||finalOutcomeFilter||status!=="pending"||sort!=="oldest"||search?<button className="reset-btn" onClick={()=>{setStation("");setCluster("");setActionStatus("");setVideoStatusFilter("");setUanStatusFilter("");setFinalOutcomeFilter("");setStatus("pending");setSort("oldest");setSearch("");}}>Reset</button>:null}</div>
       {notice?<div className="error-banner">{notice}</div>:null}
       <div className="danap-mobile-cards">{(readiness?.records??[]).map((record:any)=><DanapReadinessCard key={record.id} record={record} token={token} canEdit={canEdit} onSaved={load}/>)}</div>
       {!busy&&readiness&&!(readiness.records??[]).length?<div className="empty">No DA in-app onboarding cases match this view.</div>:null}
@@ -1271,15 +1274,27 @@ function DanapReadinessCard({record,token,canEdit,onSaved}:{record:any;token:str
   const [remarks,setRemarks]=useState(record.remarks||"");
   const [videoStatus,setVideoStatus]=useState(record.videoStatus||"pending");
   const [uanStatus,setUanStatus]=useState(record.uanStatus||"not_updated");
+  const [finalOutcome,setFinalOutcome]=useState(record.finalOutcome||"pending");
   const [certificate,setCertificate]=useState<File|null>(null);
   const [busy,setBusy]=useState(false);
   const [notice,setNotice]=useState("");
   const subStatusOptions=daSubStatusOptions(dependency);
   const actionLabel=daDependencyLabel(dependency);
+  const finalOutcomeLabel=DA_FINAL_OUTCOME_OPTIONS.find((option)=>option.value===finalOutcome)?.label||"Not finalised";
+  function changeSubStatus(value:string){
+    setSubStatus(value);
+    if(dependency==="backend_provisioning"&&value==="uan_pending")setUanStatus("no");
+    if(dependency==="backend_provisioning"&&["uan_updated","provisioned"].includes(value))setUanStatus("yes");
+  }
+  function changeUanStatus(value:string){
+    setUanStatus(value);
+    if(dependency==="backend_provisioning"&&value==="yes"&&subStatus==="uan_pending")setSubStatus("uan_updated");
+    if(dependency==="backend_provisioning"&&value==="no"&&["uan_updated","provisioned"].includes(subStatus))setSubStatus("uan_pending");
+  }
   async function save(){
     setBusy(true);setNotice("");
     try{
-      const form=new FormData();form.set("id",record.id);form.set("subStatus",dependency==="video_verification"?(videoStatus==="done"?"completed":"pending"):subStatus);form.set("remarks",remarks);form.set("videoStatus",videoStatus);form.set("uanStatus",uanStatus);if(certificate)form.set("certificate",certificate);
+      const form=new FormData();form.set("id",record.id);form.set("subStatus",dependency==="video_verification"?(videoStatus==="done"?"completed":"pending"):subStatus);form.set("remarks",remarks);form.set("videoStatus",videoStatus);form.set("uanStatus",uanStatus);form.set("finalOutcome",finalOutcome);if(certificate)form.set("certificate",certificate);
       const response=await fetch("/api/recruitment/danap-onboarding",{method:"PATCH",headers:headers(token),body:form});
       const payload=await response.json();if(!response.ok)throw new Error(payload.error||"Unable to save.");
       setNotice("Saved");await onSaved();
@@ -1290,7 +1305,7 @@ function DanapReadinessCard({record,token,canEdit,onSaved}:{record:any;token:str
     <header><div><h3>{record.daName||"Unnamed DA"}</h3><small>{record.rabbitId||"No Rabbit ID"}</small></div><div className="danap-card-status"><span className={`status status-${record.clearanceStatus}`}>{statusLabel(record.clearanceStatus)}</span><b>{record.agingDays??0} day{record.agingDays===1?"":"s"}</b></div></header>
     <dl className="danap-card-facts"><span><dt>Transporter ID</dt><dd>{record.transporterId||"—"}</dd></span><span><dt>Station</dt><dd>{record.station||"Unmapped"}{record.stationName&&record.stationName!==record.station?<small>{record.stationName}</small>:null}</dd></span><span><dt>Operational owner</dt><dd>{record.cluster||"Not mapped in People"}{record.crmName&&record.crmName!==record.cluster?<small>{record.crmName}</small>:null}</dd></span><span><dt>Pending since</dt><dd>{record.pendingSince||"—"}</dd></span><span className={`danap-contact danap-contact-${record.contact?.source||"missing"}`}><dt>{record.contact?.label||"Contact unavailable"}</dt><dd>{record.contact?.phone?<><a href={`tel:+91${phoneDigits(record.contact.phone)}`}>{displayPhone(record.contact.phone)}</a>{record.contact.name?<small>{record.contact.name}</small>:null}</>:<small>Update the Station Contacts master</small>}</dd></span></dl>
     <p className="danap-source-action"><b>Action required:</b> {record.sourceAction||record.sourceReason||"Complete onboarding action"}<small>{record.sourceReason&&record.sourceReason!==record.sourceAction?record.sourceReason:""}</small></p>
-    <details className="danap-card-update"><summary><span><b>{actionLabel}</b><small>{subStatusOptions.find((option)=>option.value===subStatus)?.label||statusLabel(subStatus)} · Video {videoStatus==="done"?"completed":"pending"} · UAN {uanStatus==="yes"?"yes":uanStatus==="no"?"no":"not updated"}</small></span><strong>{canEdit?"Update":"View"} ▾</strong></summary><fieldset disabled={!canEdit} className={!canEdit?"read-only-fieldset":undefined}><div className="danap-card-fields"><div className="danap-action-type"><span>Source-defined action</span><strong>{actionLabel}</strong></div>{dependency!=="video_verification"?<label>Action status<select value={subStatus} onChange={(event)=>setSubStatus(event.target.value)}>{subStatusOptions.map((option)=><option key={option.value} value={option.value}>{option.label}</option>)}</select></label>:null}<label className="video-field">Video verification<select value={videoStatus} onChange={(event)=>setVideoStatus(event.target.value)}><option value="pending">Pending</option><option value="done">Completed</option></select></label><label className="uan-field">UAN updated in Rabbit?<select required value={uanStatus} onChange={(event)=>setUanStatus(event.target.value)}><option value="not_updated">Select Yes or No</option><option value="yes">Yes</option><option value="no">No</option></select></label>{dependency==="nhda"||record.certificate?<label>NHDA certificate<input type="file" accept=".pdf,.png,.jpg,.jpeg" onChange={(event)=>setCertificate(event.target.files?.[0]??null)}/>{record.certificateUrl?<a href={record.certificateUrl} target="_blank" rel="noreferrer">View attached NHDA certificate</a>:<small>Required when NHDA course is completed</small>}</label>:null}<label className="danap-remarks">Remarks<textarea value={remarks} onChange={(event)=>setRemarks(event.target.value)} placeholder="Action taken or follow-up note"/></label></div></fieldset></details>
+    <details className="danap-card-update"><summary><span><b>{actionLabel}</b><small>{subStatusOptions.find((option)=>option.value===subStatus)?.label||statusLabel(subStatus)} · Video {videoStatus==="done"?"completed":"pending"} · UAN {uanStatus==="yes"?"yes":uanStatus==="no"?"no":"not updated"} · {finalOutcomeLabel}</small></span><strong>{canEdit?"Update":"View"} ▾</strong></summary><fieldset disabled={!canEdit} className={!canEdit?"read-only-fieldset":undefined}><div className="danap-card-fields"><div className="danap-action-type"><span>Source-defined action</span><strong>{actionLabel}</strong></div>{dependency!=="video_verification"?<label>Action status<select value={subStatus} onChange={(event)=>changeSubStatus(event.target.value)}>{subStatusOptions.map((option)=><option key={option.value} value={option.value}>{option.label}</option>)}</select></label>:null}<label className="video-field">Video verification<select value={videoStatus} onChange={(event)=>setVideoStatus(event.target.value)}><option value="pending">Pending</option><option value="done">Completed</option></select></label><label className="uan-field">UAN updated in Rabbit?<select required value={uanStatus} onChange={(event)=>changeUanStatus(event.target.value)}><option value="not_updated">Select Yes or No</option><option value="yes">Yes</option><option value="no">No</option></select></label><label className="final-update-field">Final update<select value={finalOutcome} onChange={(event)=>setFinalOutcome(event.target.value)}><option value="pending">Select only when final</option>{DA_FINAL_OUTCOME_OPTIONS.map((option)=><option key={option.value} value={option.value}>{option.label}</option>)}</select></label>{dependency==="nhda"||record.certificate?<label>NHDA certificate<input type="file" accept=".pdf,.png,.jpg,.jpeg" onChange={(event)=>setCertificate(event.target.files?.[0]??null)}/>{record.certificateUrl?<a href={record.certificateUrl} target="_blank" rel="noreferrer">View attached NHDA certificate</a>:<small>Required when NHDA course is completed</small>}</label>:null}<label className="danap-remarks">Remarks<textarea value={remarks} onChange={(event)=>setRemarks(event.target.value)} placeholder="Action taken or follow-up note"/></label></div></fieldset></details>
     <footer><small>{record.updatedBy?`Last updated by ${record.updatedBy}${record.updatedAt?` • ${new Date(record.updatedAt).toLocaleString("en-IN")}`:""}`:"Not yet updated"}</small><span>{notice}</span>{canEdit?<button onClick={()=>void save()} disabled={busy}>{busy?"Saving…":"Save update"}</button>:<small>View only</small>}</footer>
   </article>;
 }

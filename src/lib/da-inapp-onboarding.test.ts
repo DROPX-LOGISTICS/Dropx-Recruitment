@@ -291,6 +291,7 @@ describe("DA In-App status, proof, and closure rules", () => {
       subStatus: "completed",
       videoStatus: "pending",
       uanStatus: "yes",
+      finalOutcome: "pendency_cleared",
       hasCertificate: false
     })).toContain("NHDA certificate");
     expect(validateDaUpdate({
@@ -298,6 +299,7 @@ describe("DA In-App status, proof, and closure rules", () => {
       subStatus: "completed",
       videoStatus: "done",
       uanStatus: "yes",
+      finalOutcome: "pendency_cleared",
       hasCertificate: true
     })).toBeNull();
   });
@@ -313,8 +315,8 @@ describe("DA In-App status, proof, and closure rules", () => {
   });
 
   it("allows only BGC cleared as the BGC completion action", () => {
-    expect(validateDaUpdate({ dependency: "bgv", subStatus: "cleared", videoStatus: "pending", uanStatus: "yes", hasCertificate: false })).toBeNull();
-    expect(validateDaUpdate({ dependency: "bgv", subStatus: "pcc_applied", videoStatus: "pending", uanStatus: "yes", hasCertificate: false })).toContain("source-required action status");
+    expect(validateDaUpdate({ dependency: "bgv", subStatus: "cleared", videoStatus: "pending", uanStatus: "yes", finalOutcome: "pendency_cleared", hasCertificate: false })).toBeNull();
+    expect(validateDaUpdate({ dependency: "bgv", subStatus: "pcc_applied", videoStatus: "pending", uanStatus: "yes", finalOutcome: "pending", hasCertificate: false })).toContain("source-required action status");
   });
 
   it("derives closure from the one reason-specific completion value", () => {
@@ -323,7 +325,7 @@ describe("DA In-App status, proof, and closure rules", () => {
   });
 
   it("keeps the common video action consistent for a video-specific case", () => {
-    expect(validateDaUpdate({ dependency: "video_verification", subStatus: "completed", videoStatus: "pending", uanStatus: "yes", hasCertificate: false })).toContain("must match");
+    expect(validateDaUpdate({ dependency: "video_verification", subStatus: "completed", videoStatus: "pending", uanStatus: "yes", finalOutcome: "pending", hasCertificate: false })).toContain("must match");
   });
 
   it("keeps legacy UAN answers unknown and preserves explicit Yes and No values", () => {
@@ -337,12 +339,20 @@ describe("DA In-App status, proof, and closure rules", () => {
   });
 
   it("requires a Yes or No UAN answer and filters every workflow status independently", () => {
-    expect(validateDaUpdate({ dependency: "bgv", subStatus: "pending", videoStatus: "pending", uanStatus: "not_updated", hasCertificate: false })).toContain("UAN");
-    expect(validateDaUpdate({ dependency: "bgv", subStatus: "pending", videoStatus: "pending", uanStatus: "no", hasCertificate: false })).toBeNull();
-    const record = { clearanceStatus: "pending", subStatus: "pending", videoStatus: "done", uanStatus: "no" };
-    expect(daRecordMatchesStatusFilters(record, { status: "pending", actionStatus: "pending", videoStatus: "done", uanStatus: "no" })).toBe(true);
+    expect(validateDaUpdate({ dependency: "bgv", subStatus: "pending", videoStatus: "pending", uanStatus: "not_updated", finalOutcome: "pending", hasCertificate: false })).toContain("UAN");
+    expect(validateDaUpdate({ dependency: "bgv", subStatus: "pending", videoStatus: "pending", uanStatus: "no", finalOutcome: "pending", hasCertificate: false })).toBeNull();
+    const record = { clearanceStatus: "pending", subStatus: "pending", videoStatus: "done", uanStatus: "no", finalOutcome: "pending" };
+    expect(daRecordMatchesStatusFilters(record, { status: "pending", actionStatus: "pending", videoStatus: "done", uanStatus: "no", finalOutcome: "pending" })).toBe(true);
     expect(daRecordMatchesStatusFilters(record, { status: "cleared" })).toBe(false);
     expect(daRecordMatchesStatusFilters(record, { status: "all", uanStatus: "yes" })).toBe(false);
+  });
+
+  it("keeps operational progress separate from the three final updates", () => {
+    expect(validateDaUpdate({ dependency: "backend_provisioning", subStatus: "uan_pending", videoStatus: "pending", uanStatus: "no", finalOutcome: "pending", hasCertificate: false })).toBeNull();
+    expect(validateDaUpdate({ dependency: "backend_provisioning", subStatus: "uan_updated", videoStatus: "pending", uanStatus: "yes", finalOutcome: "pending", hasCertificate: false })).toBeNull();
+    expect(validateDaUpdate({ dependency: "backend_provisioning", subStatus: "provisioned", videoStatus: "pending", uanStatus: "yes", finalOutcome: "pendency_cleared", hasCertificate: false })).toBeNull();
+    expect(validateDaUpdate({ dependency: "backend_provisioning", subStatus: "uan_pending", videoStatus: "pending", uanStatus: "no", finalOutcome: "candidate_not_responding", hasCertificate: false })).toBeNull();
+    expect(validateDaUpdate({ dependency: "backend_provisioning", subStatus: "amazon_pending", videoStatus: "pending", uanStatus: "no", finalOutcome: "offboarded", hasCertificate: false })).toBeNull();
   });
 });
 

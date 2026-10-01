@@ -44,6 +44,7 @@ export type DaImportRow = {
 
 export type DaVisibility = "mine" | "all" | "permitted_locations";
 export type DaUanStatus = "yes" | "no" | "not_updated";
+export type DaFinalOutcome = "pending" | "pendency_cleared" | "candidate_not_responding" | "offboarded";
 
 export type DaSessionScope = {
   isOwner?: boolean;
@@ -98,7 +99,9 @@ const SUB_STATUS_OPTIONS: Record<DaDependency, ReadonlyArray<DaSubStatusOption>>
     { value: "updated", label: "Station / supervisor updated", closesCase: true }
   ],
   backend_provisioning: [
-    { value: "pending", label: "Provisioning pending" },
+    { value: "amazon_pending", label: "Pending from Amazon" },
+    { value: "uan_pending", label: "UAN pending" },
+    { value: "uan_updated", label: "UAN updated" },
     { value: "provisioned", label: "Account provisioned", closesCase: true }
   ],
   bgv: [
@@ -140,6 +143,19 @@ export function daUanStatus(value: unknown): DaUanStatus {
   if (value === true || ["yes", "true", "updated", "done"].includes(clean(value).toLowerCase())) return "yes";
   if (value === false || ["no", "false", "not_updated", "not updated"].includes(clean(value).toLowerCase())) return "no";
   return "not_updated";
+}
+
+export const DA_FINAL_OUTCOME_OPTIONS: ReadonlyArray<{ value: DaFinalOutcome; label: string }> = [
+  { value: "pendency_cleared", label: "Pendency cleared" },
+  { value: "candidate_not_responding", label: "Candidate not responding" },
+  { value: "offboarded", label: "Offboarded" }
+];
+
+export function daFinalOutcome(value: unknown): DaFinalOutcome | null {
+  const normalized = clean(value).toLowerCase();
+  return normalized === "pending" || DA_FINAL_OUTCOME_OPTIONS.some((option) => option.value === normalized)
+    ? normalized as DaFinalOutcome
+    : null;
 }
 
 export function daFallbackOwnershipCandidates(email: unknown, name: unknown) {
@@ -343,7 +359,10 @@ export function parseDaInAppRecord(row: DaImportRow, batch: DaBatch, now = Date.
     : daSubStatusOptions(dependency).some((option) => option.value === savedSubStatus)
       ? savedSubStatus
       : defaultSubStatus(dependency, savedClearance);
-  const clearanceStatus = daActionIsComplete(dependency, subStatus) ? "cleared" as const : "pending" as const;
+  const savedFinalOutcome = daFinalOutcome(normalized.ops_final_outcome);
+  const finalOutcome = savedFinalOutcome
+    ?? (daActionIsComplete(dependency, subStatus) ? "pendency_cleared" as const : "pending" as const);
+  const clearanceStatus = finalOutcome === "pending" ? "pending" as const : "cleared" as const;
   const pendingSince = findDaValue(record, ["invitation date", "invitation_date", "pending since", "pending from", "report date", "date"])
     || row.work_date
     || batch.report_to
@@ -371,6 +390,7 @@ export function parseDaInAppRecord(row: DaImportRow, batch: DaBatch, now = Date.
     clearanceStatus,
     videoStatus,
     uanStatus,
+    finalOutcome,
     certificate,
     updatedBy: clean(normalized.ops_updated_by_email || normalized.ops_updated_by),
     updatedById: clean(normalized.ops_updated_by),
@@ -496,6 +516,7 @@ export function validateDaUpdate(input: {
   subStatus: string;
   videoStatus: string;
   uanStatus: string;
+  finalOutcome: string;
   hasCertificate: boolean;
 }) {
   const dependency = savedDependency(input.dependency);
@@ -504,12 +525,27 @@ export function validateDaUpdate(input: {
   if (!subStatus) return "Choose the source-required action status.";
   if (!["pending", "done"].includes(input.videoStatus)) return "Choose a valid video-verification status.";
   if (!["yes", "no"].includes(input.uanStatus)) return "Confirm whether the UAN is updated in Rabbit (Yes or No).";
-  if (dependency === "video_verification") {
+  const finalOutcome = daFinalOutcome(input.finalOutcome);
+  if (!finalOutcome) return "Choose a valid final update.";
+  if (dependency === "backend_provisioning" && input.subStatus === "uan_pending" && input.uanStatus !== "no") {
+    return "UAN pending must be marked No in the Rabbit checklist.";
+  }
+  if (dependency === "backend_provisioning" && ["uan_updated", "provisioned"].includes(input.subStatus) && input.uanStatus !== "yes") {
+    return "UAN updated or account provisioned must be marked Yes in the Rabbit checklist.";
+  }
+  if (dependency === "video_verification" && finalOutcome === "pending") {
     const expected = input.videoStatus === "done" ? "completed" : "pending";
     if (input.subStatus !== expected) return "Video action status must match video verification.";
   }
   if (dependency === "nhda" && input.subStatus === "completed" && !input.hasCertificate) {
     return "Attach the NHDA certificate before marking the NHDA course completed.";
+  }
+  const actionComplete = daActionIsComplete(dependency, input.subStatus);
+  if (finalOutcome === "pendency_cleared" && !actionComplete) {
+    return "Complete the required action before selecting Pendency cleared.";
+  }
+  if (finalOutcome === "pending" && actionComplete) {
+    return "Select Pendency cleared as the final update for a completed action.";
   }
   return null;
 }
@@ -519,6 +555,7 @@ type DaWorkflowStatusRecord = {
   subStatus: string;
   videoStatus: string;
   uanStatus: string;
+  finalOutcome?: string;
 };
 
 function selectedStatusValues(value: string | null | undefined) {
@@ -527,16 +564,18 @@ function selectedStatusValues(value: string | null | undefined) {
 
 export function daRecordMatchesStatusFilters(
   record: DaWorkflowStatusRecord,
-  filters: { status?: string; actionStatus?: string; videoStatus?: string; uanStatus?: string }
+  filters: { status?: string; actionStatus?: string; videoStatus?: string; uanStatus?: string; finalOutcome?: string }
 ) {
   const status = clean(filters.status) || "pending";
   const actionStatuses = selectedStatusValues(filters.actionStatus);
   const videoStatuses = selectedStatusValues(filters.videoStatus);
   const uanStatuses = selectedStatusValues(filters.uanStatus);
+  const finalOutcomes = selectedStatusValues(filters.finalOutcome);
   if (status !== "all" && record.clearanceStatus !== status) return false;
   if (actionStatuses.size && !actionStatuses.has(record.subStatus)) return false;
   if (videoStatuses.size && !videoStatuses.has(record.videoStatus)) return false;
   if (uanStatuses.size && !uanStatuses.has(record.uanStatus)) return false;
+  if (finalOutcomes.size && !finalOutcomes.has(record.finalOutcome ?? "pending")) return false;
   return true;
 }
 
