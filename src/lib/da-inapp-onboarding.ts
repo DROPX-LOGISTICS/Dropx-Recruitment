@@ -43,6 +43,7 @@ export type DaImportRow = {
 };
 
 export type DaVisibility = "mine" | "all" | "permitted_locations";
+export type DaUanStatus = "yes" | "no" | "not_updated";
 
 export type DaSessionScope = {
   isOwner?: boolean;
@@ -134,6 +135,12 @@ const clean = (value: unknown) => String(value ?? "").trim();
 const key = (value: unknown) => clean(value).toLowerCase().replace(/[^a-z0-9]+/g, "");
 export const normalizeDaStation = (value: unknown) => clean(value).toUpperCase().replace(/[^A-Z0-9]/g, "");
 export const normalizeDaIdentity = (value: unknown) => clean(value).toLowerCase().replace(/\s+/g, "");
+
+export function daUanStatus(value: unknown): DaUanStatus {
+  if (value === true || ["yes", "true", "updated", "done"].includes(clean(value).toLowerCase())) return "yes";
+  if (value === false || ["no", "false", "not_updated", "not updated"].includes(clean(value).toLowerCase())) return "no";
+  return "not_updated";
+}
 
 export function daFallbackOwnershipCandidates(email: unknown, name: unknown) {
   const candidates = new Set<string>();
@@ -330,6 +337,7 @@ export function parseDaInAppRecord(row: DaImportRow, batch: DaBatch, now = Date.
     : null;
   const savedSubStatus = clean(normalized.ops_sub_status);
   const videoStatus = clean(normalized.ops_video_verification_status) === "done" ? "done" as const : "pending" as const;
+  const uanStatus = daUanStatus(normalized.ops_uan_updated_in_rabbit);
   const subStatus = dependency === "video_verification"
     ? videoStatus === "done" ? "completed" : "pending"
     : daSubStatusOptions(dependency).some((option) => option.value === savedSubStatus)
@@ -362,6 +370,7 @@ export function parseDaInAppRecord(row: DaImportRow, batch: DaBatch, now = Date.
     subStatusOptions: daSubStatusOptions(dependency),
     clearanceStatus,
     videoStatus,
+    uanStatus,
     certificate,
     updatedBy: clean(normalized.ops_updated_by_email || normalized.ops_updated_by),
     updatedById: clean(normalized.ops_updated_by),
@@ -486,6 +495,7 @@ export function validateDaUpdate(input: {
   dependency: string;
   subStatus: string;
   videoStatus: string;
+  uanStatus: string;
   hasCertificate: boolean;
 }) {
   const dependency = savedDependency(input.dependency);
@@ -493,6 +503,7 @@ export function validateDaUpdate(input: {
   const subStatus = daSubStatusOptions(dependency).find((option) => option.value === input.subStatus);
   if (!subStatus) return "Choose the source-required action status.";
   if (!["pending", "done"].includes(input.videoStatus)) return "Choose a valid video-verification status.";
+  if (!["yes", "no"].includes(input.uanStatus)) return "Confirm whether the UAN is updated in Rabbit (Yes or No).";
   if (dependency === "video_verification") {
     const expected = input.videoStatus === "done" ? "completed" : "pending";
     if (input.subStatus !== expected) return "Video action status must match video verification.";
@@ -501,6 +512,32 @@ export function validateDaUpdate(input: {
     return "Attach the NHDA certificate before marking the NHDA course completed.";
   }
   return null;
+}
+
+type DaWorkflowStatusRecord = {
+  clearanceStatus: string;
+  subStatus: string;
+  videoStatus: string;
+  uanStatus: string;
+};
+
+function selectedStatusValues(value: string | null | undefined) {
+  return new Set(clean(value).split(",").map((item) => item.trim()).filter(Boolean));
+}
+
+export function daRecordMatchesStatusFilters(
+  record: DaWorkflowStatusRecord,
+  filters: { status?: string; actionStatus?: string; videoStatus?: string; uanStatus?: string }
+) {
+  const status = clean(filters.status) || "pending";
+  const actionStatuses = selectedStatusValues(filters.actionStatus);
+  const videoStatuses = selectedStatusValues(filters.videoStatus);
+  const uanStatuses = selectedStatusValues(filters.uanStatus);
+  if (status !== "all" && record.clearanceStatus !== status) return false;
+  if (actionStatuses.size && !actionStatuses.has(record.subStatus)) return false;
+  if (videoStatuses.size && !videoStatuses.has(record.videoStatus)) return false;
+  if (uanStatuses.size && !uanStatuses.has(record.uanStatus)) return false;
+  return true;
 }
 
 export function daActionIsComplete(dependency: string, subStatus: string) {

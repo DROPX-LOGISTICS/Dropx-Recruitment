@@ -9,6 +9,7 @@ import {
   daAgingDays,
   daFallbackOwnershipCandidates,
   daOwnershipStatus,
+  daRecordMatchesStatusFilters,
   daStationForOwnership,
   inferDaDependency,
   isDaInAppBatch,
@@ -289,12 +290,14 @@ describe("DA In-App status, proof, and closure rules", () => {
       dependency: "nhda",
       subStatus: "completed",
       videoStatus: "pending",
+      uanStatus: "yes",
       hasCertificate: false
     })).toContain("NHDA certificate");
     expect(validateDaUpdate({
       dependency: "nhda",
       subStatus: "completed",
       videoStatus: "done",
+      uanStatus: "yes",
       hasCertificate: true
     })).toBeNull();
   });
@@ -310,8 +313,8 @@ describe("DA In-App status, proof, and closure rules", () => {
   });
 
   it("allows only BGC cleared as the BGC completion action", () => {
-    expect(validateDaUpdate({ dependency: "bgv", subStatus: "cleared", videoStatus: "pending", hasCertificate: false })).toBeNull();
-    expect(validateDaUpdate({ dependency: "bgv", subStatus: "pcc_applied", videoStatus: "pending", hasCertificate: false })).toContain("source-required action status");
+    expect(validateDaUpdate({ dependency: "bgv", subStatus: "cleared", videoStatus: "pending", uanStatus: "yes", hasCertificate: false })).toBeNull();
+    expect(validateDaUpdate({ dependency: "bgv", subStatus: "pcc_applied", videoStatus: "pending", uanStatus: "yes", hasCertificate: false })).toContain("source-required action status");
   });
 
   it("derives closure from the one reason-specific completion value", () => {
@@ -320,7 +323,26 @@ describe("DA In-App status, proof, and closure rules", () => {
   });
 
   it("keeps the common video action consistent for a video-specific case", () => {
-    expect(validateDaUpdate({ dependency: "video_verification", subStatus: "completed", videoStatus: "pending", hasCertificate: false })).toContain("must match");
+    expect(validateDaUpdate({ dependency: "video_verification", subStatus: "completed", videoStatus: "pending", uanStatus: "yes", hasCertificate: false })).toContain("must match");
+  });
+
+  it("keeps legacy UAN answers unknown and preserves explicit Yes and No values", () => {
+    const legacy = parseDaInAppRecord(daRow("legacy", "da-new"), daBatch("da-new"));
+    const yes = parseDaInAppRecord(daRow("yes", "da-new", { normalized_data: { ops_uan_updated_in_rabbit: true } }), daBatch("da-new"));
+    const no = parseDaInAppRecord(daRow("no", "da-new", { normalized_data: { ops_uan_updated_in_rabbit: false } }), daBatch("da-new"));
+
+    expect(legacy.uanStatus).toBe("not_updated");
+    expect(yes.uanStatus).toBe("yes");
+    expect(no.uanStatus).toBe("no");
+  });
+
+  it("requires a Yes or No UAN answer and filters every workflow status independently", () => {
+    expect(validateDaUpdate({ dependency: "bgv", subStatus: "pending", videoStatus: "pending", uanStatus: "not_updated", hasCertificate: false })).toContain("UAN");
+    expect(validateDaUpdate({ dependency: "bgv", subStatus: "pending", videoStatus: "pending", uanStatus: "no", hasCertificate: false })).toBeNull();
+    const record = { clearanceStatus: "pending", subStatus: "pending", videoStatus: "done", uanStatus: "no" };
+    expect(daRecordMatchesStatusFilters(record, { status: "pending", actionStatus: "pending", videoStatus: "done", uanStatus: "no" })).toBe(true);
+    expect(daRecordMatchesStatusFilters(record, { status: "cleared" })).toBe(false);
+    expect(daRecordMatchesStatusFilters(record, { status: "all", uanStatus: "yes" })).toBe(false);
   });
 });
 

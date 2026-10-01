@@ -8,6 +8,7 @@ import {
   daActionIsComplete,
   daFallbackOwnershipCandidates,
   daOwnershipStatus,
+  daRecordMatchesStatusFilters,
   daStationForOwnership,
   findDaValue,
   isDaInAppBatch,
@@ -218,6 +219,9 @@ export async function GET(request: Request) {
     const companyId = requiredEnv("RECRUITMENT_COMPANY_ID");
     const url = new URL(request.url);
     const status = clean(url.searchParams.get("status")) || "pending";
+    const actionStatus = clean(url.searchParams.get("actionStatus"));
+    const videoStatus = clean(url.searchParams.get("videoStatus"));
+    const uanStatus = clean(url.searchParams.get("uanStatus"));
     const selectedStations = new Set(clean(url.searchParams.get("station")).split(",").map(normalizeDaStation).filter(Boolean));
     const selectedClusters = new Set(clean(url.searchParams.get("cluster")).split(",").map((item) => item.trim().toLowerCase()).filter(Boolean));
     const sort = clean(url.searchParams.get("sort")) || "oldest";
@@ -260,7 +264,7 @@ export async function GET(request: Request) {
     const updatedByName = await updaterNames(companyId, accessibleBase.map((row) => row.updatedById));
     const accessible = accessibleBase.map((row) => ({ ...row, updatedBy: updatedByName.get(row.updatedById) || row.updatedBy }));
     const filtered = accessible.filter((row) => {
-      if (status !== "all" && row.clearanceStatus !== status) return false;
+      if (!daRecordMatchesStatusFilters(row, { status, actionStatus, videoStatus, uanStatus })) return false;
       if (selectedStations.size && !selectedStations.has(row.station)) return false;
       if (selectedClusters.size && !selectedClusters.has(row.cluster.toLowerCase())) return false;
       if (search && !`${row.daName} ${row.rabbitId} ${row.transporterId} ${row.station} ${row.stationName} ${row.cluster} ${row.crmName} ${row.contact.phone} ${row.sourceReason}`.toLowerCase().includes(search)) return false;
@@ -292,6 +296,7 @@ export async function GET(request: Request) {
         pending: pending.length,
         cleared: accessible.filter((row) => row.clearanceStatus === "cleared").length,
         videoPending: accessible.filter((row) => row.videoStatus === "pending").length,
+        uanNotUpdated: accessible.filter((row) => row.uanStatus === "not_updated").length,
         nhda: accessible.filter((row) => row.dependency === "nhda").length,
         nsta: accessible.filter((row) => row.dependency === "nhda").length,
         oldestPending: pending.length ? Math.max(...pending.map((row) => row.agingDays)) : 0,
@@ -302,6 +307,10 @@ export async function GET(request: Request) {
       stations: [...new Set(accessible.map((row) => row.station).filter(Boolean))].sort(),
       stationOptions: [...new Map(accessible.filter((row) => row.station).map((row) => [row.station, { code: row.station, name: row.stationName, cluster: row.cluster }])).values()].sort((left, right) => left.code.localeCompare(right.code)),
       clusters: [...new Set(accessible.map((row) => row.cluster).filter((item) => item && item !== "Unmapped"))].sort(),
+      actionStatusOptions: [...new Map(accessible.map((row) => {
+        const label = row.subStatusOptions.find((option) => option.value === row.subStatus)?.label || row.subStatus;
+        return [row.subStatus, { value: row.subStatus, label }];
+      })).values()].sort((left, right) => left.label.localeCompare(right.label)),
       sort,
       visibility,
       scope: visibility === "mine" ? "mine" : visibility === "all" ? "all" : "permitted",
@@ -325,6 +334,7 @@ export async function PATCH(request: Request) {
     const form = await request.formData();
     const id = clean(form.get("id"));
     const videoStatus = clean(form.get("videoStatus"));
+    const uanStatus = clean(form.get("uanStatus"));
     let subStatus = clean(form.get("subStatus"));
     const remarks = clean(form.get("remarks")).slice(0, 1000);
     if (!id) throw new Error("Choose a DA In-App onboarding record.");
@@ -371,6 +381,7 @@ export async function PATCH(request: Request) {
       dependency,
       subStatus,
       videoStatus,
+      uanStatus,
       hasCertificate: Boolean(certificate || pendingCertificate)
     });
     if (validation) throw new Error(validation);
@@ -399,6 +410,7 @@ export async function PATCH(request: Request) {
         ops_sub_status: subStatus,
         ops_clearance_status: clearanceStatus,
         ops_video_verification_status: videoStatus,
+        ops_uan_updated_in_rabbit: uanStatus === "yes",
         ops_nhda_certificate: certificate,
         ops_cleared_at: clearanceStatus === "cleared" ? updatedAt : null,
         ops_updated_by: session.profileId,
