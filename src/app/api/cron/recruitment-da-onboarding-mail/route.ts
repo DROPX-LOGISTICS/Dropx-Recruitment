@@ -28,12 +28,22 @@ export async function POST(request: Request) {
   if (!authorized(request)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   try {
     const body = await request.json();
-    if (body.action !== "samples") return NextResponse.json({ error: "Unsupported action" }, { status: 400 });
-    return NextResponse.json(await sendDaOnboardingSamples(requiredEnv("RECRUITMENT_COMPANY_ID"), [
-      "nisar@dropxlogistics.com",
-      "praveen@dropxlogistics.com",
-      "qlda@dropxlogistics.com"
-    ]));
+    if (body.action === "one_time_live") {
+      return NextResponse.json(await runDaOnboardingMail(
+        requiredEnv("RECRUITMENT_COMPANY_ID"),
+        false,
+        new Date(),
+        "night"
+      ));
+    }
+    if (body.action === "samples") {
+      return NextResponse.json(await sendDaOnboardingSamples(requiredEnv("RECRUITMENT_COMPANY_ID"), [
+        "nisar@dropxlogistics.com",
+        "praveen@dropxlogistics.com",
+        "qlda@dropxlogistics.com"
+      ]));
+    }
+    return NextResponse.json({ error: "Unsupported action" }, { status: 400 });
   } catch (error) {
     console.error("recruit-da-onboarding-mail samples", error);
     return NextResponse.json({ error: "DA onboarding sample mail failed; inspect server logs." }, { status: 500 });

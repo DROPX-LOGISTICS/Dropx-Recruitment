@@ -285,7 +285,7 @@ async function deliver(companyId: string, job: any, context: Awaited<ReturnType<
   }
 }
 
-export async function runDaOnboardingMail(companyId: string, preview = false, now = new Date()) {
+export async function runDaOnboardingMail(companyId: string, preview = false, now = new Date(), forcedSlot?: DaDigestSlot) {
   const [settingsResult, context] = await Promise.all([
     db().from("recruitment_da_onboarding_mail_settings").select("*").eq("company_id", companyId).maybeSingle(),
     loadDaDigestContext(companyId)
@@ -304,7 +304,7 @@ export async function runDaOnboardingMail(companyId: string, preview = false, no
   if (!settings?.enabled) return { enabled: false };
   const locked = checked(await db().rpc("recruitment_da_onboarding_mail_lock", { p_company: companyId }));
   if (!locked) return { enabled: true, busy: true };
-  const slot = daDigestSlot(now, String(settings.afternoon_time || "15:00").slice(0, 5), String(settings.evening_time || "19:00").slice(0, 5));
+  const slot = forcedSlot || daDigestSlot(now, String(settings.afternoon_time || "15:00").slice(0, 5), String(settings.evening_time || "19:00").slice(0, 5));
   let sent = 0;
   try {
     if (!slot) return { enabled: true, sent: 0, queued: 0, groups: context.groups.length };

@@ -54,6 +54,7 @@ describe("DA onboarding digest schedule and content", () => {
   it("uses one stable monthly subject and shows compact scoped metrics plus unmapped IDs", () => {
     const afternoon = renderDaDigestMail({ group, date: "2026-10-01", slot: "afternoon" });
     const evening = renderDaDigestMail({ group, date: "2026-10-21", slot: "evening" });
+    const night = renderDaDigestMail({ group, date: "2026-10-01", slot: "night" });
     expect(afternoon.subject).toBe("DA In-App Onboarding Update · October 2026");
     expect(evening.subject).toBe(afternoon.subject);
     expect(afternoon.html).toContain("TOTAL OPEN CASES");
@@ -67,6 +68,8 @@ describe("DA onboarding digest schedule and content", () => {
     expect(afternoon.html).toContain("Amazon Badge ID");
     expect(afternoon.html).toContain("Station action deadline: 16:00");
     expect(evening.html).toContain("Station action deadline: 20:00");
+    expect(night.html).toContain("Live status snapshot: 21:00");
+    expect(night.html).toContain("21:00 live status");
     expect(afternoon.html).toContain("Highest priority stations");
     expect(afternoon.html).toContain("Access is available to every station");
     expect(afternoon.html).toContain("Sreejyothish J B");
