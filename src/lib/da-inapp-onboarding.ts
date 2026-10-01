@@ -146,8 +146,8 @@ export function daUanStatus(value: unknown): DaUanStatus {
 }
 
 export const DA_FINAL_OUTCOME_OPTIONS: ReadonlyArray<{ value: DaFinalOutcome; label: string }> = [
-  { value: "pendency_cleared", label: "Pendency cleared" },
-  { value: "candidate_not_responding", label: "Candidate not responding" },
+  { value: "pendency_cleared", label: "Cleared" },
+  { value: "candidate_not_responding", label: "DA not responding" },
   { value: "offboarded", label: "Offboarded" }
 ];
 

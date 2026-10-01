@@ -338,6 +338,7 @@ export async function PATCH(request: Request) {
     let subStatus = clean(form.get("subStatus"));
     const remarks = clean(form.get("remarks")).slice(0, 1000);
     if (!id) throw new Error("Choose a DA In-App onboarding record.");
+    if (!remarks) throw new Error("Remarks are required.");
     const existing = await supabaseAdmin.from("report_import_rows")
       .select("id,batch_id,source_type,station_code,work_date,raw_data,normalized_data,created_at")
       .eq("company_id", companyId)

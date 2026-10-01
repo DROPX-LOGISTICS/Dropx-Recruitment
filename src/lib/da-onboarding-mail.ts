@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import nodemailer from "nodemailer";
+import * as XLSX from "xlsx";
 import { emailValid, ist, type MailPerson } from "./ad-manager-mail-model";
 import {
   DA_INAPP_SOURCE_ALIASES,
@@ -65,51 +66,115 @@ async function latestDaRows(companyId: string) {
 }
 
 export async function loadDaDigestContext(companyId: string) {
-  const [peopleResult, stations, latest] = await Promise.all([
+  const [peopleResult, stations, latest, stationModelsResult, providersResult, locationModelsResult] = await Promise.all([
     db().rpc("recruitment_ad_mail_people", { p_company: companyId }),
     loadMainDashboardStations(companyId),
-    latestDaRows(companyId)
+    latestDaRows(companyId),
+    db().from("stations").select("id,provider_id,location_model_id").eq("company_id", companyId).eq("is_active", true).eq("hide_from_location_list", false),
+    db().from("providers").select("id,code").eq("company_id", companyId).eq("is_active", true),
+    db().from("location_models").select("id,code").eq("company_id", companyId).eq("is_active", true)
   ]);
   const people = checked(peopleResult) as MailPerson[];
-  const stationByCode = new Map(stations.map((station) => [station.code, station]));
-  const digestStations: DaDigestStation[] = stations.map((station) => ({
+  const providerById = new Map(checked(providersResult).map((item: any) => [item.id, String(item.code ?? "").trim().toUpperCase()]));
+  const modelById = new Map(checked(locationModelsResult).map((item: any) => [item.id, String(item.code ?? "").trim().toUpperCase()]));
+  const eligibleStationIds = new Set(checked(stationModelsResult).flatMap((item: any) =>
+    providerById.get(item.provider_id) === "AMAZON" && ["EDSP", "XPT"].includes(modelById.get(item.location_model_id) || "")
+      ? [item.id]
+      : []
+  ));
+  const eligibleStations = stations.filter((station) => eligibleStationIds.has(station.id));
+  const allStationByCode = new Map(stations.map((station) => [station.code, station]));
+  const stationByCode = new Map(eligibleStations.map((station) => [station.code, station]));
+  const mappedNames = (role: string, stationId: string) => {
+    const names = [...new Set(people.filter((person) => person.role === role && person.station_ids.includes(stationId)).map((person) => person.name).filter(Boolean))].sort();
+    return names.length ? names.join(" / ") : "N/A";
+  };
+  const digestStations: DaDigestStation[] = eligibleStations.map((station) => ({
     id: station.id,
     code: station.code,
     name: station.name,
-    cluster: station.operationalOwner?.name || station.managerName || "Owner not mapped"
+    region: station.region || (String(station.state || "").toUpperCase().includes("KERALA") || String(station.state || "").toUpperCase() === "KL" ? "KL" : "OTHER"),
+    clusterManager: mappedNames("CLM", station.id),
+    areaOpsManager: mappedNames("AOM", station.id)
   }));
-  const records: DaDigestRecord[] = latest.batch ? latest.rows.flatMap((row) => {
-    const parsed = parseDaInAppRecord(row, latest.batch!);
+  const parsedRows = latest.batch ? latest.rows.map((row) => ({ parsed: parseDaInAppRecord(row, latest.batch!) })) : [];
+  const toRecord = (parsed: ReturnType<typeof parseDaInAppRecord>, station?: (typeof stations)[number]): DaDigestRecord => ({
+    id: parsed.id,
+    daName: parsed.daName,
+    transporterId: parsed.transporterId,
+    stationId: station?.id || "",
+    station: station?.code || parsed.station || "UNMAPPED",
+    stationName: station?.name || "Unmapped",
+    cluster: station?.operationalOwner?.name || station?.managerName || "N/A",
+    actionLabel: daDependencyLabel(parsed.dependency),
+    actionStatus: parsed.subStatus,
+    actionStatusLabel: daSubStatusOptions(parsed.dependency).find((option) => option.value === parsed.subStatus)?.label || parsed.subStatus,
+    sourceAction: parsed.sourceAction,
+    finalOutcome: parsed.finalOutcome,
+    clearanceStatus: parsed.clearanceStatus,
+    videoStatus: parsed.videoStatus,
+    uanStatus: parsed.uanStatus,
+    updatedAt: parsed.updatedAt,
+    updatedBy: parsed.updatedBy,
+    agingDays: parsed.agingDays
+  });
+  const records: DaDigestRecord[] = parsedRows.flatMap(({ parsed }) => {
     const station = stationByCode.get(parsed.station);
     if (!station) return [];
-    return [{
-      id: parsed.id,
-      daName: parsed.daName,
-      transporterId: parsed.transporterId,
-      stationId: station.id,
-      station: station.code,
-      stationName: station.name,
-      cluster: station.operationalOwner?.name || station.managerName || "Owner not mapped",
-      actionLabel: daDependencyLabel(parsed.dependency),
-      actionStatus: parsed.subStatus,
-      actionStatusLabel: daSubStatusOptions(parsed.dependency).find((option) => option.value === parsed.subStatus)?.label || parsed.subStatus,
-      sourceAction: parsed.sourceAction,
-      finalOutcome: parsed.finalOutcome,
-      clearanceStatus: parsed.clearanceStatus,
-      videoStatus: parsed.videoStatus,
-      uanStatus: parsed.uanStatus,
-      updatedAt: parsed.updatedAt,
-      updatedBy: parsed.updatedBy,
-      agingDays: parsed.agingDays
-    }];
-  }) : [];
+    return [toRecord(parsed, station)];
+  });
+  const unmappedRecords = parsedRows.flatMap(({ parsed }) => allStationByCode.has(parsed.station) ? [] : [toRecord(parsed)]);
   const groups: DaDigestGroup[] = people.filter((person) => emailValid(person.email)).flatMap((recipient) => {
     const scopedStations = digestStations.filter((station) => recipient.station_ids.includes(station.id));
     if (!scopedStations.length) return [];
     const stationIds = new Set(scopedStations.map((station) => station.id));
-    return [{ recipient, stations: scopedStations, records: records.filter((record) => stationIds.has(record.stationId)) }];
+    return [{ recipient, stations: scopedStations, records: records.filter((record) => stationIds.has(record.stationId)), unmappedRecords }];
   }).sort((left, right) => left.recipient.email.localeCompare(right.recipient.email));
-  return { people, stations: digestStations, records, groups, source: latest.batch };
+  return { people, stations: digestStations, records, unmappedRecords, groups, source: latest.batch };
+}
+
+function daDetailWorkbook(group: DaDigestGroup) {
+  const stationById = new Map(group.stations.map((station) => [station.id, station]));
+  const rows = group.records.map((record) => {
+    const station = stationById.get(record.stationId);
+    return {
+      Region: station?.region || "N/A",
+      "Station code": record.station,
+      Station: record.stationName,
+      "Cluster manager": station?.clusterManager || "N/A",
+      "Area ops manager": station?.areaOpsManager || "N/A",
+      "DA name": record.daName,
+      "Transporter ID": record.transporterId,
+      "Portal update": record.updatedAt ? "Updated" : "Not updated",
+      "Updated at": record.updatedAt || "",
+      "Updated by": record.updatedBy || "",
+      "Action bucket": record.actionLabel,
+      "Action status": record.actionStatusLabel,
+      "UAN updated in Rabbit": record.uanStatus === "yes" ? "Yes" : record.uanStatus === "no" ? "No" : "Not updated",
+      "Video verification": record.videoStatus === "done" ? "Completed" : "Pending",
+      "Final update": record.finalOutcome === "pending" ? "Not finalised" : record.finalOutcome === "candidate_not_responding" ? "DA not responding" : record.finalOutcome === "offboarded" ? "Offboarded" : "Cleared",
+      "Pending age (days)": record.agingDays
+    };
+  });
+  const sheet = XLSX.utils.json_to_sheet(rows, { header: [
+    "Region", "Station code", "Station", "Cluster manager", "Area ops manager", "DA name", "Transporter ID", "Portal update", "Updated at", "Updated by", "Action bucket", "Action status", "UAN updated in Rabbit", "Video verification", "Final update", "Pending age (days)"
+  ] });
+  sheet["!autofilter"] = { ref: sheet["!ref"] || "A1:P1" };
+  sheet["!cols"] = [10, 13, 22, 24, 24, 24, 20, 15, 22, 26, 22, 24, 22, 20, 20, 18].map((wch) => ({ wch }));
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, sheet, "DA Onboarding Detail");
+  if (group.unmappedRecords.length) {
+    const unmappedSheet = XLSX.utils.json_to_sheet(group.unmappedRecords.map((record) => ({
+      "Amazon Badge ID": record.transporterId,
+      "DA name": record.daName,
+      "Source station": record.station,
+      "Required correction": "Map the ID to the correct Amazon EDSP/XPT station and operational owner"
+    })));
+    unmappedSheet["!autofilter"] = { ref: unmappedSheet["!ref"] || "A1:D1" };
+    unmappedSheet["!cols"] = [22, 26, 18, 70].map((wch) => ({ wch }));
+    XLSX.utils.book_append_sheet(workbook, unmappedSheet, "Unmapped Amazon IDs");
+  }
+  return XLSX.write(workbook, { type: "buffer", bookType: "xlsx", compression: true }) as Buffer;
 }
 
 type DaMailPayload = {
@@ -134,7 +199,7 @@ async function enqueue(companyId: string, group: DaDigestGroup, slot: DaDigestSl
   checked(await db().from("recruitment_da_onboarding_mail_deliveries").upsert({
     id,
     company_id: companyId,
-    dedupe_key: `${sample ? "sample" : slot}:${date}:${group.recipient.id}`,
+    dedupe_key: `${sample ? "sample:v2" : slot}:${date}:${group.recipient.id}`,
     recipient_id: group.recipient.id,
     recipient_role: group.recipient.role,
     slot,
@@ -185,6 +250,11 @@ async function deliver(companyId: string, job: any, context: Awaited<ReturnType<
         subject: mail.subject,
         text: mail.text,
         html: mail.html,
+        attachments: [{
+          filename: `DA_InApp_Detail_${payload.date}_${payload.slot}.xlsx`,
+          content: daDetailWorkbook(group),
+          contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        }],
         messageId: job.message_id,
         ...(previous ? { inReplyTo: previous.message_id, references: [previous.message_id] } : {})
       });
@@ -226,7 +296,7 @@ export async function runDaOnboardingMail(companyId: string, preview = false, no
     mappedStations: context.stations.length,
     cases: context.records.length,
     sourceFile: context.source?.file_name || null,
-    unmappedCases: context.source ? Math.max(0, Number(context.source.row_count ?? context.source.imported_row_count ?? 0) - context.records.length) : 0
+    unmappedCases: context.unmappedRecords.length
   };
   if (!settings?.enabled) return { enabled: false };
   const locked = checked(await db().rpc("recruitment_da_onboarding_mail_lock", { p_company: companyId }));

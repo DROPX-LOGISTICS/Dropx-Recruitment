@@ -253,6 +253,7 @@ dl{display:grid;grid-template-columns:minmax(110px,35%) 1fr;gap:8px 12px;margin:
 .danap-metrics{grid-template-columns:repeat(6,minmax(0,1fr))}
 .danap-toolbar{grid-template-columns:minmax(210px,1.35fr) repeat(5,minmax(105px,.65fr)) minmax(125px,.75fr) minmax(125px,.75fr) minmax(135px,.8fr) auto auto;gap:6px}
 .danap-card-fields{grid-template-columns:minmax(135px,.8fr) minmax(145px,.9fr) minmax(145px,.9fr) minmax(150px,.9fr) minmax(190px,1.1fr) minmax(220px,1.35fr)}
+.danap-card-fields .required-checklist-field{padding:7px;border:1px solid #fedf89;border-radius:8px;background:#fff9f2;color:#7a2e0e}
 @media(max-width:1180px){.danap-metrics{grid-template-columns:repeat(3,1fr)}.danap-toolbar{grid-template-columns:repeat(4,minmax(120px,1fr))}.danap-toolbar>input{grid-column:span 2}.danap-card-fields{grid-template-columns:repeat(3,1fr)}}
 @media(max-width:760px){.danap-metrics,.danap-toolbar,.danap-card-fields{grid-template-columns:1fr 1fr}.danap-toolbar>input{grid-column:1/-1}.danap-remarks{grid-column:1/-1}}
 .danap-mail-panel{margin:12px 0;padding:16px}.danap-mail-panel>summary{cursor:pointer;font-weight:800;color:#17213a}.danap-mail-panel>div{padding-top:12px}.danap-mail-panel p{margin:6px 0;color:#475467}.danap-mail-actions{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}
