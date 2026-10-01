@@ -65,6 +65,10 @@ describe("DA onboarding digest schedule and content", () => {
     expect(afternoon.html).toContain("unmapped@example.com");
     expect(afternoon.html).toContain("not mapped");
     expect(afternoon.html).toContain("Amazon Badge ID");
+    expect(afternoon.html).toContain("Station action deadline: 16:00");
+    expect(evening.html).toContain("Station action deadline: 20:00");
+    expect(afternoon.html).toContain("Highest priority stations");
+    expect(afternoon.html).toContain("Access is available to every station");
     expect(afternoon.html).toContain("Sreejyothish J B");
     expect(afternoon.html).toContain("Praveen Kumar");
     expect(afternoon.html).not.toContain("Example Associate");

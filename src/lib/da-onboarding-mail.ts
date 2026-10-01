@@ -202,7 +202,7 @@ async function enqueue(companyId: string, group: DaDigestGroup, slot: DaDigestSl
   checked(await db().from("recruitment_da_onboarding_mail_deliveries").upsert({
     id,
     company_id: companyId,
-    dedupe_key: `${sample ? "sample:v2" : slot}:${date}:${group.recipient.id}`,
+    dedupe_key: `${sample ? "sample:v3" : slot}:${date}:${group.recipient.id}`,
     recipient_id: group.recipient.id,
     recipient_role: group.recipient.role,
     slot,
