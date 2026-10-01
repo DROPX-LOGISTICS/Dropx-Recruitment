@@ -6,6 +6,7 @@ const record = (overrides: Partial<DaDigestRecord> = {}): DaDigestRecord => ({
   id: "case-1",
   daName: "Example Associate",
   transporterId: "A1EXAMPLE",
+  emailId: "example@amazon.test",
   stationId: station.id,
   station: station.code,
   stationName: station.name,
@@ -27,7 +28,7 @@ const group: DaDigestGroup = {
   recipient: { id: "recipient", name: "QLDA", email: "qlda@dropxlogistics.com", mobile: null, role: "LOCATION", station_ids: [station.id] },
   stations: [station],
   records: [record(), record({ id: "case-2", actionStatus: "provisioned", actionStatusLabel: "Account provisioned", uanStatus: "yes", videoStatus: "done", finalOutcome: "pendency_cleared", clearanceStatus: "cleared", updatedAt: "2026-10-01T08:00:00Z" })],
-  unmappedRecords: [record({ id: "unmapped", stationId: "", station: "UNMAPPED", stationName: "Unmapped", transporterId: "A1UNMAPPED" })]
+  unmappedRecords: [record({ id: "unmapped", stationId: "", station: "UNMAPPED", stationName: "Unmapped", transporterId: "A1UNMAPPED", daName: "Unmapped DA", emailId: "unmapped@example.com" })]
 };
 
 describe("DA onboarding digest schedule and content", () => {
@@ -60,6 +61,8 @@ describe("DA onboarding digest schedule and content", () => {
     expect(afternoon.html).toContain("Cleared");
     expect(afternoon.html).toContain("DA not responding");
     expect(afternoon.html).toContain("A1UNMAPPED");
+    expect(afternoon.html).toContain("Unmapped DA");
+    expect(afternoon.html).toContain("unmapped@example.com");
     expect(afternoon.html).toContain("not mapped");
     expect(afternoon.html).toContain("Amazon Badge ID");
     expect(afternoon.html).toContain("Sreejyothish J B");

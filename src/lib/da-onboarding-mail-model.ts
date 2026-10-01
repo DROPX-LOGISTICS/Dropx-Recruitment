@@ -15,6 +15,7 @@ export type DaDigestRecord = {
   id: string;
   daName: string;
   transporterId: string;
+  emailId: string;
   stationId: string;
   station: string;
   stationName: string;
@@ -126,9 +127,10 @@ function metric(label: string, value: number, color: string, background: string)
 
 function unmappedAlert(records: DaDigestRecord[]) {
   if (!records.length) return "";
-  const ids = records.slice(0, 20).map((record) => escapeHtml(record.transporterId || record.daName || record.id)).join(", ");
-  const more = records.length > 20 ? ` and ${records.length - 20} more` : "";
-  return `<div style="margin:0 0 18px;padding:15px 16px;background:#fff1f0;border:1px solid #fda29b;border-left:5px solid #d92d20;border-radius:12px"><div style="font-size:13px;font-weight:900;color:#912018">${records.length} Amazon ID${records.length === 1 ? " is" : "s are"} not mapped</div><p style="margin:7px 0 8px;color:#912018;font-size:11px;line-height:17px">These IDs are not mapped to an active station or operational owner, so they are shown to every station and manager recipient. Map each ID to the correct Amazon EDSP/XPT station and update the Amazon Badge ID in Recruit.</p><div style="padding:9px 10px;background:#ffffff;border-radius:7px;color:#7a271a;font-size:10px;line-height:16px;word-break:break-word"><strong>IDs:</strong> ${ids}${more}</div><p style="margin:8px 0 0;color:#912018;font-size:10px">The complete unmapped list is included in the attached Excel file.</p></div>`;
+  const visible = records.slice(0, 25);
+  const rows = visible.map((record, index) => `<tr style="background:${index % 2 ? "#ffffff" : "#fff8f7"}"><td style="padding:7px;border-bottom:1px solid #fee4e2;font-weight:800;white-space:nowrap">${escapeHtml(record.transporterId || "N/A")}</td><td style="padding:7px;border-bottom:1px solid #fee4e2">${escapeHtml(record.daName || "N/A")}</td><td style="padding:7px;border-bottom:1px solid #fee4e2;word-break:break-word">${escapeHtml(record.emailId || "N/A")}</td></tr>`).join("");
+  const more = records.length > visible.length ? `<p style="margin:8px 0 0;color:#912018;font-size:10px">${records.length - visible.length} more unmapped IDs are included in the attached Excel file.</p>` : "";
+  return `<div style="margin:0 0 18px;padding:15px 16px;background:#fff1f0;border:1px solid #fda29b;border-left:5px solid #d92d20;border-radius:12px"><div style="font-size:13px;font-weight:900;color:#912018">${records.length} Amazon ID${records.length === 1 ? " is" : "s are"} not mapped</div><p style="margin:7px 0 10px;color:#912018;font-size:11px;line-height:17px">These IDs are not mapped to an active station or operational owner, so they are shown to every station and manager recipient. Map each ID to the correct Amazon EDSP/XPT station and update the Amazon Badge ID in Recruit.</p><div style="overflow-x:auto;border-radius:7px;background:#ffffff"><table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;color:#7a271a;font-size:10px"><thead><tr><th style="padding:7px;background:#b42318;color:#ffffff;text-align:left">Amazon Badge ID</th><th style="padding:7px;background:#b42318;color:#ffffff;text-align:left">DA name</th><th style="padding:7px;background:#b42318;color:#ffffff;text-align:left">Email ID</th></tr></thead><tbody>${rows}</tbody></table></div>${more}<p style="margin:8px 0 0;color:#912018;font-size:10px">The complete unmapped list is included in the attached Excel file.</p></div>`;
 }
 
 export function renderDaDigestMail(input: { group: DaDigestGroup; date: string; slot: DaDigestSlot | "sample"; sample?: boolean }) {

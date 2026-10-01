@@ -102,6 +102,7 @@ export async function loadDaDigestContext(companyId: string) {
     id: parsed.id,
     daName: parsed.daName,
     transporterId: parsed.transporterId,
+    emailId: parsed.rabbitId,
     stationId: station?.id || "",
     station: station?.code || parsed.station || "UNMAPPED",
     stationName: station?.name || "Unmapped",
@@ -145,6 +146,7 @@ function daDetailWorkbook(group: DaDigestGroup) {
       "Area ops manager": station?.areaOpsManager || "N/A",
       "DA name": record.daName,
       "Transporter ID": record.transporterId,
+      "Email ID": record.emailId,
       "Portal update": record.updatedAt ? "Updated" : "Not updated",
       "Updated at": record.updatedAt || "",
       "Updated by": record.updatedBy || "",
@@ -157,21 +159,22 @@ function daDetailWorkbook(group: DaDigestGroup) {
     };
   });
   const sheet = XLSX.utils.json_to_sheet(rows, { header: [
-    "Region", "Station code", "Station", "Cluster manager", "Area ops manager", "DA name", "Transporter ID", "Portal update", "Updated at", "Updated by", "Action bucket", "Action status", "UAN updated in Rabbit", "Video verification", "Final update", "Pending age (days)"
+    "Region", "Station code", "Station", "Cluster manager", "Area ops manager", "DA name", "Transporter ID", "Email ID", "Portal update", "Updated at", "Updated by", "Action bucket", "Action status", "UAN updated in Rabbit", "Video verification", "Final update", "Pending age (days)"
   ] });
-  sheet["!autofilter"] = { ref: sheet["!ref"] || "A1:P1" };
-  sheet["!cols"] = [10, 13, 22, 24, 24, 24, 20, 15, 22, 26, 22, 24, 22, 20, 20, 18].map((wch) => ({ wch }));
+  sheet["!autofilter"] = { ref: sheet["!ref"] || "A1:Q1" };
+  sheet["!cols"] = [10, 13, 22, 24, 24, 24, 20, 30, 15, 22, 26, 22, 24, 22, 20, 20, 18].map((wch) => ({ wch }));
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, sheet, "DA Onboarding Detail");
   if (group.unmappedRecords.length) {
     const unmappedSheet = XLSX.utils.json_to_sheet(group.unmappedRecords.map((record) => ({
       "Amazon Badge ID": record.transporterId,
       "DA name": record.daName,
+      "Email ID": record.emailId,
       "Source station": record.station,
       "Required correction": "Map the ID to the correct Amazon EDSP/XPT station and operational owner"
     })));
-    unmappedSheet["!autofilter"] = { ref: unmappedSheet["!ref"] || "A1:D1" };
-    unmappedSheet["!cols"] = [22, 26, 18, 70].map((wch) => ({ wch }));
+    unmappedSheet["!autofilter"] = { ref: unmappedSheet["!ref"] || "A1:E1" };
+    unmappedSheet["!cols"] = [22, 26, 30, 18, 70].map((wch) => ({ wch }));
     XLSX.utils.book_append_sheet(workbook, unmappedSheet, "Unmapped Amazon IDs");
   }
   return XLSX.write(workbook, { type: "buffer", bookType: "xlsx", compression: true }) as Buffer;
