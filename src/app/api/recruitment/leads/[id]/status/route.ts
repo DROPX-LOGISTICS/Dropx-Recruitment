@@ -114,7 +114,13 @@ export async function PATCH(request: Request, { params }: { params: { id: string
       remarks: body.remarks || null,
       actor_profile_id: session.profileId,
       actor_email: session.email,
-      metadata: { source: "web_or_mobile", requested_status: nextStatus, retry: isRetry }
+      metadata: {
+        source: "web_or_mobile",
+        source_portal: "recruit",
+        requested_status: nextStatus,
+        retry: isRetry,
+        recruitment_function: session.recruitmentFunction ?? null
+      }
     });
     if (history.error) throw new Error(history.error.message);
     let notificationWarning = "";

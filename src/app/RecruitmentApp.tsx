@@ -1589,6 +1589,45 @@ function AdminCorrection({lead,options,busy,save}:{lead:any;options:any;busy:boo
   return <div className="admin-correction-inline"><label>Candidate name<input value={fullName} onChange={(event)=>setFullName(event.target.value)}/></label><label>Mobile<input value={phone} onChange={(event)=>setPhone(event.target.value)}/></label><label>Station email<input value={email} onChange={(event)=>setEmail(event.target.value)}/></label><div className="field-pair"><label>City<input value={city} onChange={(event)=>setCity(event.target.value)}/></label><label>PIN code<input inputMode="numeric" maxLength={6} value={postCode} onChange={(event)=>setPostCode(event.target.value.replace(/\D/g,"").slice(0,6))}/></label></div><label>Station<select value={locationId} onChange={(event)=>setLocationId(event.target.value)}><option value="">Unmapped</option>{(options.locations??[]).map((item:any)=><option key={item.id} value={item.id}>{item.code} — {item.name}</option>)}</select></label><label>Designation<select value={roleId} onChange={(event)=>setRoleId(event.target.value)}><option value="">Unmapped</option>{(options.roles??[]).map((item:any)=><option key={item.id} value={item.id}>{item.code} — {item.name}</option>)}</select></label><button className="primary-action" disabled={busy||(Boolean(postCode)&&postCode.length!==6)} onClick={()=>void save({full_name:fullName||null,phone,email:email||null,city:city||null,post_code:postCode||null,location_id:locationId||null,role_id:roleId||null})}>Save corrections</button></div>;
 }
 
+function InterviewOutcomeReport({ token, locations }: { token: string; locations: any[] }) {
+  const today=istDate();
+  const [from,setFrom]=useState(`${today.slice(0,8)}01`);
+  const [to,setTo]=useState(today);
+  const [station,setStation]=useState("");
+  const [payload,setPayload]=useState<any>(null);
+  const [loading,setLoading]=useState(true);
+  const [error,setError]=useState("");
+  const load=useCallback(async()=>{
+    setLoading(true);setError("");
+    try{
+      const params=new URLSearchParams({from,to});if(station)params.set("station",station);
+      const response=await fetch(`/api/recruitment/interview-outcomes?${params}`,{headers:headers(token),cache:"no-store"});
+      const next=await response.json();if(!response.ok)throw new Error(next.error||"Unable to load interview outcomes.");
+      setPayload(next);
+    }catch(caught){setError(caught instanceof Error?caught.message:"Unable to load interview outcomes.");}
+    finally{setLoading(false);}
+  },[from,station,to,token]);
+  useEffect(()=>{void load();},[]); // eslint-disable-line react-hooks/exhaustive-deps
+  async function download(){
+    const params=new URLSearchParams({from,to,format:"xlsx"});if(station)params.set("station",station);
+    const response=await fetch(`/api/recruitment/interview-outcomes?${params}`,{headers:headers(token)});
+    if(!response.ok){const failure=await response.json();setError(failure.error||"Unable to download the report.");return;}
+    const blob=await response.blob();const url=URL.createObjectURL(blob);const link=document.createElement("a");
+    link.href=url;link.download=`DropX_Interview_Outcomes_${from}_${to}.xlsx`;link.click();URL.revokeObjectURL(url);
+  }
+  const summary=payload?.summary??{};
+  const rows=payload?.rows??[];
+  const locationRows=payload?.locations??[];
+  return <section className="content-card interview-outcome-report">
+    <header><div><span>INTERVIEW OPERATIONS</span><h2>Interview outcome control</h2><p>Recruit, telecaller and station updates converge here. Locations with overdue outcomes appear first.</p></div>{payload?.canDownload?<button className="primary-action" type="button" onClick={()=>void download()}>Download Excel</button>:null}</header>
+    <div className="interview-outcome-filters"><label>From<input type="date" value={from} onChange={(event)=>setFrom(event.target.value)}/></label><label>To<input type="date" value={to} onChange={(event)=>setTo(event.target.value)}/></label><label>Station<select value={station} onChange={(event)=>setStation(event.target.value)}><option value="">All permitted stations</option>{locations.map((item:any)=><option value={item.code} key={item.id||item.code}>{item.code} — {item.name}</option>)}</select></label><button type="button" onClick={()=>void load()} disabled={loading}>{loading?"Loading…":"Apply"}</button></div>
+    {error?<p className="report-error">{error}</p>:null}
+    <div className="interview-outcome-metrics">{[["Scheduled",summary.scheduled],["Reported",summary.reported],["Did not report",summary.didNotReport],["Not responding",summary.notResponding],["Not interested",summary.notInterested],["Rescheduled",summary.rescheduled],["Update pending",summary.updatePending]].map(([label,value])=><article className={label==="Update pending"&&Number(value)>0?"needs-action":""} key={label}><span>{label}</span><strong>{loading?"…":Number(value||0).toLocaleString("en-IN")}</strong></article>)}</div>
+    <details className="interview-location-summary" open><summary>Location update status <span>{locationRows.filter((item:any)=>item.updatePending>0).length} locations need an update</span></summary><div className="table-scroll"><table><thead><tr><th>Location</th><th>Scheduled</th><th>Reported</th><th>Did not report</th><th>Not responding</th><th>Not interested</th><th>Rescheduled</th><th>Update pending</th></tr></thead><tbody>{locationRows.map((item:any)=><tr className={item.updatePending>0?"pending-row":""} key={item.stationCode}><td><b>{item.stationCode}</b><small>{item.stationName}</small></td><td>{item.scheduled}</td><td>{item.reported}</td><td>{item.didNotReport}</td><td>{item.notResponding}</td><td>{item.notInterested}</td><td>{item.rescheduled}</td><td><strong>{item.updatePending}</strong></td></tr>)}{!loading&&!locationRows.length?<tr><td colSpan={8}>No interviews matched this date range.</td></tr>:null}</tbody></table></div></details>
+    <details className="interview-candidate-detail"><summary>Candidate-level audit trail <span>{rows.length} candidates</span></summary><div className="table-scroll"><table><thead><tr><th>Candidate</th><th>Location</th><th>Interview</th><th>Outcome</th><th>Updated by</th><th>Source</th><th>Updated</th></tr></thead><tbody>{rows.map((item:any)=><tr key={item.id}><td><b>{item.candidate}</b><small>{displayPhone(item.phone)} · {item.designation}</small></td><td><b>{item.stationCode}</b><small>{item.stationName}</small></td><td>{item.scheduledAt?new Date(item.scheduledAt).toLocaleString("en-IN"):"—"}</td><td><span className={`interview-outcome interview-outcome-${item.outcome}`}>{item.outcomeLabel}</span>{item.remarks?<small>{item.remarks}</small>:null}</td><td><b>{item.updatedBy}</b><small>{item.updaterContact||"No contact"}</small></td><td>{item.source}</td><td>{item.updatedAt?new Date(item.updatedAt).toLocaleString("en-IN"):"—"}</td></tr>)}{!loading&&!rows.length?<tr><td colSpan={7}>No candidate outcomes matched this date range.</td></tr>:null}</tbody></table></div></details>
+  </section>;
+}
+
 function Reports({ data, busy, token, options, stream }: { data: any; busy: boolean; token: string; options: any; stream: "workforce" | "hr" }) {
   const [report, setReport] = useState("leads");
   const [reportFilters, setReportFilters] = useState({ from:"",to:"",updatedFrom:"",updatedTo:"",interviewFrom:"",interviewTo:"",spendFrom:"",spendTo:"",attemptFrom:istDate(),attemptTo:istDate(),reportUser:"",status:"",station:"",cluster:"",role:"",noStatusAge:"12",adStatus:"" });
@@ -1616,6 +1655,7 @@ function Reports({ data, busy, token, options, stream }: { data: any; busy: bool
   ];
   const userPerformance = stream === "hr" ? (data?.userPerformance ?? []) : [];
   return <section className="reports-view">
+    {stream==="workforce"?<InterviewOutcomeReport token={token} locations={options.locations??[]}/>:null}
     <section className="content-card report-builder"><h2>Reports</h2><p>Generate the same operational reports with server-side access scope.</p>
       <div className="report-filter-grid"><label>Report type<select value={report} onChange={(event)=>setReport(event.target.value)}>{reportTypes.map(([value,label])=><option value={value} key={value}>{label}</option>)}</select></label>
         {report==="leadattempts"?<><label>Attempted from<input type="date" value={reportFilters.attemptFrom} onChange={(event)=>setReportFilters({...reportFilters,attemptFrom:event.target.value})}/></label><label>Attempted to<input type="date" value={reportFilters.attemptTo} onChange={(event)=>setReportFilters({...reportFilters,attemptTo:event.target.value})}/></label><label>Telecaller<select value={reportFilters.reportUser} onChange={(event)=>setReportFilters({...reportFilters,reportUser:event.target.value})}><option value="">All permitted telecallers</option>{(data?.reportUsers??[]).map((item:any)=><option key={item.id} value={item.id}>{item.name}{item.email?` — ${item.email}`:""}</option>)}</select></label></>:null}
