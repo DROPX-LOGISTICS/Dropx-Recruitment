@@ -1239,7 +1239,8 @@ function DaInAppOnboarding({token,canEdit}:{token:string;canEdit:boolean}) {
   },[actionStatus,cluster,finalOutcomeFilter,search,sort,station,status,token,uanStatusFilter,videoStatusFilter]);
   useEffect(()=>{void load();},[]); // eslint-disable-line react-hooks/exhaustive-deps
   const initialLoading=busy&&readiness===null;
-  const metricValue=(value:unknown)=>initialLoading?"…":String(value??0);
+  const loadFailed=!busy&&readiness===null&&Boolean(notice);
+  const metricValue=(value:unknown)=>initialLoading?"…":loadFailed?"—":String(value??0);
   const latestSource=readiness?.source;
   const latestSourceStatus=String(latestSource?.status||"").trim();
   const latestSourceHasIssue=Boolean(latestSource)&&(Number(latestSource?.importedCases||0)===0||["failed","error"].includes(latestSourceStatus.toLowerCase()));
@@ -1251,11 +1252,11 @@ function DaInAppOnboarding({token,canEdit}:{token:string;canEdit:boolean}) {
         ? "Oversight view: all DA In-App onboarding cases"
         : readiness
           ? "Location-scoped oversight view"
-          : "Access scope unavailable";
+          : "Data unavailable — retry loading";
   return <section className="onboarding-view">
-    <header className="onboarding-hero"><div><span>AMAZON ONBOARDING TRACKER</span><h2>DA In-App Onboarding</h2><p>Daily pending reasons, aging, proof, closure, and recruiter-safe visibility from the Report Imports feed.</p></div><strong>{initialLoading?"Loading…":`${readiness?.total??0} cases`}</strong></header>
+    <header className="onboarding-hero"><div><span>AMAZON ONBOARDING TRACKER</span><h2>DA In-App Onboarding</h2><p>Daily pending reasons, aging, proof, closure, and recruiter-safe visibility from the Report Imports feed.</p></div><strong>{initialLoading?"Loading…":loadFailed?"Unable to load":`${readiness?.total??0} cases`}</strong></header>
     <section className="content-card danap-readiness" aria-busy={initialLoading}>
-      <div className="danap-source-banner"><div><strong>{initialLoading?"Loading latest DA In-App import…":latestSource?.fileName||"No DA In-App import found"}</strong><span>{initialLoading?"Checking Report Imports and applying your access scope.":latestSource?`Latest upload ${new Date(latestSource.uploadedAt).toLocaleString("en-IN")} • ${latestSource.importedCases} cases${latestSourceStatus&&latestSourceStatus.toLowerCase()!=="completed"?` • ${latestSourceStatus}`:""}`:"Upload the daily DA In-App file in Report Imports."}</span></div><em>{visibility}</em></div>
+      <div className="danap-source-banner"><div><strong>{initialLoading?"Loading latest DA In-App import…":loadFailed?"Unable to load DA In-App onboarding":latestSource?.fileName||"No DA In-App import found"}</strong><span>{initialLoading?"Checking Report Imports and applying your access scope.":loadFailed?"Choose Apply to retry. This error does not mean the imported report is missing.":latestSource?`Latest upload ${new Date(latestSource.uploadedAt).toLocaleString("en-IN")} • ${latestSource.importedCases} cases${latestSourceStatus&&latestSourceStatus.toLowerCase()!=="completed"?` • ${latestSourceStatus}`:""}`:"Upload the daily DA In-App file in Report Imports."}</span></div><em>{visibility}</em></div>
       {latestSourceHasIssue?<div className="danap-link-warning danap-contact-warning"><strong>The latest DA In-App upload did not produce usable cases.</strong><span>{latestSource?.message||"Check the uploaded columns and import result."} The dashboard is intentionally not showing records from an older file.</span></div>:null}
       <div className="danap-metrics"><span><b>{metricValue(readiness?.metrics?.pending)}</b> Pending</span><span><b>{metricValue(readiness?.metrics?.cleared)}</b> Finalised</span><span><b>{metricValue(readiness?.metrics?.oldestPending)}</b> Oldest days</span><span><b>{metricValue(readiness?.metrics?.videoPending)}</b> Video pending</span><span><b>{metricValue(readiness?.metrics?.uanNotUpdated)}</b> UAN not yes</span><span><b>{metricValue(readiness?.metrics?.nhda)}</b> NHDA</span></div>
       {readiness?.visibility==="all"&&Number(readiness?.metrics?.unmatched||0)>0?<div className="danap-link-warning"><strong>{readiness.metrics.unmatched} imported legacy case{readiness.metrics.unmatched===1?"":"s"} are not yet linked to a recruiter initiation.</strong><span>They remain visible to oversight roles only; recruiter/telecaller access will never guess by name.</span></div>:null}

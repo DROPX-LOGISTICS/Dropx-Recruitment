@@ -31,6 +31,7 @@ import {
 import { canUseRecruitmentMenu, recruitmentSession, requiredEnv } from "@/lib/recruitment-api";
 import { uploadRecruitmentDocument } from "@/lib/recruitment-documents";
 import { supabaseAdmin } from "@/lib/supabase-admin";
+import { loadAllSupabaseRows } from "@/lib/supabase-pagination";
 import { WORKFORCE_PROFILE_TABLE } from "@/lib/workforce-register";
 
 export const dynamic = "force-dynamic";
@@ -140,18 +141,23 @@ async function latestRows(companyId: string) {
 }
 
 async function loadOwnershipMaps(companyId: string): Promise<DaOwnershipMaps> {
-  const executives = await supabaseAdmin!.from(WORKFORCE_PROFILE_TABLE)
+  const rows = await loadAllSupabaseRows((from, to) => supabaseAdmin!.from(WORKFORCE_PROFILE_TABLE)
     .select("id,created_by,full_name,email,mobile,dropx_id,biometric_id,location_id,stations(station_code)")
-    .eq("company_id", companyId);
-  if (executives.error) throw new Error(executives.error.message);
-  const rows = executives.data ?? [];
+    .eq("company_id", companyId)
+    .order("id")
+    .range(from, to));
   const ids = rows.map((item) => item.id);
-  const mappings = ids.length
-    ? await supabaseAdmin!.from("field_executive_provider_mappings")
+  const mappings: { field_executive_id: string; provider_member_id: string }[] = [];
+  // An unbounded UUID IN filter exceeds the gateway URL limit as Workforce grows.
+  // Keep the same company-scoped identities and read every mapping page per batch.
+  for (let offset = 0; offset < ids.length; offset += 75) {
+    const batch = await loadAllSupabaseRows((from, to) => supabaseAdmin!.from("field_executive_provider_mappings")
         .select("field_executive_id,provider_member_id")
-        .in("field_executive_id", ids)
-    : { data: [], error: null };
-  if (mappings.error) throw new Error(mappings.error.message);
+        .in("field_executive_id", ids.slice(offset, offset + 75))
+        .order("id")
+        .range(from, to));
+    mappings.push(...batch);
+  }
   const maps: DaOwnershipMaps = {
     stableOwners: new Map(),
     contactOwners: new Map(),
@@ -184,7 +190,7 @@ async function loadOwnershipMaps(companyId: string): Promise<DaOwnershipMaps> {
       addDaStation(maps.fallbackStations!, candidate, station);
     }
   }
-  for (const item of mappings.data ?? []) {
+  for (const item of mappings) {
     const details = executiveDetails.get(item.field_executive_id);
     addDaOwner(maps.stableOwners, item.provider_member_id, details?.owner);
     addDaStation(maps.stableStations!, item.provider_member_id, details?.station);
