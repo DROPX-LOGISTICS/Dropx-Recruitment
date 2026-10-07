@@ -5,6 +5,8 @@ import { adRunEndTime, formatAdScheduleDate } from "@/lib/ad-schedule";
 import AdSchedule from "./AdSchedule";
 import AdMailPanel from "./AdMailPanel";
 import DaOnboardingMailPanel from "./DaOnboardingMailPanel";
+import TemporaryLocationAccess from "./TemporaryLocationAccess";
+import { groupRecruitNavigation } from "@/lib/recruitment-navigation";
 import MetaReceivedTime from "./MetaReceivedTime";
 import AdHealthPanel, { AdDeliveryDiagnostics } from "./AdHealthPanel";
 import type { HealthIssue } from "@/lib/ad-health";
@@ -614,12 +616,7 @@ export default function RecruitmentApp() {
     user.menuAccess ? canUseMenu(stream,item[2]) : (!hasExplicitMenuPermissions || allowedMenus.has(item[2]))
   );
   const streamAllowed = stream === "workforce" ? user.workforce : user.hr;
-  const navGroups = nav.reduce<Array<[string, Array<[string,string,string]>]>>((groups, item) => {
-    const current = groups.at(-1);
-    if (current?.[0] === item[0]) current[1].push(item);
-    else groups.push([item[0], [item]]);
-    return groups;
-  }, []);
+  const navGroups = groupRecruitNavigation(nav);
   const showLeads = ["All Leads","Archived Leads","No Response / Call Back","Interviews","Unmapped","Screening","Documents","Offers","Hired"].includes(active);
   const streamRoles = workspaceRoleCatalog(options.roles ?? [], stream);
   const selectedStations = new Set(filters.station.split(",").filter(Boolean));
@@ -640,7 +637,7 @@ export default function RecruitmentApp() {
   const pageTitle = active === "Dashboard"
     ? (stream === "workforce" ? "Recruitment Command Center" : "Talent Command Center")
     : active === "All Leads" ? (stream === "workforce" ? "Workforce Queue" : "HR Candidates")
-    : active === "Audit" ? "System Logs" : active;
+    : active === "Audit" ? "System Logs" : active === "Access Control" ? "Users & Access" : active;
   const pageSubtitle = active === "Dashboard"
     ? (stream === "workforce" ? "Source. Connect. Hire. Scale." : "Find the right people. Move them forward.")
     : active === "Audit" ? "Meaningful additions, updates, approvals, access changes and deletions — ordinary clicks are excluded"
@@ -649,11 +646,8 @@ export default function RecruitmentApp() {
   return <main className="shell">
     <aside className={`sidebar ${mobileMenuOpen ? "mobile-open" : ""}`} aria-label="Recruitment navigation">
       <div className="brand"><RecruitBrand /><button className="mobile-menu-close" aria-label="Close menu" onClick={()=>setMobileMenuOpen(false)}>×</button></div>
-      <nav>{navGroups.map(([section,items]) => section === "Master"
-        ? <details className="nav-submenu" key={section} open={items.some(([, ,route])=>route===active)}>
-            <summary>Master</summary>
-            <div>{items.map(([,label,route])=><button key={route} className={route===active?"active":""} onClick={()=>navigate(route)}><i>≡</i>{label}</button>)}</div>
-          </details>
+      <nav>{navGroups.map(([section,items]) => ["Masters", "Settings"].includes(section)
+        ? <RecruitNavGroup key={section} section={section} items={items} active={active} navigate={navigate}/>
         : <div className="nav-section" key={section}><p>{section}</p>{items.map(([,label,route])=><button key={route} className={route===active?"active":""} onClick={()=>navigate(route)}><i>{route==="Dashboard"?"▦":"≡"}</i>{label}</button>)}</div>
       )}</nav>
       <button className="identity" onClick={() => { localStorage.removeItem("recruitment_session"); location.reload(); }}>
@@ -3188,6 +3182,13 @@ function MasterReports({data}:{data:any}) {
   return <section className="reports-view"><section className="content-card report-builder"><h2>Restricted recruitment master reports</h2><p>Permission-controlled reports for recruiter productivity, joining/retention and the full manual IN/OUT audit trail.</p><div className="master-report-actions"><button className="primary-action" onClick={()=>download("Recruiter_Funnel",data?.recruiterFunnel??[])}>Download recruiter funnel</button><button className="primary-action" onClick={()=>download("Joining_Register",data?.joiningRegister??[])}>Download joining register</button><button className="primary-action" onClick={()=>download("Manual_Punch_Register",data?.manualPunchRegister??[])}>Download manual punch register</button></div></section><div className="metrics report-metrics">{[["Joined records",summary.joined],["30-day due",summary.due30],["Activity found",summary.activityFound],["Manual punches",(data?.manualPunchRegister??[]).length]].map(([label,value])=><article key={label}><span>{label}</span><strong>{Number(value||0).toLocaleString("en-IN")}</strong></article>)}</div><div className="report-panels"><article className="content-card report-panel"><h2>Recruiter funnel</h2><SimpleTable headers={["Employee ID","Recruiter","Calls / updates","No response","Callbacks","Interviews","Selected","Joined"]} rows={(data?.recruiterFunnel??[]).map((item:any)=>[item.employeeId,item.recruiter,item.calls,item.noResponse,item.callbacks,item.interviews,item.selected,item.joined])}/></article><article className="content-card report-panel"><h2>Joined associates and retention</h2><SimpleTable headers={["Candidate","Station","Employee ID","Provider ID","Recruiter","Join date","Days worked","Deliveries","30-day state"]} rows={(data?.joiningRegister??[]).map((item:any)=>[item.candidate,item.station,item.employeeId,item.providerEmployeeId,item.recruiter,item.joiningDate,item.daysWorked,item.deliveries,item.retention30])}/></article><article className="content-card report-panel"><h2>Manual IN / OUT register</h2><SimpleTable headers={["Date","Recruiter","Type","Requested","Location / GPS","Status","Reviewer","Worked min"]} rows={(data?.manualPunchRegister??[]).slice(0,200).map((item:any)=>[item.date,item.recruiter,item.punchType,item.requestedTime,[item.location,item.latitude==null?item.gps:`${Number(item.latitude).toFixed(6)}, ${Number(item.longitude).toFixed(6)} ±${Math.round(Number(item.accuracyMeters||0))}m`].filter(Boolean).join(" • "),item.status,item.reviewer,item.workedMinutes])}/></article></div></section>;
 }
 
+function RecruitNavGroup({ section, items, active, navigate }: { section: string; items: Array<[string, string, string]>; active: string; navigate: (route: string) => void }) {
+  const containsActive = items.some(([, , route]) => route === active);
+  const [open, setOpen] = useState(containsActive);
+  useEffect(() => { if (containsActive) setOpen(true); }, [containsActive]);
+  return <details className="nav-submenu" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}><summary>{section}</summary><div>{items.map(([, label, route]) => <button key={route} aria-current={route === active ? "page" : undefined} className={route === active ? "active" : ""} onClick={() => navigate(route)}><i>≡</i>{label}</button>)}</div></details>;
+}
+
 function TeamAccess({ data, token, stream, canEdit, reload }: { data: any; token: string; stream:RecruitmentPermissionWorkspace;canEdit:boolean;reload: () => Promise<void> }) {
   const [form, setForm] = useState({
     profileId: "",
@@ -3280,11 +3281,11 @@ function TeamAccess({ data, token, stream, canEdit, reload }: { data: any; token
     ? "All locations"
     : (profile?.universalLocations??[]).map((item:any)=>item.code).join(", ")||"No location scope";
   return <section className="connections-view universal-access-view">
-    <section className="content-card access-intro"><div><span>ONE DROPX USER</span><h2>Recruitment users</h2><p>Designation comes from People. Recruit permissions come from that designation&apos;s product-access master, with station access limited by the company scope.</p></div><div className="access-source-action"><b>{profiles.length.toLocaleString("en-IN")} active company users</b><a href={data?.universalUsersUrl||"https://dashboard.dropxlogistics.com/users?section=users"} target="_blank" rel="noreferrer">Manage company users ↗</a></div></section>
-    <section className="content-card leads-card access-list-card"><div className="access-section-head"><div><h2>{stream==="hr"?"HR":"Workforce"} users</h2><p>Role permissions are configured once in User Roles. Use this page only to activate a user and narrow station or designation scope.</p></div><div className="access-list-actions"><input className="master-search" placeholder="Search user, ID, email or role…" value={search} onChange={(event)=>setSearch(event.target.value)}/>{canEdit?<button className="primary-action" onClick={()=>{reset();setNotice("");setEditorOpen(true);}}>Add user</button>:null}</div></div>
+    <section className="content-card access-intro"><div><span>ONE DROPX USER</span><h2>Recruitment users</h2><p>Company scope is the default. Add temporary Recruit locations when cover is needed.</p></div><div className="access-source-action"><b>{profiles.length.toLocaleString("en-IN")} active company users</b><a href={data?.universalUsersUrl||"https://dashboard.dropxlogistics.com/users?section=users"} target="_blank" rel="noreferrer">Manage company users ↗</a></div></section>
+    <section className="content-card leads-card access-list-card"><div className="access-section-head"><div><h2>{stream==="hr"?"HR":"Workforce"} users</h2><p>Manage normal scope, temporary locations and status. Role permissions stay in User Roles.</p></div><div className="access-list-actions"><input className="master-search" placeholder="Search user, ID, email or role…" value={search} onChange={(event)=>setSearch(event.target.value)}/>{canEdit?<button className="primary-action" onClick={()=>{reset();setNotice("");setEditorOpen(true);}}>Add user</button>:null}</div></div>
       <div className="table-scroll"><table><thead><tr><th>User</th><th>People designation</th><th>{stream==="hr"?"HR":"Workforce"} access</th><th>Station scope</th><th>Designation scope</th><th>Status</th><th>Action</th></tr></thead><tbody>{streamAccess.map((access:any)=>{
         const profile=profileById.get(access.profile_id) as any;const allow=allowlistForEmail(profile?.email||"");
-        const stationScope=access.effectiveAllLocations?"All permitted stations":`${access.scopeMode==="inherit"?"Company scope":"Custom subset"} · ${access.effectiveLocationIds?.length??0} station(s)`;
+        const stationScope=access.effectiveAllLocations?"All permitted stations":`${access.effectiveLocationIds?.length??0} stations${access.temporaryLocationIds?.length ? ` · ${access.temporaryLocationIds.length} temporary` : ` · ${access.scopeMode==="inherit"?"Company scope":"Custom subset"}`}`;
         const streamDesignationCount=(access.roleIds??[]).filter((id:string)=>(roleById.get(id) as any)?.stream===stream).length;
         const designationScope=streamDesignationCount?`${streamDesignationCount} selected`:`All ${stream==="hr"?"HR":"Workforce"} designations`;
         const rolePermission=profile?.is_master_owner?{workspaces:["workforce","hr"],menuAccess:{workforce:Object.fromEntries((data?.menuCatalog??[]).map((item:any)=>[item.id,"all"])),hr:Object.fromEntries((data?.menuCatalog??[]).map((item:any)=>[item.id,"all"]))}}:profile?.universalRole?(data?.universalRolePermissions?.[profile.universalRole.id]??data?.universalRolePermissions?.[String(profile.universalRole.code||"").toUpperCase()]):null;
@@ -3305,10 +3306,14 @@ function TeamAccess({ data, token, stream, canEdit, reload }: { data: any; token
             {selectedProfile?<div className="searchable-scope"><span>Designation access</span><MultiFilter label="Designations" value={streamRoleIds.join(",")} options={visibleRoles.map((item:any)=>[item.id,`${item.code} — ${item.name}`])} onChange={(value)=>setForm({...form,roleIds:[...otherStreamRoleIds,...value.split(",").filter(Boolean)]})}/><small>Leave empty for all {stream==="hr"?"HR":"Workforce"} designations.</small></div>:null}
             <SearchSelect label="Status" value={form.isActive?"active":"inactive"} options={[["active","Active"],["inactive","Inactive"]]} onChange={(value)=>setForm({...form,isActive:value==="active"})}/>
           </div>
-          {selectedProfile?<p className="access-inheritance-note">Recruit access role: <b>{selectedProfile.universalRole?.name||selectedProfile.role||"Not assigned"}</b> · Maximum station access: <b>{universalScope(selectedProfile)}</b>. Recruitment can only narrow this scope.</p>:null}
+          {selectedProfile?<p className="access-inheritance-note">Normal locations: <b>{universalScope(selectedProfile)}</b> · Role: <b>{selectedProfile.universalRole?.name||selectedProfile.role||"Not assigned"}</b>. Temporary access below is separate.</p>:null}
           {selectedProfile&&!selectedProfile.is_master_owner&&Object.keys(permissionForProfile(selectedProfile)?.menuAccess?.[stream]??{}).length===0?<p className="connection-notice">This user can be activated now, but the mapped Recruit role has no {stream==="hr"?"HR":"Workforce"} menus yet. Configure that role in User Roles before they begin work.</p>:null}
           {notice?<p className="connection-notice">{notice}</p>:null}
         </section>
+        {selectedProfile ? <TemporaryLocationAccess key={form.profileId} profileId={form.profileId} userName={selectedProfile.full_name || selectedProfile.email || "this user"}
+          locations={(data?.locations ?? []).filter((item:any) => !universalAllLocations && !universalLocationCodes.has(item.code))}
+          canManage={data?.canManageTemporaryLocations === true} active={accessRows.some((item:any) => item.profile_id === form.profileId && item.is_active)}
+          requestHeaders={headers(token)} onSaved={reload} onBusyChange={setSaving}/> : null}
       </div>
       <footer className="role-modal-footer"><a href={data?.universalUsersUrl||"https://dashboard.dropxlogistics.com/users?section=users"} target="_blank" rel="noreferrer">Edit universal user ↗</a><div><button disabled={saving} onClick={()=>{setEditorOpen(false);reset();}}>Cancel</button><button className="primary-action" disabled={saving||!form.profileId} onClick={()=>void save()}>{saving?"Saving…":"Save access"}</button></div></footer>
     </section></div>:null}

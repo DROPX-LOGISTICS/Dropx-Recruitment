@@ -21,12 +21,13 @@ function uniqueValidIds(values: string[], validIds: Set<string>) {
 }
 
 /**
- * The main DropX dashboard is always the location-access ceiling.
+ * The main DropX dashboard is the normal location-access ceiling.
  *
  * `inherit` means "use the user's live universal scope", not "all company
  * stations". `custom` can only narrow that live universal scope. This keeps
  * Recruitment configurable without allowing a stale Recruitment row to
- * expand a user's access after their main-dashboard scope changes.
+ * expand a user's access after their main-dashboard scope changes. Separately
+ * audited, expiring Recruit-only grants are added AFTER this baseline resolves.
  */
 export function calculateEffectiveRecruitmentLocationScope(input: {
   isMasterOwner: boolean;

@@ -9,7 +9,9 @@ import {
   type RecruitmentAccessTemplate
 } from "@/lib/recruitment-menu-roles";
 import { calculateEffectiveRecruitmentLocationScope } from "@/lib/recruitment-location-scope";
-import { canUseRecruitmentMenu, recruitmentSession, requiredEnv } from "@/lib/recruitment-api";
+import { canManageTemporaryLocations, canUseRecruitmentMenu, recruitmentSession, requiredEnv } from "@/lib/recruitment-api";
+import { activeTemporaryLocations } from "@/lib/recruitment-temporary-locations-server";
+import { withTemporaryLocations } from "@/lib/recruitment-temporary-locations";
 import { invalidateMobileSessionCache } from "@/lib/mobile-session";
 import { loadPeopleDesignations } from "@/lib/people-designation";
 import { supabaseAdmin } from "@/lib/supabase-admin";
@@ -98,6 +100,7 @@ export async function GET(request: Request) {
     const failure = [allowlist, access, mobile, locationScopes, roleScopes, locations, roles, registeredProfiles, productMemberships, workforceDesignations].find((item) => item.error);
     if (failure?.error) throw failure.error;
     const mainUserRoles = recruitDesignationAccess.roles;
+    const temporaryGrants = await activeTemporaryLocations(companyId);
     const peopleDesignations = await loadPeopleDesignations(
       companyId,
       (registeredProfiles.data ?? []).map((profile) => profile.id)
@@ -141,7 +144,8 @@ export async function GET(request: Request) {
         can_access_hr: isOwner ? true : row.can_access_hr === true,
         scopeMode: effectiveScope.mode,
         effectiveAllLocations: effectiveScope.allLocations,
-        effectiveLocationIds: effectiveScope.locationIds,
+        effectiveLocationIds: withTemporaryLocations(effectiveScope, temporaryGrants.filter((grant) => grant.user_access_id === row.id)).locationIds,
+        temporaryLocationIds: [...new Set(temporaryGrants.filter((grant) => grant.user_access_id === row.id).map((grant) => grant.location_id))],
         universalLocationIds: effectiveScope.universalLocationIds,
         scopeAdjustedToUniversal: effectiveScope.adjustedToUniversalScope,
         locationIds: selectedLocationIds,
@@ -151,6 +155,7 @@ export async function GET(request: Request) {
     return NextResponse.json({
       allowlist: allowlist.data ?? [],
       access: mappedAccess,
+      canManageTemporaryLocations: canManageTemporaryLocations(session),
       mobileUsers: mobile.data ?? [],
       locations: (locations.data ?? []).map((location) => {
         const source = mainStations.find((station) => station.code === location.code);

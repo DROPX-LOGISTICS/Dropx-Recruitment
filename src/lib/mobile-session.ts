@@ -12,6 +12,7 @@ import {
 import { calculateEffectiveRecruitmentLocationScope } from "./recruitment-location-scope";
 import { loadWorkforceConfig, workforceFunctionFor, type RecruitmentFunction } from "./recruitment-workforce-config";
 import { supabaseAdmin } from "./supabase-admin";
+import { attachTemporaryLocations } from "./recruitment-temporary-locations-server";
 
 export type MobileSessionContext = {
   sessionId: string;
@@ -45,6 +46,9 @@ export type MobileSessionContext = {
   previewProfileId: string | null;
   readOnly: boolean;
   locationIds: string[];
+  baseAllLocations?: boolean;
+  baseLocationIds?: string[];
+  temporaryLocationIds?: string[];
   roleIds: string[];
 };
 
@@ -269,10 +273,10 @@ export async function resolveMobileSession(
   if (!token) return null;
   const tokenHash = hashSessionToken(token);
   const requestedPreview = request.headers.get("x-dropx-preview-profile")?.trim() ?? "";
-  const cacheKey = `${tokenHash}:${requestedPreview}`;
+  const cacheKey = `${companyId}:${tokenHash}:${requestedPreview}`;
   if (request.method.toUpperCase() === "GET") {
     const cached = cachedSession(cacheKey);
-    if (cached) return cached;
+    if (cached) return attachTemporaryLocations(companyId, cached);
   }
 
   const session = await supabaseAdmin
@@ -454,5 +458,5 @@ export async function resolveMobileSession(
   if (request.method.toUpperCase() === "GET") {
     sessionCache.set(cacheKey, { expiresAt: Date.now() + sessionCacheTtlMs, session: effective });
   }
-  return effective;
+  return attachTemporaryLocations(companyId, effective);
 }

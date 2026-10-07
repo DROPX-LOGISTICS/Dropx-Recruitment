@@ -34,12 +34,12 @@ export const recruitmentMenuCatalog = [
   { id: "Lead Status Master", label: "Lead Status Master", group: "Master", workspaces: ["workforce", "hr"] },
   { id: "HR Lifecycle", label: "HR Lifecycle & Interview Rules", group: "Master", workspaces: ["hr"] },
   { id: "Notification Rules", label: "Notification Automation", group: "Master", workspaces: ["workforce", "hr"] },
-  { id: "User Roles", label: "User Roles", group: "Master", workspaces: ["workforce", "hr"] },
-  { id: "Access Control", label: "Users & Access", group: "Master", workspaces: ["workforce", "hr"] },
+  { id: "User Roles", label: "User Roles", group: "Settings", workspaces: ["workforce", "hr"] },
+  { id: "Access Control", label: "Users & Access", group: "Settings", workspaces: ["workforce", "hr"] },
   { id: "Master Reports", label: "Executive Reports", group: "Administration", workspaces: ["workforce", "hr"] },
-  { id: "Connections", label: "Source Integrations", group: "Administration", workspaces: ["workforce", "hr"] },
-  { id: "System Health", label: "System Health", group: "Administration", workspaces: ["workforce", "hr"] },
-  { id: "Audit", label: "System Logs", group: "Administration", workspaces: ["workforce", "hr"] }
+  { id: "Connections", label: "Source Integrations", group: "Settings", workspaces: ["workforce", "hr"] },
+  { id: "System Health", label: "System Health", group: "Settings", workspaces: ["workforce", "hr"] },
+  { id: "Audit", label: "System Logs", group: "Settings", workspaces: ["workforce", "hr"] }
 ] as const;
 
 export type RecruitmentMenuId = typeof recruitmentMenuCatalog[number]["id"];

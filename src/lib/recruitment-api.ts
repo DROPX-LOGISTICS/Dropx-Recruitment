@@ -63,6 +63,14 @@ export function canUseRecruitmentMenu(
   });
 }
 
+// Extending company scope is an administrative exception, not a delegation
+// right acquired through somebody else's temporary location grant.
+export function canManageTemporaryLocations(session: Awaited<ReturnType<typeof recruitmentSession>>) {
+  if (!session || session.readOnly || session.isPreview) return false;
+  return session.isOwner || (session.baseAllLocations === true
+    && canUseRecruitmentMenu(session, "Access Control", "edit"));
+}
+
 type LeadAccessTarget = {
   stream?: string | null;
   location_id?: string | null;
