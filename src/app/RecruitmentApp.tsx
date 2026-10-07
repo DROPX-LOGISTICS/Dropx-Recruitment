@@ -3311,8 +3311,8 @@ function TeamAccess({ data, token, stream, canEdit, reload }: { data: any; token
           {notice?<p className="connection-notice">{notice}</p>:null}
         </section>
         {selectedProfile ? <TemporaryLocationAccess key={form.profileId} profileId={form.profileId} userName={selectedProfile.full_name || selectedProfile.email || "this user"}
-          locations={(data?.locations ?? []).filter((item:any) => !universalAllLocations && !universalLocationCodes.has(item.code))}
-          canManage={data?.canManageTemporaryLocations === true} active={accessRows.some((item:any) => item.profile_id === form.profileId && item.is_active)}
+          locations={(data?.locations ?? []).filter((item:any) => data?.temporaryLocationAccess?.locationIds?.includes(item.id) && !universalAllLocations && !universalLocationCodes.has(item.code))}
+          canManage={data?.temporaryLocationAccess?.canEdit === true} readOnly={data?.temporaryLocationAccess?.readOnly !== false} active={accessRows.some((item:any) => item.profile_id === form.profileId && item.is_active)}
           requestHeaders={headers(token)} onSaved={reload} onBusyChange={setSaving}/> : null}
       </div>
       <footer className="role-modal-footer"><a href={data?.universalUsersUrl||"https://dashboard.dropxlogistics.com/users?section=users"} target="_blank" rel="noreferrer">Edit universal user ↗</a><div><button disabled={saving} onClick={()=>{setEditorOpen(false);reset();}}>Cancel</button><button className="primary-action" disabled={saving||!form.profileId} onClick={()=>void save()}>{saving?"Saving…":"Save access"}</button></div></footer>

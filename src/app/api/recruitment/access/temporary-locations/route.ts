@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { canManageTemporaryLocations, canUseRecruitmentMenu, recruitmentSession, requiredEnv } from "@/lib/recruitment-api";
+import { canDelegateTemporaryLocation, canManageTemporaryLocations, canUseRecruitmentMenu, recruitmentSession, requiredEnv } from "@/lib/recruitment-api";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { validAccessId, validateTemporaryLocationInput } from "@/lib/recruitment-temporary-locations";
 
@@ -24,7 +24,10 @@ export async function GET(request: Request) {
       .select(fields, { count: "exact" }).eq("company_id", companyId).eq("user_access_id", access.data.id)
       .order("created_at", { ascending: false }).order("id").range(page * 100, page * 100 + 99);
     if (result.error) throw result.error;
-    return NextResponse.json({ grants: result.data ?? [], total: result.count, canManage: canManageTemporaryLocations(session) });
+    return NextResponse.json({
+      grants: (result.data ?? []).map((grant) => ({ ...grant, canRevoke: canManageTemporaryLocations(session) && canDelegateTemporaryLocation(session, grant.location_id) })),
+      total: result.count, canManage: canManageTemporaryLocations(session)
+    });
   } catch (error) {
     console.error("Temporary Recruit access read failed", error);
     return NextResponse.json({ error: "Unable to load temporary access. Please retry." }, { status: 500 });
@@ -34,10 +37,13 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const session = await recruitmentSession(request);
-    if (!canManageTemporaryLocations(session) || !session) return NextResponse.json({ error: "Company-wide Users & Access edit permission is required." }, { status: 403 });
+    if (!canManageTemporaryLocations(session) || !session) return NextResponse.json({ error: "Users & Access edit permission is required. Preview is read-only." }, { status: 403 });
     const companyId = requiredEnv("RECRUITMENT_COMPANY_ID");
     const body = await request.json() as Record<string, unknown>;
     const input = validateTemporaryLocationInput(body);
+    if (input.locationIds.some((id) => !canDelegateTemporaryLocation(session, id))) {
+      return NextResponse.json({ error: "You can grant temporary access only to your normally assigned Recruit locations." }, { status: 403 });
+    }
     const [profile, access, membership, locations] = await Promise.all([
       supabaseAdmin!.from("profiles").select("id").eq("company_id", companyId).eq("id", input.profileId).eq("is_active", true).maybeSingle(),
       supabaseAdmin!.from("recruitment_user_access").select("id").eq("company_id", companyId).eq("profile_id", input.profileId).eq("is_active", true).maybeSingle(),
@@ -65,7 +71,7 @@ export async function POST(request: Request) {
 export async function DELETE(request: Request) {
   try {
     const session = await recruitmentSession(request);
-    if (!canManageTemporaryLocations(session) || !session) return NextResponse.json({ error: "Company-wide Users & Access edit permission is required." }, { status: 403 });
+    if (!canManageTemporaryLocations(session) || !session) return NextResponse.json({ error: "Users & Access edit permission is required. Preview is read-only." }, { status: 403 });
     const companyId = requiredEnv("RECRUITMENT_COMPANY_ID");
     const body = await request.json() as Record<string, unknown>;
     if (!validAccessId(body.grantId) || !validAccessId(body.profileId)) return NextResponse.json({ error: "Select a valid grant." }, { status: 400 });
@@ -73,10 +79,13 @@ export async function DELETE(request: Request) {
       .eq("company_id", companyId).eq("profile_id", body.profileId).maybeSingle();
     if (access.error) throw access.error;
     if (!access.data) return NextResponse.json({ error: "User access was not found." }, { status: 404 });
-    const grant = await supabaseAdmin!.from("recruitment_temporary_location_grants").select("id")
+    const grant = await supabaseAdmin!.from("recruitment_temporary_location_grants").select("id,location_id")
       .eq("company_id", companyId).eq("user_access_id", access.data.id).eq("id", body.grantId).maybeSingle();
     if (grant.error) throw grant.error;
     if (!grant.data) return NextResponse.json({ error: "Grant was not found." }, { status: 404 });
+    if (!canDelegateTemporaryLocation(session, grant.data.location_id)) {
+      return NextResponse.json({ error: "You can disable temporary access only for your normally assigned Recruit locations." }, { status: 403 });
+    }
     const saved = await supabaseAdmin!.from("recruitment_temporary_location_grants")
       .update({ revoked_at: new Date().toISOString(), revoked_by: session.profileId })
       .eq("company_id", companyId).eq("user_access_id", access.data.id).eq("id", body.grantId).is("revoked_at", null);

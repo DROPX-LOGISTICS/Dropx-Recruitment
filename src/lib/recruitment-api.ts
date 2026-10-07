@@ -63,12 +63,23 @@ export function canUseRecruitmentMenu(
   });
 }
 
-// Extending company scope is an administrative exception, not a delegation
-// right acquired through somebody else's temporary location grant.
+export function hasTemporaryLocationEditPermission(session: Awaited<ReturnType<typeof recruitmentSession>>) {
+  return canUseRecruitmentMenu(session, "Access Control", "edit");
+}
+
 export function canManageTemporaryLocations(session: Awaited<ReturnType<typeof recruitmentSession>>) {
   if (!session || session.readOnly || session.isPreview) return false;
-  return session.isOwner || (session.baseAllLocations === true
-    && canUseRecruitmentMenu(session, "Access Control", "edit"));
+  return hasTemporaryLocationEditPermission(session);
+}
+
+// Access editors may delegate their normal Recruit locations, never locations
+// borrowed through temporary access. Missing baseline scope fails closed.
+// This capability is also shown in read-only previews; mutations additionally
+// require canManageTemporaryLocations above.
+export function canDelegateTemporaryLocation(session: Awaited<ReturnType<typeof recruitmentSession>>, locationId: string) {
+  if (!session || !hasTemporaryLocationEditPermission(session)) return false;
+  return session.isOwner || session.baseAllLocations === true
+    || session.baseLocationIds?.includes(locationId) === true;
 }
 
 type LeadAccessTarget = {

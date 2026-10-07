@@ -8,11 +8,12 @@ type Grant = TemporaryLocationGrant & {
   recruitment_locations: { code: string; name: string };
   grantor: { full_name: string } | null;
   revoker: { full_name: string } | null;
+  canRevoke: boolean;
 };
 const istTime = (value: string) => new Date(value).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", dateStyle: "medium", timeStyle: "short" });
 
-export default function TemporaryLocationAccess({ profileId, userName, locations, canManage, active, requestHeaders, onSaved, onBusyChange }: {
-  profileId: string; userName: string; locations: Location[]; canManage: boolean; active: boolean;
+export default function TemporaryLocationAccess({ profileId, userName, locations, canManage, readOnly, active, requestHeaders, onSaved, onBusyChange }: {
+  profileId: string; userName: string; locations: Location[]; canManage: boolean; readOnly: boolean; active: boolean;
   requestHeaders: Record<string, string>; onSaved: () => Promise<void>; onBusyChange: (busy: boolean) => void;
 }) {
   const [grants, setGrants] = useState<Grant[]>([]);
@@ -50,7 +51,7 @@ export default function TemporaryLocationAccess({ profileId, userName, locations
   const changeSelection = (ids: string[]) => { setSelected(ids); requestId.current = null; setConfirm(null); };
 
   async function save() {
-    if (!confirm || busy) return;
+    if (!confirm || busy || readOnly || !canManage) return;
     setBusy(true); onBusyChange(true); setMessage("");
     try {
       const granting = confirm === "grant";
@@ -76,7 +77,8 @@ export default function TemporaryLocationAccess({ profileId, userName, locations
 
   return <section className="temporary-location-access" aria-label="Temporary location access">
     <header><div><h3>Temporary locations</h3><p>Extra Recruit locations only. Normal access and role permissions stay unchanged.</p></div><span className="universal-state">Auto-expiry</span></header>
-    {canManage && active ? <fieldset disabled={busy || loading || failed}>
+    {canManage ? <p>{readOnly ? "View as user is read-only. This user can manage temporary access to their normally assigned locations." : "Choose from your normally assigned Recruit locations."}</p> : null}
+    {canManage && active ? <fieldset disabled={readOnly || busy || loading || failed}>
       <details className="temporary-location-picker"><summary>{selected.length ? `${selected.length} extra locations selected` : "Select extra locations"}</summary>
         <input aria-label="Search extra locations" placeholder="Search code or location…" value={query} onChange={(event) => setQuery(event.target.value)}/>
         <button type="button" onClick={() => changeSelection(allVisible ? selected.filter((id) => !visible.some((location) => location.id === id)) : [...new Set([...selected, ...visible.map((location) => location.id)])])}>{allVisible ? "Clear shown" : "Select shown"}</button>
@@ -85,17 +87,17 @@ export default function TemporaryLocationAccess({ profileId, userName, locations
       {selected.length ? <small>{labels.join(", ")}</small> : null}
       <div className="form-grid"><label>Access until (IST)<input type="datetime-local" value={expiry} onChange={(event) => { setExpiry(event.target.value); requestId.current = null; setConfirm(null); }}/></label><label>Reason<input maxLength={500} placeholder="e.g. Covering a colleague" value={reason} onChange={(event) => { setReason(event.target.value); requestId.current = null; setConfirm(null); }}/></label></div>
       <button type="button" className="primary-action" disabled={!selected.length || !expiry || reason.trim().length < 3} onClick={() => setConfirm("grant")}>Review temporary access</button>
-    </fieldset> : <p>{active ? "Only company-wide access administrators can grant or disable extra locations." : "Save and activate this user’s Recruit access before adding temporary locations."}</p>}
+    </fieldset> : <p>{active ? "Users & Access edit permission is required to grant or disable extra locations." : "Save and activate this user’s Recruit access before adding temporary locations."}</p>}
     {confirm ? <div className="temporary-access-confirm" role="alert">
       <p>{confirm === "grant" ? <>Give <b>{userName}</b> access to <b>{labels.join(", ")}</b> until <b>{istTime(`${expiry}:00+05:30`)} IST</b>?</> : <>Disable <b>{confirm.recruitment_locations?.code}</b> temporary access for <b>{userName}</b>?</>}</p>
-      <button type="button" disabled={busy} onClick={() => setConfirm(null)}>Cancel</button><button type="button" className="primary-action" disabled={busy} onClick={() => void save()}>{busy ? "Saving…" : confirm === "grant" ? "Confirm grant" : "Confirm disable"}</button>
+      <button type="button" disabled={busy} onClick={() => setConfirm(null)}>Cancel</button><button type="button" className="primary-action" disabled={busy || readOnly || !canManage} onClick={() => void save()}>{busy ? "Saving…" : confirm === "grant" ? "Confirm grant" : "Confirm disable"}</button>
     </div> : null}
     {message ? <p role="status" className="connection-notice">{message}</p> : null}
     {loadError ? <p role="alert" className="connection-notice">{loadError}</p> : null}
     <div className="temporary-access-history"><h4>Access history <button type="button" disabled={busy || loading} onClick={() => void load()}>Refresh</button></h4>
       {loading ? <p>Loading access…</p> : grants.length ? grants.map((grant) => {
         const state = temporaryLocationState(grant);
-        return <div className="temporary-access-row" key={grant.id}><div><b>{grant.recruitment_locations?.code}</b><span className={state === "Active" ? "universal-state" : "universal-state inactive"}>{state}</span><small>Until {istTime(grant.expires_at)} IST · {grant.reason}</small><small>Added by {grant.grantor?.full_name || "Administrator"} · {istTime(grant.created_at || grant.starts_at)} IST{grant.revoked_at ? ` · Disabled by ${grant.revoker?.full_name || "Administrator"} · ${istTime(grant.revoked_at)} IST` : ""}</small></div>{canManage && ["Active", "Scheduled"].includes(state) ? <button type="button" disabled={busy} onClick={() => setConfirm(grant)}>Disable</button> : null}</div>;
+        return <div className="temporary-access-row" key={grant.id}><div><b>{grant.recruitment_locations?.code}</b><span className={state === "Active" ? "universal-state" : "universal-state inactive"}>{state}</span><small>Until {istTime(grant.expires_at)} IST · {grant.reason}</small><small>Added by {grant.grantor?.full_name || "Administrator"} · {istTime(grant.created_at || grant.starts_at)} IST{grant.revoked_at ? ` · Disabled by ${grant.revoker?.full_name || "Administrator"} · ${istTime(grant.revoked_at)} IST` : ""}</small></div>{canManage && grant.canRevoke && !readOnly && ["Active", "Scheduled"].includes(state) ? <button type="button" disabled={busy} onClick={() => setConfirm(grant)}>Disable</button> : null}</div>;
       }) : <p>No temporary access yet.</p>}
       {total > 100 ? <div><button disabled={page === 0 || busy} onClick={() => setPage(page - 1)}>Previous</button><span>Page {page + 1} of {Math.ceil(total / 100)}</span><button disabled={(page + 1) * 100 >= total || busy} onClick={() => setPage(page + 1)}>Next</button></div> : null}
     </div>

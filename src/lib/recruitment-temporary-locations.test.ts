@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { temporaryLocationState, validateTemporaryLocationInput, withTemporaryLocations, type TemporaryLocationGrant } from "./recruitment-temporary-locations";
 import { groupRecruitNavigation } from "./recruitment-navigation";
-import { canAccessLead, applyLeadScope, canManageTemporaryLocations } from "./recruitment-api";
+import { canAccessLead, applyLeadScope, canManageTemporaryLocations, canDelegateTemporaryLocation, hasTemporaryLocationEditPermission } from "./recruitment-api";
 
 const now = Date.parse("2026-10-07T08:00:00Z");
 const grant: TemporaryLocationGrant = { id: "grant", user_access_id: "access", location_id: "extra", starts_at: "2026-10-07T07:00:00Z", expires_at: "2026-10-07T09:00:00Z", revoked_at: null };
@@ -47,13 +47,38 @@ describe("temporary Recruit scope", () => {
     expect(withTemporaryLocations({ allLocations: true, locationIds: [] }, [grant], now).locationIds).toEqual([]);
     expect(withTemporaryLocations({ allLocations: false, locationIds: ["subset"] }, [grant], now).locationIds).toEqual(["subset", "extra"]);
   });
-  it("does not turn temporary access into delegation authority", () => {
-    const editor = { ...base, menuActions: { workforce: { "Access Control": { edit: true } }, hr: {} }, allLocations: true };
-    expect(canManageTemporaryLocations(editor)).toBe(false);
-    expect(canManageTemporaryLocations({ ...editor, baseAllLocations: false })).toBe(false);
-    expect(canManageTemporaryLocations({ ...editor, baseAllLocations: true })).toBe(true);
-    expect(canManageTemporaryLocations({ ...editor, baseAllLocations: true, readOnly: true })).toBe(false);
-    expect(canManageTemporaryLocations({ ...editor, isOwner: true, isPreview: true })).toBe(false);
+  it("allows existing access editors with assigned locations, not only global administrators", () => {
+    const editor = withTemporaryLocations({ ...base, menuActions: { workforce: { "Access Control": { edit: true } }, hr: {} } }, [grant], now);
+    expect(canManageTemporaryLocations(editor)).toBe(true);
+    expect(canDelegateTemporaryLocation(editor, "normal")).toBe(true);
+    expect(canDelegateTemporaryLocation(editor, "extra")).toBe(false);
+    expect(canDelegateTemporaryLocation(editor, "unrelated")).toBe(false);
+    expect(canDelegateTemporaryLocation({ ...editor, baseAllLocations: true }, "unrelated")).toBe(true);
+  });
+  it.each([{}, { view: true }, { view: true, add: true }, { view: true, edit: false }])("does not grant administration from view/add-only permissions %#", (actions) => {
+    const viewer = { ...base, baseAllLocations: true, manageUsers: true, menuActions: { workforce: { "Access Control": actions }, hr: {} } };
+    expect(canManageTemporaryLocations(viewer)).toBe(false);
+    expect(canDelegateTemporaryLocation(viewer, "normal")).toBe(false);
+  });
+  it("supports either workspace's existing edit permission, without named-user exceptions", () => {
+    const editor = { ...base, baseLocationIds: ["normal"], menuActions: { hr: { "Access Control": { edit: true } } } };
+    expect(canManageTemporaryLocations(editor)).toBe(true);
+    expect(canDelegateTemporaryLocation(editor, "normal")).toBe(true);
+  });
+  it("shows preview capability without permitting preview writes", () => {
+    const editor = { ...base, baseLocationIds: ["normal"], menuActions: { workforce: { "Access Control": { edit: true } } } };
+    for (const flags of [{ readOnly: true }, { isPreview: true }]) {
+      const preview = { ...editor, ...flags };
+      expect(hasTemporaryLocationEditPermission(preview)).toBe(true);
+      expect(canDelegateTemporaryLocation(preview, "normal")).toBe(true);
+      expect(canManageTemporaryLocations(preview)).toBe(false);
+    }
+  });
+  it("fails closed on missing baseline scope, even if effective scope says all", () => {
+    const editor = { ...base, menuActions: { workforce: { "Access Control": { edit: true } } }, allLocations: true };
+    expect(canDelegateTemporaryLocation(editor, "normal")).toBe(false);
+    expect(canDelegateTemporaryLocation({ ...editor, isOwner: true }, "normal")).toBe(true);
+    expect(canDelegateTemporaryLocation(null, "normal")).toBe(false);
   });
 });
 

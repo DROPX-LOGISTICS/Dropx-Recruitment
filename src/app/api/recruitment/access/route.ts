@@ -9,7 +9,7 @@ import {
   type RecruitmentAccessTemplate
 } from "@/lib/recruitment-menu-roles";
 import { calculateEffectiveRecruitmentLocationScope } from "@/lib/recruitment-location-scope";
-import { canManageTemporaryLocations, canUseRecruitmentMenu, recruitmentSession, requiredEnv } from "@/lib/recruitment-api";
+import { canDelegateTemporaryLocation, canManageTemporaryLocations, canUseRecruitmentMenu, hasTemporaryLocationEditPermission, recruitmentSession, requiredEnv } from "@/lib/recruitment-api";
 import { activeTemporaryLocations } from "@/lib/recruitment-temporary-locations-server";
 import { withTemporaryLocations } from "@/lib/recruitment-temporary-locations";
 import { invalidateMobileSessionCache } from "@/lib/mobile-session";
@@ -85,7 +85,7 @@ export async function GET(request: Request) {
       supabaseAdmin.from("recruitment_mobile_users").select("mobile_e164,display_name,is_active,profile_id").eq("company_id", companyId).order("display_name"),
       supabaseAdmin.from("recruitment_user_locations").select("user_access_id,location_id"),
       supabaseAdmin.from("recruitment_user_roles").select("user_access_id,role_id"),
-      supabaseAdmin.from("recruitment_locations").select("id,code,name,is_active").eq("company_id", companyId).eq("is_active", true).order("code"),
+      supabaseAdmin.from("recruitment_locations").select("id,code,name,is_active,station_id").eq("company_id", companyId).eq("is_active", true).order("code"),
       supabaseAdmin.from("recruitment_roles").select("id,code,name,stream,is_active").eq("company_id", companyId).eq("is_active", true).order("code"),
       supabaseAdmin.from("profiles").select("id,full_name,email,mobile,phone,employee_id,role,role_id,reports_to_user_id,location_scope_ids,invite_method,is_active,is_master_owner")
         .eq("company_id", companyId).eq("is_active", true).order("full_name"),
@@ -156,6 +156,11 @@ export async function GET(request: Request) {
       allowlist: allowlist.data ?? [],
       access: mappedAccess,
       canManageTemporaryLocations: canManageTemporaryLocations(session),
+      temporaryLocationAccess: {
+        canEdit: hasTemporaryLocationEditPermission(session),
+        readOnly: Boolean(session?.readOnly || session?.isPreview),
+        locationIds: (locations.data ?? []).filter((location) => location.station_id && canDelegateTemporaryLocation(session, location.id)).map((location) => location.id)
+      },
       mobileUsers: mobile.data ?? [],
       locations: (locations.data ?? []).map((location) => {
         const source = mainStations.find((station) => station.code === location.code);
