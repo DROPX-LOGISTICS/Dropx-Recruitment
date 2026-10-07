@@ -17,7 +17,7 @@ export async function GET(request: Request) {
       .eq("company_id", companyId).eq("profile_id", profileId).maybeSingle();
     if (access.error) throw access.error;
     if (!access.data) return NextResponse.json({ grants: [] });
-    // History is paged independently from the user list; active grants sort first.
+    // History is paged independently from the user list, newest grants first.
     const url = new URL(request.url);
     const page = Math.max(0, Math.floor(Number(url.searchParams.get("page")) || 0));
     const result = await supabaseAdmin!.from("recruitment_temporary_location_grants")

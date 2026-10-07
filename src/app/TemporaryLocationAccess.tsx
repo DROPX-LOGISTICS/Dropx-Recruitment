@@ -26,6 +26,7 @@ export default function TemporaryLocationAccess({ profileId, userName, locations
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [failed, setFailed] = useState(false);
+  const [loadError, setLoadError] = useState("");
   const [confirm, setConfirm] = useState<"grant" | Grant | null>(null);
   const requestId = useRef<string | null>(null);
   const headerKey = JSON.stringify(requestHeaders);
@@ -35,10 +36,10 @@ export default function TemporaryLocationAccess({ profileId, userName, locations
       const response = await fetch(`/api/recruitment/access/temporary-locations?profileId=${encodeURIComponent(profileId)}&page=${page}`, { headers: JSON.parse(headerKey), cache: "no-store", signal });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error);
-      setGrants(result.grants ?? []); setTotal(result.total ?? 0); setFailed(false);
+      setGrants(result.grants ?? []); setTotal(result.total ?? 0); setFailed(false); setLoadError("");
     } catch (error) {
       if (signal?.aborted) return;
-      setFailed(true); setMessage(error instanceof Error ? error.message : "Unable to load access.");
+      setFailed(true); setLoadError(error instanceof Error ? error.message : "Unable to load access.");
     } finally { if (!signal?.aborted) setLoading(false); }
   }, [profileId, page, headerKey]);
   useEffect(() => { const controller = new AbortController(); void load(controller.signal); return () => controller.abort(); }, [load]);
@@ -90,6 +91,7 @@ export default function TemporaryLocationAccess({ profileId, userName, locations
       <button type="button" disabled={busy} onClick={() => setConfirm(null)}>Cancel</button><button type="button" className="primary-action" disabled={busy} onClick={() => void save()}>{busy ? "Saving…" : confirm === "grant" ? "Confirm grant" : "Confirm disable"}</button>
     </div> : null}
     {message ? <p role="status" className="connection-notice">{message}</p> : null}
+    {loadError ? <p role="alert" className="connection-notice">{loadError}</p> : null}
     <div className="temporary-access-history"><h4>Access history <button type="button" disabled={busy || loading} onClick={() => void load()}>Refresh</button></h4>
       {loading ? <p>Loading access…</p> : grants.length ? grants.map((grant) => {
         const state = temporaryLocationState(grant);
