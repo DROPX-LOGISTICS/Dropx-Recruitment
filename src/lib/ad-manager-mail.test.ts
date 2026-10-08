@@ -6,7 +6,7 @@ vi.mock('./supabase-admin',()=>({supabaseAdmin:{
  rpc:async(name:string)=>({data:name==='recruitment_ad_mail_lock'?mocks.lock:mocks.people,error:null}),
  from:(table:string)=>{
   let mode='read',values:any,conflict:any;const predicates:((r:any)=>boolean)[]=[];let cap=Infinity,single=false;
-  const q:any={select:()=>q,range:(from:number,to:number)=>{cap=to-from+1;return q;},eq:(k:string,v:any)=>{predicates.push(r=>k.includes('->>')?r[k.split('->>')[0]]?.[k.split('->>')[1]]===v:r[k]===v);return q;},not:(k:string,operator:string,v:any)=>{if(operator==='is'&&v===null)predicates.push(r=>r[k]!==null&&r[k]!==undefined);return q;},gte:(k:string,v:any)=>{predicates.push(r=>r[k]>=v);return q;},lt:(k:string,v:any)=>{predicates.push(r=>r[k]<v);return q;},in:(k:string,v:any[])=>{predicates.push(r=>v.includes(r[k]));return q;},order:()=>q,limit:(n:number)=>{cap=n;return q;},maybeSingle:()=>{single=true;return q;},single:()=>{single=true;return q;},insert:(v:any)=>{mode='insert';values=v;return q;},upsert:(v:any,c:any)=>{mode='upsert';values=v;conflict=c;return q;},update:(v:any)=>{mode='update';values=v;return q;},then:(resolve:any)=>{
+  const q:any={select:()=>q,range:(from:number,to:number)=>{cap=to-from+1;return q;},eq:(k:string,v:any)=>{predicates.push(r=>k.includes('->>')?r[k.split('->>')[0]]?.[k.split('->>')[1]]===v:r[k]===v);return q;},not:(k:string,operator:string,v:any)=>{if(operator==='is'&&v===null)predicates.push(r=>r[k]!==null&&r[k]!==undefined);return q;},gte:(k:string,v:any)=>{predicates.push(r=>r[k]>=v);return q;},lt:(k:string,v:any)=>{predicates.push(r=>r[k]<v);return q;},in:(k:string,v:any[])=>{if(v.length>100)throw new Error('Gateway URL too long');predicates.push(r=>v.includes(r[k]));return q;},order:()=>q,limit:(n:number)=>{cap=n;return q;},maybeSingle:()=>{single=true;return q;},single:()=>{single=true;return q;},insert:(v:any)=>{mode='insert';values=v;return q;},upsert:(v:any,c:any)=>{mode='upsert';values=v;conflict=c;return q;},update:(v:any)=>{mode='update';values=v;return q;},then:(resolve:any)=>{
    const rows=mocks.tables[table]??(mocks.tables[table]=[]);let data:any;
    if(mode==='read')data=rows.filter(r=>predicates.every(p=>p(r))).slice(0,cap);
    if(mode==='update'){data=rows.filter(r=>predicates.every(p=>p(r)));data.forEach((r:any)=>Object.assign(r,values));}
@@ -53,6 +53,19 @@ describe('Ad mail delivery and request boundaries',()=>{
   mocks.smtp.mockRejectedValueOnce(new Error('Socket disconnected after DATA'));
   vi.setSystemTime(new Date('2026-09-29T03:00:00Z'));await runAdMail(company);await runAdMail(company);
   expect(mocks.smtp).toHaveBeenCalledTimes(3);expect(mocks.tables.recruitment_ad_mail_deliveries.filter((row:any)=>row.status==='needs_review')).toHaveLength(1);
+ });
+ it('loads a large evening activity set without an oversized URL or dropping recipients',async()=>{
+  mocks.tables.recruitment_ad_mail_settings[0].baselined_at='2026-09-28T00:00:00Z';
+  mocks.tables.recruitment_ad_mail_activity=Array.from({length:1000},(_,i)=>({id:`activity-${i}`,company_id:company,ad_id:'ad',station_id:'station',station:'STATION',ad_name:'Workforce ad',role:'Delivery Associate',occurred_at:'2026-09-29T10:00:00Z',previous_status:'PAUSED',current_status:'ACTIVE',change_types:['status']}));
+  vi.setSystemTime(new Date('2026-09-29T14:30:00Z'));
+  expect(await runAdMail(company)).toMatchObject({sent:3});
+  expect(mocks.tables.recruitment_ad_mail_deliveries.every((r:any)=>r.status==='sent')).toBe(true);
+ });
+ it('does not blast obsolete queued daily snapshots after recovery',async()=>{
+  mocks.tables.recruitment_ad_mail_deliveries=[{id:'old',company_id:company,kind:'event',status:'queued',payload:{date:'2026-09-28'},attempts:0}];
+  vi.setSystemTime(new Date('2026-09-29T14:30:00Z'));await runAdMail(company);
+  expect(mocks.tables.recruitment_ad_mail_deliveries.find((r:any)=>r.id==='old').status).toBe('queued');
+  expect(mocks.smtp).toHaveBeenCalledTimes(3);
  });
  it('creates a pending review request, not a Meta change; duplicate clicks reuse it',async()=>{
   vi.setSystemTime(new Date('2026-09-29T03:00:00Z'));await runAdMail(company);

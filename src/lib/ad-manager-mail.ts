@@ -96,7 +96,7 @@ export async function runAdMail(company:string,preview=false) {
   }
   const dispatchKind=morning?'daily':evening?'event':null;
   if(!dispatchKind) return {enabled:true,sent:0,queued:0,groups:context.groups.length,...observation};
-  const pending=checked(await db().from('recruitment_ad_mail_deliveries').select('*').eq('company_id',company).eq('kind',dispatchKind).eq('status','queued').order('created_at').limit(500));
+  const pending=checked(await db().from('recruitment_ad_mail_deliveries').select('*').eq('company_id',company).eq('kind',dispatchKind).eq('status','queued').eq('payload->>date',ist(now).slice(0,10)).order('created_at').limit(500));
   for(let index=0;index<pending.length&&Date.now()-now.getTime()<210_000;index+=6) {
    const batch=await Promise.all(pending.slice(index,index+6).map((job:any)=>deliver(company,job,context)));
    sent+=batch.filter(Boolean).length;
@@ -108,8 +108,14 @@ export async function runAdMail(company:string,preview=false) {
 
 async function deliveryActivities(company:string,activityIds:string[]|undefined) {
  if(!activityIds?.length) return [] as MailActivity[];
- const result=await db().from('recruitment_ad_mail_activity').select('*').eq('company_id',company).in('id',activityIds).order('occurred_at');
- return checked(result) as MailActivity[];
+ // A regional report can contain thousands of UUIDs. A single PostgREST IN URL
+ // exceeds the gateway limit; bounded reads also avoid response-row truncation.
+ const ids=[...new Set(activityIds)];const rows:MailActivity[]=[];
+ for(let offset=0;offset<ids.length;offset+=100) {
+  const result=await db().from('recruitment_ad_mail_activity').select('*').eq('company_id',company).in('id',ids.slice(offset,offset+100)).order('occurred_at');
+  rows.push(...checked(result) as MailActivity[]);
+ }
+ return rows.sort((a,b)=>a.occurred_at.localeCompare(b.occurred_at));
 }
 
 /** Embed only vetted, bounded images so a report never exposes an arbitrary remote URL to recipients. */
@@ -139,8 +145,8 @@ async function deliver(company:string,job:any,context:Awaited<ReturnType<typeof 
  }
  if(!group){checked(await db().from('recruitment_ad_mail_deliveries').update({status:'cancelled',error:'Recipient or station scope changed.'}).eq('id',job.id).eq('company_id',company));return false;}
  const kind=sample?payload.sampleKind!:job.kind as 'daily'|'event';
- const activities=kind==='event'?(payload.sampleActivities||await deliveryActivities(company,payload.activityIds)):[];
  try {
+  const activities=kind==='event'?(payload.sampleActivities||await deliveryActivities(company,payload.activityIds)):[];
   const smtp=checked(await db().from('email_notification_settings').select('is_enabled,smtp_host,smtp_port,smtp_user,smtp_pass,smtp_from,from_name').eq('company_id',company).eq('id',true).single());
   if(!smtp.is_enabled||!smtp.smtp_host||!smtp.smtp_from)throw new Error('Company email service is disabled or incomplete.');
   const visualAds=(kind==='daily'?group.ads.filter(ad=>ad.status==='ACTIVE'):group.ads.filter(ad=>activities.some(activity=>activity.ad_id===ad.id))).slice(0,8);
