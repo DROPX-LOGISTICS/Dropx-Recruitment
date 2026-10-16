@@ -77,6 +77,28 @@ describe("recruitment routing", () => {
     });
   });
 
+  it("does not route a role from tokens that belong to the location code", () => {
+    const locations = [{ code: "HO" }, { code: "HO_CLT" }, { code: "ERSE" }];
+    const roles = [
+      { code: "HO", name: "Head of Operations - Last Mile", stream: "hr" as const, aliases: ["HEAD OF OPERATIONS  - LAST MILE"] },
+      { code: "CTA", name: "Control Tower Assistant", stream: "hr" as const, aliases: ["CONTROL TOWER ASSISTANT"] },
+      { code: "SLPA", name: "Security Loss & Prevention Assistant", stream: "hr" as const, aliases: ["SECURITY LOSS & PREVENTION ASSISTANT"] },
+      { code: "HR", name: "HR Executive", stream: "hr" as const, aliases: [] },
+      { code: "DA", name: "Delivery Associate", stream: "workforce" as const, aliases: [] }
+    ];
+
+    expect(parseAdRouteWithMasters("HO_CLT_CTA_20261014", locations, roles)).toMatchObject({ stationCode: "HO_CLT", roleCode: "CTA", stream: "hr" });
+    expect(parseAdRouteWithMasters("HO_CLT_SLPA_20261014", locations, roles)).toMatchObject({ stationCode: "HO_CLT", roleCode: "SLPA" });
+    expect(parseAdRouteWithMasters("HO_CTA", locations, roles)).toMatchObject({ stationCode: "HO", roleCode: "CTA" });
+    expect(parseAdRouteWithMasters("HO_CLT_HO_20261014", locations, roles)).toMatchObject({ stationCode: "HO_CLT", roleCode: "HO" });
+    expect(parseAdRouteWithMasters("HO_HR", locations, roles)).toMatchObject({ stationCode: "HO", roleCode: "HR" });
+    expect(parseAdRouteWithMasters("HO_CLT_20261014", locations, roles)).toMatchObject({ stationCode: "HO_CLT", roleCode: null, stream: null });
+    expect(parseAdRouteWithMasters("ERSE_Control Tower Assistant", locations, roles)).toMatchObject({ stationCode: "ERSE", roleCode: "CTA" });
+    expect(parseAdRouteWithMasters("ERSE_DA_HR_drive", locations, roles)).toMatchObject({ stationCode: "ERSE", roleCode: "DA" });
+    expect(parseAdRouteWithMasters("HO_HR_20260925", [{ code: "ERSE" }], roles)).toMatchObject({ stationCode: null, roleCode: "HR" });
+    expect(parseAdRouteWithMasters("CTA_20261014", [], roles)).toMatchObject({ stationCode: null, roleCode: "CTA" });
+  });
+
   it("does not invent a station from campaign-like words", () => {
     expect(parseAdRouteWithMasters(
       "Kerala Summer Hiring Delivery Associate",

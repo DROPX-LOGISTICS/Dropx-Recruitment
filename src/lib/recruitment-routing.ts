@@ -68,10 +68,16 @@ function tokens(value: string) {
     .filter(Boolean);
 }
 
-function includesPhrase(haystack: string[], phrase: string) {
+function phraseStart(haystack: string[], phrase: string, excluded: ReadonlySet<number> = new Set()) {
   const wanted = tokens(phrase);
-  if (!wanted.length || wanted.length > haystack.length) return false;
-  return haystack.some((_, start) => wanted.every((part, offset) => haystack[start + offset] === part));
+  if (!wanted.length || wanted.length > haystack.length) return -1;
+  return haystack.findIndex((_, start) => wanted.every((part, offset) =>
+    haystack[start + offset] === part && !excluded.has(start + offset)
+  ));
+}
+
+function includesPhrase(haystack: string[], phrase: string) {
+  return phraseStart(haystack, phrase) >= 0;
 }
 
 export function parseAdRoute(adNameInput: unknown): ParsedAdRoute {
@@ -105,23 +111,46 @@ export function parseAdRouteWithMasters(
 ): ParsedAdRoute {
   const adName = String(adNameInput ?? "").trim();
   const adTokens = tokens(adName);
-  const roleCandidates = roles.flatMap((role) =>
-    [role.code, role.name, ...(role.aliases ?? [])]
-      .filter((value): value is string => Boolean(String(value ?? "").trim()))
-      .map((alias) => ({ alias, role }))
-  ).sort((left, right) => tokens(right.alias).length - tokens(left.alias).length);
-  const matchedRole = roleCandidates.find(({ alias }) => includesPhrase(adTokens, alias))?.role;
   const matchedLocation = [...locations]
     .sort((left, right) => tokens(right.code).length - tokens(left.code).length)
     .find((location) => includesPhrase(adTokens, location.code));
   const fallback = parseAdRoute(adName);
   const knownFallbackLocation = locations.find((location) => location.code === fallback.stationCode);
-  const knownFallbackRole = roles.find((role) => role.code === fallback.roleCode);
+  const location = matchedLocation ?? knownFallbackLocation ?? null;
+
+  // A location code such as HO_CLT contains tokens that can also be role codes
+  // (HO = Head of Operations), so the role is matched only outside the location.
+  // An unknown or inactive station still occupies its token, but only softly:
+  // when nothing else matches, that token may still name the role.
+  const stationCode = location?.code ?? fallback.stationCode;
+  const stationTokens = new Set<number>();
+  if (stationCode) {
+    const start = phraseStart(adTokens, stationCode);
+    if (start >= 0) tokens(stationCode).forEach((_, offset) => stationTokens.add(start + offset));
+  }
+  const findRoleMatches = (excluded: ReadonlySet<number>) => roles.flatMap((role) =>
+    [role.code, role.name, ...(role.aliases ?? [])]
+      .filter((value): value is string => Boolean(String(value ?? "").trim()))
+      .map((alias) => ({ role, length: tokens(alias).length, start: phraseStart(adTokens, alias, excluded) }))
+  ).filter((match) => match.start >= 0);
+  let locationTokens = stationTokens;
+  let roleMatches = findRoleMatches(locationTokens);
+  if (!roleMatches.length && !location && stationTokens.size) {
+    locationTokens = new Set();
+    roleMatches = findRoleMatches(locationTokens);
+  }
+  // Longest alias wins; on a tie the earliest role after the location wins,
+  // matching the LOCATION_ROLE_DATE naming convention.
+  roleMatches.sort((left, right) => right.length - left.length || left.start - right.start);
+  const matchedRole = roleMatches[0]?.role;
+  const remainingName = adTokens.filter((_, index) => !locationTokens.has(index)).join(" ");
+  const fallbackRoleCode = parseAdRoute(remainingName).roleCode;
+  const knownFallbackRole = roles.find((role) => role.code === fallbackRoleCode);
   const role = matchedRole ?? knownFallbackRole ?? null;
 
   return {
     adName,
-    stationCode: matchedLocation?.code ?? knownFallbackLocation?.code ?? null,
+    stationCode: location?.code ?? null,
     roleCode: role?.code ?? null,
     stream: authoritativeRoleStream(role?.code, role?.stream ?? null)
   };
