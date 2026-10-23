@@ -7,6 +7,7 @@ import {
   verifyOtpHash
 } from "@/lib/mobile-auth";
 import { resolveMobileSession } from "@/lib/mobile-session";
+import { attachRecruitmentSessionCookie } from "@/lib/recruitment-web-session";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 
 export const dynamic = "force-dynamic";
@@ -126,7 +127,7 @@ export async function POST(request: Request) {
     const resolved = await resolveMobileSession(new Request(request.url, {
       headers: { Authorization: `Bearer ${sessionToken}` }
     }), companyId);
-    return NextResponse.json({
+    const response = NextResponse.json({
       authenticated: true,
       token: sessionToken,
       expiresAt,
@@ -142,6 +143,7 @@ export async function POST(request: Request) {
         roleIds: resolved?.roleIds ?? []
       }
     });
+    return attachRecruitmentSessionCookie(response, sessionToken);
   } catch (error) {
     console.error("Recruitment OTP verification failed", error);
     return NextResponse.json({ authenticated: false, error: "Unable to verify OTP." }, { status: 500 });

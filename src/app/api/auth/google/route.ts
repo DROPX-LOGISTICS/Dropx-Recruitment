@@ -5,6 +5,7 @@ import { hashSessionToken, newSessionToken } from "@/lib/mobile-auth";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { getConnectionConfig } from "@/lib/connection-config";
 import { activeProfileByEmail, ensureRecruitmentAccess } from "@/lib/recruitment-auth-user";
+import { attachRecruitmentSessionCookie } from "@/lib/recruitment-web-session";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -74,12 +75,13 @@ export async function POST(request: Request) {
         expires_at: expiresAt
       });
     if (session.error) throw new Error(session.error.message);
-    return NextResponse.json({
+    const response = NextResponse.json({
       authenticated: true,
       token: sessionToken,
       expiresAt,
       user: { name: activeProfile.full_name }
     });
+    return attachRecruitmentSessionCookie(response, sessionToken);
   } catch (error) {
     console.error("Recruitment Google login failed", error);
     return NextResponse.json({ authenticated: false, error: "Unable to complete Google login." }, { status: 401 });

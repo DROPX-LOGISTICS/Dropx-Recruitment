@@ -35,6 +35,15 @@ export default function AuthPanel() {
       .finally(() => setGoogleConfigLoaded(true));
   }, []);
 
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const next = params.get("next");
+    if (!next || !next.startsWith("/")) return;
+    const saved = localStorage.getItem("recruitment_session");
+    if (!saved) return;
+    window.location.replace(next);
+  }, []);
+
   async function jsonRequest(url: string, body: object): Promise<{
     error?: string;
     challengeId?: string | null;

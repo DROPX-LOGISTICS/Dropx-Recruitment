@@ -460,3 +460,152 @@ export async function resolveMobileSession(
   }
   return attachTemporaryLocations(companyId, effective);
 }
+
+export async function resolveMobileSessionFromToken(token: string, companyId: string) {
+  return resolveMobileSession(
+    new Request("https://recruit.local/", {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` }
+    }),
+    companyId
+  );
+}
+
+/** Resolve Recruit ACL for MCP bearer tokens (no browser session row required). */
+export async function loadRecruitSessionForProfile(
+  companyId: string,
+  profileId: string
+): Promise<MobileSessionContext | null> {
+  if (!supabaseAdmin) throw new Error("Supabase is not configured.");
+  const profile = await supabaseAdmin
+    .from("profiles")
+    .select("full_name,email,role,role_id,location_scope_ids,is_active,is_master_owner")
+    .eq("company_id", companyId)
+    .eq("id", profileId)
+    .eq("is_active", true)
+    .maybeSingle();
+  if (profile.error) throw new Error(profile.error.message);
+  if (!profile.data) return null;
+
+  const [access, membership] = await Promise.all([
+    supabaseAdmin
+      .from("recruitment_user_access")
+      .select("id, can_access_workforce, can_access_hr, can_access_all_locations, can_manage_masters, can_manage_ads, can_manage_users")
+      .eq("company_id", companyId)
+      .eq("profile_id", profileId)
+      .eq("is_active", true)
+      .maybeSingle(),
+    supabaseAdmin.from("company_product_memberships")
+      .select("role_id,role_code_snapshot,has_all_location_access,location_scope_ids")
+      .eq("company_id", companyId)
+      .eq("product_code", "recruit")
+      .eq("user_id", profileId)
+      .eq("is_active", true)
+      .maybeSingle()
+  ]);
+  if (access.error) throw new Error(access.error.message);
+  if (membership.error) throw new Error(membership.error.message);
+  if (!access.data || !membership.data) return null;
+
+  const email = profile.data.email ?? null;
+  const allowlist = email
+    ? await supabaseAdmin.from("recruitment_login_allowlist")
+        .select("access_template")
+        .eq("company_id", companyId)
+        .ilike("email", email)
+        .eq("is_active", true)
+        .maybeSingle()
+    : { data: null, error: null };
+  if (allowlist.error) throw new Error(allowlist.error.message);
+  const accessTemplate = (allowlist.data?.access_template || (
+    access.data.can_manage_users ? "admin" :
+    access.data.can_access_hr && !access.data.can_access_workforce ? "hr" :
+    access.data.can_access_workforce && !access.data.can_access_hr ? "workforce" : "viewer"
+  )) as RecruitmentAccessTemplate;
+
+  const [locations, roles, workforceConfig] = await Promise.all([
+    supabaseAdmin.from("recruitment_user_locations").select("location_id").eq("user_access_id", access.data.id),
+    supabaseAdmin.from("recruitment_user_roles").select("role_id").eq("user_access_id", access.data.id),
+    loadWorkforceConfig(companyId)
+  ]);
+  if (locations.error) throw new Error(locations.error.message);
+  if (roles.error) throw new Error(roles.error.message);
+
+  const universalRole = await loadUniversalRole(
+    companyId,
+    membership.data.role_id,
+    membership.data.role_code_snapshot
+  );
+  const workforceFunction = workforceFunctionFor(
+    profileId,
+    accessTemplate,
+    access.data.can_manage_users,
+    workforceConfig.userFunctions,
+    [access.data.id],
+    universalRole?.code ?? profile.data.role,
+    universalRole?.name
+  );
+  const designationCode = workforceFunction.designationCode
+    || String(profile.data.role ?? universalRole?.code ?? "").trim().toUpperCase()
+    || null;
+  const isOwner = profile.data.is_master_owner === true
+    || accessTemplate === "owner"
+    || universalRole?.code?.toUpperCase() === "OWNER";
+  const permissionSet = await resolveRecruitmentPermissionSet({
+    companyId,
+    profileId,
+    universalRoleId: universalRole?.id ?? null,
+    universalRoleCode: universalRole?.code ?? profile.data.role,
+    isOwner,
+    accessTemplate,
+    workforce: access.data.can_access_workforce,
+    hr: access.data.can_access_hr
+  });
+  const management = resolvedManagement(permissionSet, access.data);
+  const locationScope = await effectiveLocationScope({
+    companyId,
+    isMasterOwner: isOwner,
+    roleLocationAccessMode: universalRole?.location_access_mode,
+    universalStationIds: Array.isArray(profile.data.location_scope_ids)
+      ? profile.data.location_scope_ids
+      : [],
+    inheritUniversalScope: access.data.can_access_all_locations,
+    selectedRecruitmentLocationIds: (locations.data ?? []).map((row) => row.location_id)
+  });
+  const peopleDesignation = (await loadPeopleDesignations(companyId, [profileId])).get(profileId);
+  const resolved: MobileSessionContext = {
+    designationName: peopleDesignation?.name ?? null,
+    sessionId: `mcp:${profileId}`,
+    mobileUserId: "",
+    profileId,
+    displayName: profile.data.full_name,
+    email,
+    accessId: access.data.id,
+    workforce: permissionSet.workspaces.includes("workforce"),
+    hr: permissionSet.workspaces.includes("hr"),
+    allLocations: locationScope.allLocations,
+    manageMasters: management.manageMasters,
+    manageAds: management.manageAds,
+    manageUsers: management.manageUsers,
+    accessTemplate,
+    menuPermissions: permissionSet.webMenuIds,
+    webMenuPermissions: permissionSet.webMenuIds,
+    mobileMenuPermissions: permissionSet.mobileMenuIds,
+    menuAccess: permissionSet.menuAccess,
+    menuActions: permissionSet.menuActions,
+    adRequestActions: permissionSet.adRequestActions,
+    recruitmentFunction: workforceFunction.function,
+    trackPerformance: workforceFunction.trackPerformance,
+    reportingManagerProfileId: workforceFunction.reportingManagerProfileId,
+    designationCode,
+    isOwner,
+    canPreviewUsers: canPreviewPortalUsers(isOwner, null, peopleDesignation),
+    isPreview: false,
+    viewerProfileId: profileId,
+    previewProfileId: null,
+    readOnly: true,
+    locationIds: locationScope.locationIds,
+    roleIds: (roles.data ?? []).map((row) => row.role_id)
+  };
+  return attachTemporaryLocations(companyId, resolved);
+}
