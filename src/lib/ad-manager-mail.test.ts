@@ -1,5 +1,6 @@
 import {beforeEach,describe,it,expect,vi} from 'vitest';
-const mocks=vi.hoisted(()=>({tables:{} as Record<string,any[]>,people:[] as any[],smtp:vi.fn(),lock:true}));
+const mocks=vi.hoisted(()=>({tables:{} as Record<string,any[]>,people:[] as any[],smtp:vi.fn(),insights:vi.fn(),lock:true}));
+vi.mock('./meta-ad-insights',()=>({fetchRecentMetaInsights:mocks.insights}));
 vi.mock('./recruitment-api',()=>({requiredEnv:(key:string)=>({RECRUITMENT_COMPANY_ID:'company',CRON_SECRET:'test-secret',NEXT_PUBLIC_SUPABASE_URL:'https://test.supabase.co'}[key]||'test')}));
 vi.mock('nodemailer',()=>({default:{createTransport:()=>({sendMail:mocks.smtp,close:()=>{}})}}));
 vi.mock('./supabase-admin',()=>({supabaseAdmin:{
@@ -19,63 +20,67 @@ vi.mock('./supabase-admin',()=>({supabaseAdmin:{
   }};return q;
  }
 }}));
-import {runAdMail,sendManagerSamples,submitMailAction,resolveMailAction} from './ad-manager-mail';
+import {runAdMail,sendManagerSamples,submitMailAction,resolveMailAction,loadMailContext,observeAdMailActivity} from './ad-manager-mail';
 import {signAction} from './ad-manager-mail-model';
 const company='company';
 beforeEach(()=>{
  vi.useFakeTimers();vi.setSystemTime(new Date('2026-09-28T17:00:00Z'));
  mocks.lock=true;mocks.smtp.mockReset().mockResolvedValue({accepted:['manager@example.com','workforce@example.com','head@example.com','owner@example.com'],rejected:[]});
+ mocks.insights.mockReset().mockImplementation(async()=>({available:true,today:new Date(Date.now()+330*60_000).toISOString().slice(0,10),rows:[],fetchedAt:new Date().toISOString()}));
  mocks.people=[{id:'manager',name:'Manager',email:'manager@example.com',mobile:'123',role:'CLM',station_ids:['station']},{id:'wfa',name:'Workforce',email:'workforce@example.com',mobile:'456',role:'WFA',station_ids:['station']},{id:'bh',name:'Business Head',email:'head@example.com',mobile:'789',role:'BH',station_ids:['station']}];
  mocks.tables={recruitment_ad_mail_settings:[{company_id:company,enabled:true,baselined_at:null}],recruitment_ad_mail_activity:[],recruitment_leads:[{company_id:company,ad_id:'ad'}],recruitment_ads:[{company_id:company,id:'ad',ad_name:'Workforce ad',status:'ACTIVE',daily_budget:100,poster_url:null,created_on:'2026-09-20T00:00:00.000Z',location_id:'loc',role_id:'da',raw_payload:{},recruitment_roles:{code:'DA',name:'Delivery Associate',stream:'workforce'},recruitment_locations:{code:'STATION',station_id:'station'}}],email_notification_settings:[{company_id:company,id:true,is_enabled:true,smtp_host:'smtp.example.com',smtp_from:'notify@example.com',smtp_user:'user',smtp_pass:'password',smtp_port:587}],profiles:[{company_id:company,id:'owner',full_name:'Owner',email:'owner@example.com',is_active:true}]};
 });
 describe('Ad mail delivery and request boundaries',()=>{
- it('baselines historic ads, records a later change, and sends it only in the evening digest',async()=>{
+ it('baselines historic ads, records a later change, and sends it only in the 1 pm digest',async()=>{
   expect(await runAdMail(company)).toMatchObject({baseline:true,sent:0});expect(mocks.smtp).not.toHaveBeenCalled();
-  vi.setSystemTime(new Date('2026-09-29T03:10:00Z'));mocks.tables.recruitment_ads[0].status='PAUSED';expect(await runAdMail(company)).toMatchObject({recorded:1,sent:0});
-  vi.setSystemTime(new Date('2026-09-29T14:30:00Z'));await runAdMail(company);
+  vi.setSystemTime(new Date('2026-09-29T03:10:00Z'));mocks.tables.recruitment_ads[0].daily_budget=150;expect(await runAdMail(company)).toMatchObject({recorded:1,sent:0});
+  expect(mocks.insights).not.toHaveBeenCalled();
+  vi.setSystemTime(new Date('2026-09-29T07:30:00Z'));await runAdMail(company);
   expect(mocks.smtp).toHaveBeenCalledTimes(3);for(const [mail] of mocks.smtp.mock.calls)expect(mail.cc).toEqual([]);
+  expect(mocks.smtp.mock.calls[0][0].text).toContain('Budget increased: ₹100 → ₹150/day');
  });
- it('sends one morning mail per mapped recipient and keeps that report in its monthly thread',async()=>{
-  vi.setSystemTime(new Date('2026-09-29T03:00:00Z'));await runAdMail(company);await runAdMail(company);
+ it('sends one 1 pm mail per mapped recipient and keeps that report in its monthly thread',async()=>{
+  vi.setSystemTime(new Date('2026-09-29T07:30:00Z'));await runAdMail(company);await runAdMail(company);
   expect(mocks.smtp).toHaveBeenCalledTimes(3);const first=mocks.smtp.mock.calls.find(([mail]:any[])=>mail.to==='manager@example.com')?.[0];
-  vi.setSystemTime(new Date('2026-09-30T03:00:00Z'));await runAdMail(company);
+  vi.setSystemTime(new Date('2026-09-30T07:30:00Z'));await runAdMail(company);
   const second=mocks.smtp.mock.calls.filter(([mail]:any[])=>mail.to==='manager@example.com')[1]?.[0];expect(second.subject).toBe(first.subject);expect(second.inReplyTo).toBe(first.messageId);expect(second.references).toContain(first.messageId);
  });
  it('does not send when disabled or another worker holds the lease',async()=>{
   mocks.tables.recruitment_ad_mail_settings[0].enabled=false;await runAdMail(company);
   mocks.tables.recruitment_ad_mail_settings[0].enabled=true;mocks.lock=false;await runAdMail(company);expect(mocks.smtp).not.toHaveBeenCalled();
  });
- it('sends both labelled samples only to the selected owner, never operational CCs',async()=>{
-  expect(await sendManagerSamples(company,'owner')).toEqual({sent:2,to:'owner@example.com'});await sendManagerSamples(company,'owner');
-  expect(mocks.smtp).toHaveBeenCalledTimes(2);for(const [mail] of mocks.smtp.mock.calls){expect(mail.to).toBe('owner@example.com');expect(mail.cc).toEqual([]);expect(mail.subject).toContain('[SAMPLE]');expect(mail.html).not.toContain('/ad-response?token=');}
+ it('sends one combined labelled sample only to the owner, without invented changes or operational CCs',async()=>{
+  expect(await sendManagerSamples(company,'owner')).toEqual({sent:1,to:'owner@example.com'});await sendManagerSamples(company,'owner');
+  expect(mocks.smtp).toHaveBeenCalledTimes(1);for(const [mail] of mocks.smtp.mock.calls){expect(mail.to).toBe('owner@example.com');expect(mail.cc).toEqual([]);expect(mail.subject).toContain('[SAMPLE]');expect(mail.html).not.toContain('/ad-response?token=');expect(mail.text).toContain('No changes today');}
  });
  it('does not resend uncertain SMTP attempts',async()=>{
   mocks.smtp.mockRejectedValueOnce(new Error('Socket disconnected after DATA'));
-  vi.setSystemTime(new Date('2026-09-29T03:00:00Z'));await runAdMail(company);await runAdMail(company);
+  vi.setSystemTime(new Date('2026-09-29T07:30:00Z'));await runAdMail(company);await runAdMail(company);
   expect(mocks.smtp).toHaveBeenCalledTimes(3);expect(mocks.tables.recruitment_ad_mail_deliveries.filter((row:any)=>row.status==='needs_review')).toHaveLength(1);
  });
- it('loads a large evening activity set without an oversized URL or dropping recipients',async()=>{
+ it('loads a large daily activity set without an oversized URL or dropping recipients',async()=>{
   mocks.tables.recruitment_ad_mail_settings[0].baselined_at='2026-09-28T00:00:00Z';
-  mocks.tables.recruitment_ad_mail_activity=Array.from({length:1205},(_,i)=>({id:`activity-${i}`,company_id:company,ad_id:'ad',station_id:'station',station:'STATION',ad_name:'Workforce ad',role:'Delivery Associate',occurred_at:'2026-09-29T10:00:00Z',previous_status:'PAUSED',current_status:'ACTIVE',change_types:['status']}));
-  vi.setSystemTime(new Date('2026-09-29T14:30:00Z'));
+  mocks.tables.recruitment_ad_mail_activity=Array.from({length:1205},(_,i)=>({id:`activity-${i}`,company_id:company,ad_id:'ad',station_id:'station',station:'STATION',ad_name:'Workforce ad',role:'Delivery Associate',occurred_at:'2026-09-29T06:00:00Z',previous_status:'PAUSED',current_status:'ACTIVE',change_types:['status']}));
+  vi.setSystemTime(new Date('2026-09-29T07:30:00Z'));
   expect(await runAdMail(company)).toMatchObject({sent:3,failed:0,deferred:0,needsReview:0});
-  expect(mocks.tables.recruitment_ad_mail_deliveries[0].payload.activityIds).toHaveLength(1205);
+  expect(mocks.tables.recruitment_ad_mail_deliveries[0].payload.activityIds).toHaveLength(1206); // Includes the new-ad observation made in this run.
   expect(mocks.tables.recruitment_ad_mail_deliveries.every((r:any)=>r.status==='sent')).toBe(true);
  });
  it('records preparation failures without sending or hiding them as success',async()=>{
   mocks.tables.email_notification_settings[0].is_enabled=false;
-  vi.setSystemTime(new Date('2026-09-29T03:00:00Z'));
+  vi.setSystemTime(new Date('2026-09-29T07:30:00Z'));
   expect(await runAdMail(company)).toMatchObject({sent:0,failed:3,needsReview:0,deferred:0});
   expect(mocks.smtp).not.toHaveBeenCalled();
  });
  it('does not blast obsolete queued daily snapshots after recovery',async()=>{
-  mocks.tables.recruitment_ad_mail_deliveries=[{id:'old',company_id:company,kind:'event',status:'queued',payload:{date:'2026-09-28'},attempts:0}];
-  vi.setSystemTime(new Date('2026-09-29T14:30:00Z'));await runAdMail(company);
+  mocks.tables.recruitment_ad_mail_deliveries=[{id:'old',company_id:company,kind:'event',status:'queued',payload:{date:'2026-09-28'},attempts:0},{id:'old-morning',company_id:company,kind:'daily',status:'queued',payload:{date:'2026-09-29'},attempts:0}];
+  vi.setSystemTime(new Date('2026-09-29T07:30:00Z'));await runAdMail(company);
   expect(mocks.tables.recruitment_ad_mail_deliveries.find((r:any)=>r.id==='old').status).toBe('queued');
+  expect(mocks.tables.recruitment_ad_mail_deliveries.find((r:any)=>r.id==='old-morning').status).toBe('queued');
   expect(mocks.smtp).toHaveBeenCalledTimes(3);
  });
  it('creates a pending review request, not a Meta change; duplicate clicks reuse it',async()=>{
-  vi.setSystemTime(new Date('2026-09-29T03:00:00Z'));await runAdMail(company);
+  vi.setSystemTime(new Date('2026-09-29T07:30:00Z'));await runAdMail(company);
   const delivery=mocks.tables.recruitment_ad_mail_deliveries.find((row:any)=>row.recipient_id==='manager');
   mocks.tables.recruitment_ads[0].status='PAUSED';
   const token=signAction({company,person:'manager',ad:'ad',action:'resume_ad',source:delivery.id,exp:Date.now()+10000},'test-secret');
@@ -88,5 +93,41 @@ describe('Ad mail delivery and request boundaries',()=>{
   await sendManagerSamples(company,'owner');const delivery=mocks.tables.recruitment_ad_mail_deliveries[0];
   const token=signAction({company,person:'manager',ad:'ad',action:'resume_ad',source:delivery.id,exp:Date.now()+10000},'test-secret');
   await expect(submitMailAction(token,0,'')).rejects.toThrow();expect(mocks.tables.recruitment_ad_requests||[]).toHaveLength(0);
+ });
+ it('never sends at either retired schedule or when the scope has no active ads',async()=>{
+  for(const time of ['2026-09-29T03:00:00Z','2026-09-29T14:30:00Z']){vi.setSystemTime(new Date(time));await runAdMail(company);}
+  mocks.tables.recruitment_ads[0].status='PAUSED';vi.setSystemTime(new Date('2026-09-30T07:30:00Z'));await runAdMail(company);
+  expect(mocks.smtp).not.toHaveBeenCalled();
+  expect(await runAdMail(company,true)).toMatchObject({schedule:['13:00 Asia/Kolkata'],workforceAds:0,recipientGroups:0});
+ });
+ it('includes changes first observed during the scheduled run',async()=>{
+  await observeAdMailActivity(company);mocks.tables.recruitment_ads[0].daily_budget=200;
+  vi.setSystemTime(new Date('2026-09-29T07:30:00Z'));await runAdMail(company);
+  expect(mocks.smtp.mock.calls[0][0].text).toContain('Budget increased: ₹100 → ₹200/day');
+ });
+ it('records stable creative changes once but not URL churn or a legacy baseline upgrade',async()=>{
+  mocks.tables.recruitment_ads[0].raw_payload={creative:{id:'creative-1'}};
+  await observeAdMailActivity(company);
+  mocks.tables.recruitment_ads[0].poster_url='https://a.fbcdn.net/a?token=new';
+  expect(await observeAdMailActivity(company)).toMatchObject({recorded:0});
+  mocks.tables.recruitment_ad_mail_snapshots[0].poster_fingerprint='legacy-123';
+  expect(await observeAdMailActivity(company)).toMatchObject({recorded:0});
+  mocks.tables.recruitment_ads[0].raw_payload.creative.id='creative-2';
+  expect(await observeAdMailActivity(company)).toMatchObject({recorded:1});
+  expect(mocks.tables.recruitment_ad_mail_activity[0].change_types).toEqual(['poster','creative_verified']);
+  expect(await observeAdMailActivity(company)).toMatchObject({recorded:0});expect(mocks.smtp).not.toHaveBeenCalled();
+ });
+ it('uses current-day Meta spend and distinguishes true zero from missing or failed data',async()=>{
+  mocks.tables.recruitment_ads[0].meta_ad_id='meta-1';
+  mocks.insights.mockResolvedValue({available:true,today:'2026-09-28',rows:[{ad_id:'meta-1',date_start:'2026-09-28',spend:'42.75'},{ad_id:'meta-1',date_start:'2026-09-27',spend:'300'},{ad_id:'other',date_start:'2026-09-28',spend:'600'}],fetchedAt:new Date().toISOString()});
+  expect((await loadMailContext(company,true)).ads[0].spend_today).toBe(42.75);
+  mocks.insights.mockResolvedValue({available:true,today:'2026-09-28',rows:[],fetchedAt:new Date().toISOString()});
+  expect((await loadMailContext(company,true)).ads[0].spend_today).toBe(0);
+  mocks.insights.mockResolvedValue({available:true,today:'2026-09-28',rows:[{ad_id:'meta-1',date_start:'2026-09-28',spend:'invalid'}]});
+  expect((await loadMailContext(company,true)).ads[0].spend_today).toBeNull();
+  mocks.insights.mockResolvedValue({available:false,today:'2026-09-28',rows:[]});
+  expect((await loadMailContext(company,true)).ads[0].spend_today).toBeUndefined();
+  mocks.insights.mockRejectedValue(new Error('Meta unavailable'));
+  expect((await loadMailContext(company,true)).ads[0].spend_today).toBeUndefined();
  });
 });

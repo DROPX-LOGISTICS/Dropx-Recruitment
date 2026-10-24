@@ -3,35 +3,47 @@ import nodemailer from 'nodemailer';
 import { supabaseAdmin } from './supabase-admin';
 import { requiredEnv } from './recruitment-api';
 import { loadAllSupabaseRows } from './supabase-pagination';
-import { adBudget,eveningDue,hash,ist,mailGroups,morningDue,normalizeAds,renderManagerMail,signAction,verifyAction,type MailActivity,type MailAd,type MailGroup,type MailPerson } from './ad-manager-mail-model';
+import { adBudget,dailyDue,hash,ist,mailGroups,normalizeAds,renderManagerMail,signAction,verifyAction,type MailActivity,type MailAd,type MailGroup,type MailPerson } from './ad-manager-mail-model';
+import { activeMailAds } from './ad-manager-mail-render';
+import { creativeChanged,creativeFingerprint } from './ad-mail-creative';
+import { fetchRecentMetaInsights } from './meta-ad-insights';
 
 function db(){if(!supabaseAdmin) throw new Error('Database unavailable.');return supabaseAdmin;}
 function checked<T extends {error:any;data:any}>(result:T):NonNullable<T['data']> {if(result.error) throw new Error(result.error.message);return result.data as NonNullable<T['data']>;}
 
-export async function loadMailContext(company:string) {
- const [people,ads,leadRows]=await Promise.all([
+export async function loadMailContext(company:string,includeSpendToday=false) {
+ const [people,ads]=await Promise.all([
   db().rpc('recruitment_ad_mail_people',{p_company:company}),
-  loadAllSupabaseRows<any>((from,to)=>db().from('recruitment_ads').select('id,ad_name,status,daily_budget,poster_url,raw_payload,last_synced_at,created_on,location_id,role_id,recruitment_roles(code,name,stream),recruitment_locations(code,station_id)').eq('company_id',company).order('id').range(from,to),{maxRows:10000}),
-  loadAllSupabaseRows<{ad_id:string|null}>((from,to)=>db().from('recruitment_leads').select('ad_id').eq('company_id',company).not('ad_id','is',null).range(from,to),{maxRows:100000})
+  loadAllSupabaseRows<any>((from,to)=>db().from('recruitment_ads').select('id,ad_name,status,daily_budget,poster_url,raw_payload,last_synced_at,created_on,location_id,role_id,meta_ad_id,total_spend,recruitment_roles(code,name,stream),recruitment_locations(code,name,station_id)').eq('company_id',company).order('id').range(from,to),{maxRows:10000})
  ]);
- const leadsByAd=new Map<string,number>();
- for(const lead of leadRows) if(lead.ad_id) leadsByAd.set(lead.ad_id,(leadsByAd.get(lead.ad_id)||0)+1);
- const audience=checked(people) as MailPerson[];const mapped=normalizeAds(ads.map(ad=>({...ad,lead_count:leadsByAd.get(ad.id)||0})));
+ const audience=checked(people) as MailPerson[];const mapped=normalizeAds(ads);
+ if(includeSpendToday){
+  // Actual ad-level spend, not configured budget or estimated budget × days.
+  try {
+   const insights=await fetchRecentMetaInsights();
+   const today=ist(new Date()).slice(0,10);
+   if(insights.available&&insights.today===today){
+    for(const ad of mapped){
+     if(!ad.meta_ad_id)continue;
+     const rows=insights.rows.filter(row=>row.ad_id===ad.meta_ad_id&&row.date_start===today);
+     const valid=rows.every(row=>row.spend!==null&&row.spend!==undefined&&row.spend!==''&&Number.isFinite(Number(row.spend))&&Number(row.spend)>=0);
+     ad.spend_today=valid?rows.reduce((sum,row)=>sum+Number(row.spend),0):null;
+     ad.spend_checked_at=insights.fetchedAt;
+    }
+   }
+  }catch{console.warn('Recruit daily mail: current-day Meta spend unavailable.');}
+ }
  return {people:audience,ads:mapped,groups:mailGroups(audience,mapped)};
 }
 
-type Payload={groupKey:string;stations:string[];adIds:string[];date:string;activityIds?:string[];sampleKind?:'daily'|'event';sampleActivities?:MailActivity[]};
+type Payload={groupKey:string;stations:string[];adIds:string[];date:string;formatVersion?:string;activityIds?:string[];sampleKind?:'daily'|'event';sampleActivities?:MailActivity[]};
 async function enqueue(company:string,group:MailGroup,kind:'daily'|'event'|'sample',dedupe:string,payload:Payload) {
  const id=randomUUID();
- const thread=`${payload.date.slice(0,7)}:${group.manager.id}:${kind==='sample'?`sample:${payload.sampleKind||'daily'}`:kind}`;
+ const thread=`${payload.date.slice(0,7)}:${group.manager.id}:compact:${kind==='sample'?`sample:${payload.sampleKind||'daily'}`:kind}`;
  checked(await db().from('recruitment_ad_mail_deliveries').upsert({id,company_id:company,dedupe_key:dedupe,recipient_id:group.manager.id,kind,payload,thread_key:thread,message_id:`<recruit-${id}@dropxlogistics.com>`},{onConflict:'company_id,dedupe_key',ignoreDuplicates:true}));
 }
-function payloadFor(group:MailGroup,now:Date):Payload {return {groupKey:group.key,stations:group.stations,adIds:group.ads.map(ad=>ad.id),date:ist(now).slice(0,10)};}
+function payloadFor(group:MailGroup,now:Date):Payload {return {groupKey:group.key,stations:group.stations,adIds:group.ads.map(ad=>ad.id),date:ist(now).slice(0,10),formatVersion:'compact-v3'};}
 function istDayStart(now:Date) {return new Date(`${ist(now).slice(0,10)}T00:00:00+05:30`).toISOString();}
-function creativeFingerprint(ad:MailAd) {
- const creative=ad.raw_payload?.creative||{};
- return hash(JSON.stringify([ad.poster_url||null,creative.id||null,creative.image_url||null,creative.thumbnail_url||null]));
-}
 
 async function recordActivity(company:string,context:Awaited<ReturnType<typeof loadMailContext>>,settings:any,now:Date) {
  const snapshots=await loadAllSupabaseRows<any>((from,to)=>db().from('recruitment_ad_mail_snapshots').select('*').eq('company_id',company).order('ad_id').range(from,to),{maxRows:10000});
@@ -45,12 +57,12 @@ async function recordActivity(company:string,context:Awaited<ReturnType<typeof l
   const budgetChanged=Boolean(hasBudgetBaseline&&(Number(old.budget_amount)!==budget.amount||old.budget_kind!==budget.kind));
   const creativeKey=creativeFingerprint(ad);
   // Existing rows gain a creative baseline once after this release; that first observation is not an update.
-  const posterChanged=Boolean(old?.poster_fingerprint&&old.poster_fingerprint!==creativeKey);
+  const posterChanged=creativeChanged(old?.poster_fingerprint,creativeKey);
   const newAd=Boolean(settings.baselined_at&&!old);
   const changed=statusChanged||budgetChanged||posterChanged||newAd;
   const version=Number(old?.version||0)+(changed?1:old?0:1);
   if(settings.baselined_at&&changed) {
-   const changeTypes=[newAd?'new_ad':null,posterChanged?'poster':null,statusChanged?'status':null,budgetChanged?'budget':null].filter(Boolean);
+   const changeTypes=[newAd?'new_ad':null,posterChanged?'poster':null,posterChanged?'creative_verified':null,statusChanged?'status':null,budgetChanged?'budget':null].filter(Boolean);
    checked(await db().from('recruitment_ad_mail_activity').upsert({
     id:randomUUID(),company_id:company,ad_id:ad.id,station_id:ad.stationId,station:ad.station,ad_name:ad.ad_name,role:ad.role,
     occurred_at:now.toISOString(),previous_status:old?.status||null,current_status:ad.status,
@@ -77,32 +89,34 @@ export async function observeAdMailActivity(company:string) {
 }
 
 export async function runAdMail(company:string,preview=false) {
- const context=await loadMailContext(company);
+ const now=new Date();const due=dailyDue(now);
+ const context=await loadMailContext(company,due&&!preview);
  const settings=checked(await db().from('recruitment_ad_mail_settings').select('*').eq('company_id',company).maybeSingle());
- if(preview) return {enabled:settings?.enabled===true,schedule:['08:30 Asia/Kolkata','20:00 Asia/Kolkata'],workforceAds:context.ads.length,recipientGroups:context.groups.length,unmappedStations:[...new Set(context.ads.filter(ad=>!context.groups.some(group=>group.stations.includes(ad.stationId))).map(ad=>ad.station))]};
+ if(preview) return {enabled:settings?.enabled===true,schedule:['13:00 Asia/Kolkata'],workforceAds:context.ads.filter(ad=>ad.status==='ACTIVE').length,recipientGroups:context.groups.filter(group=>activeMailAds(group).length).length,unmappedStations:[...new Set(context.ads.filter(ad=>ad.status==='ACTIVE'&&!context.groups.some(group=>group.stations.includes(ad.stationId))).map(ad=>ad.station))]};
  if(!settings?.enabled) return {enabled:false};
  const locked=checked(await db().rpc('recruitment_ad_mail_lock',{p_company:company}));
  if(!locked)return {busy:true};
- const now=new Date();const morning=morningDue(now);const evening=eveningDue(now);let sent=0;
+ let sent=0;
  try {
   const observation=await recordActivity(company,context,settings,now);
-  if(morning) for(const group of context.groups) await enqueue(company,group,'daily',`morning:${ist(now).slice(0,10)}:${group.manager.id}`,payloadFor(group,now));
-  if(evening) {
-   const activity=await loadAllSupabaseRows<MailActivity>((from,to)=>db().from('recruitment_ad_mail_activity').select('*').eq('company_id',company).gte('occurred_at',istDayStart(now)).lt('occurred_at',now.toISOString()).order('occurred_at').order('id').range(from,to),{maxRows:100000});
+  if(due) {
+   const activity=await loadAllSupabaseRows<MailActivity>((from,to)=>db().from('recruitment_ad_mail_activity').select('*').eq('company_id',company).gte('occurred_at',istDayStart(now)).lt('occurred_at',new Date(now.getTime()+1).toISOString()).order('occurred_at').order('id').range(from,to),{maxRows:100000});
    for(const group of context.groups) {
-    const scoped=activity.filter(item=>group.stations.includes(item.station_id));
-    await enqueue(company,group,'event',`evening:${ist(now).slice(0,10)}:${group.manager.id}`,{...payloadFor(group,now),adIds:[...new Set(scoped.map(item=>item.ad_id))],activityIds:scoped.map(item=>item.id).filter(Boolean) as string[]});
+    const activeIds=new Set(activeMailAds(group).map(ad=>ad.id));
+    if(!activeIds.size)continue;
+    const scoped=activity.filter(item=>group.stations.includes(item.station_id)&&activeIds.has(item.ad_id));
+    await enqueue(company,group,'daily',`daily-1300:${ist(now).slice(0,10)}:${group.manager.id}`,{...payloadFor(group,now),adIds:[...activeIds],activityIds:scoped.map(item=>item.id).filter(Boolean) as string[]});
    }
   }
-  const dispatchKind=morning?'daily':evening?'event':null;
+  const dispatchKind=due?'daily':null;
   if(!dispatchKind) return {enabled:true,sent:0,queued:0,groups:context.groups.length,...observation};
-  const pending=checked(await db().from('recruitment_ad_mail_deliveries').select('*').eq('company_id',company).eq('kind',dispatchKind).eq('status','queued').eq('payload->>date',ist(now).slice(0,10)).order('created_at').limit(500));
+  const pending=checked(await db().from('recruitment_ad_mail_deliveries').select('*').eq('company_id',company).eq('kind',dispatchKind).eq('status','queued').eq('payload->>date',ist(now).slice(0,10)).eq('payload->>formatVersion','compact-v3').order('created_at').limit(500));
   for(let index=0;index<pending.length&&Date.now()-now.getTime()<210_000;index+=6) {
    const batch=await Promise.all(pending.slice(index,index+6).map((job:any)=>deliver(company,job,context)));
    sent+=batch.filter(Boolean).length;
   }
   checked(await db().from('recruitment_ad_mail_deliveries').update({status:'needs_review',error:'Interrupted SMTP attempt; check delivery before retry.'}).eq('company_id',company).eq('status','sending').lt('created_at',new Date(Date.now()-15*60_000).toISOString()));
-  const outcomes=checked(await db().from('recruitment_ad_mail_deliveries').select('status').eq('company_id',company).eq('kind',dispatchKind).eq('payload->>date',ist(now).slice(0,10)).limit(500));
+  const outcomes=checked(await db().from('recruitment_ad_mail_deliveries').select('status').eq('company_id',company).eq('kind',dispatchKind).eq('payload->>date',ist(now).slice(0,10)).eq('payload->>formatVersion','compact-v3').limit(500));
   const summary={enabled:true,sent,queued:pending.length,deferred:outcomes.filter((row:any)=>row.status==='queued').length,failed:outcomes.filter((row:any)=>row.status==='failed').length,needsReview:outcomes.filter((row:any)=>['sending','needs_review'].includes(row.status)).length,groups:context.groups.length,...observation};
   console.info('Recruit ad mail completed',JSON.stringify({date:ist(now).slice(0,10),kind:dispatchKind,...summary}));
   return summary;
@@ -146,20 +160,20 @@ async function deliver(company:string,job:any,context:Awaited<ReturnType<typeof 
   const recipient=checked(await db().from('profiles').select('id,full_name,email,is_active').eq('company_id',company).eq('id',job.recipient_id).single());
   if(recipient.is_active)group={key:payload.groupKey,manager:{id:recipient.id,name:recipient.full_name,email:recipient.email,mobile:null,role:'sample',station_ids:payload.stations},cc:[],stations:payload.stations,ads:context.ads.filter(ad=>payload.stations.includes(ad.stationId))};
  }
- if(!group){checked(await db().from('recruitment_ad_mail_deliveries').update({status:'cancelled',error:'Recipient or station scope changed.'}).eq('id',job.id).eq('company_id',company));return false;}
+ if(!group||!activeMailAds(group).length){checked(await db().from('recruitment_ad_mail_deliveries').update({status:'cancelled',error:'Recipient or station scope changed, or no active ads remain.'}).eq('id',job.id).eq('company_id',company));return false;}
  const kind=sample?payload.sampleKind!:job.kind as 'daily'|'event';
  try {
-  const activities=kind==='event'?(payload.sampleActivities||await deliveryActivities(company,payload.activityIds)):[];
+  const activities=payload.sampleActivities||await deliveryActivities(company,payload.activityIds);
   const smtp=checked(await db().from('email_notification_settings').select('is_enabled,smtp_host,smtp_port,smtp_user,smtp_pass,smtp_from,from_name').eq('company_id',company).eq('id',true).single());
   if(!smtp.is_enabled||!smtp.smtp_host||!smtp.smtp_from)throw new Error('Company email service is disabled or incomplete.');
-  const visualAds=(kind==='daily'?group.ads.filter(ad=>ad.status==='ACTIVE'):group.ads.filter(ad=>activities.some(activity=>activity.ad_id===ad.id))).slice(0,8);
+  const visualAds=activeMailAds(group).slice(0,8);
   const posters=await Promise.all(visualAds.map(posterAttachment));
   const images:Record<string,string>={};const attachments:any[]=[];
   for(let index=0;index<posters.length;index++) {
    const attachment=posters[index];
    if(attachment){attachments.push(attachment);images[visualAds[index].id]=attachment.cid;}
   }
-  const mail=renderManagerMail({group,kind,date:payload.date,sample,activities,images});
+  const mail=renderManagerMail({group,kind,date:payload.date,sample,activities,images,asOf:new Date().toISOString()});
   const previous=checked(await db().from('recruitment_ad_mail_deliveries').select('message_id').eq('company_id',company).eq('thread_key',job.thread_key).eq('status','sent').order('sent_at').limit(1).maybeSingle());
   const claimed=checked(await db().from('recruitment_ad_mail_deliveries').update({status:'sending',attempts:Number(job.attempts)+1,error:null}).eq('id',job.id).eq('company_id',company).eq('status','queued').select('id'));
   if(!claimed.length)return false;
@@ -181,23 +195,17 @@ async function deliver(company:string,job:any,context:Awaited<ReturnType<typeof 
 }
 
 export async function sendManagerSamples(company:string,profileId:string) {
- const context=await loadMailContext(company);
+ const context=await loadMailContext(company,true);
  const recipient=checked(await db().from('profiles').select('id,full_name,email,is_active').eq('company_id',company).eq('id',profileId).single());
  if(!recipient.is_active) throw new Error('Sample recipient is inactive.');
  const source=context.groups.find(group=>group.manager.id===profileId&&group.ads.some(ad=>ad.status==='ACTIVE'))||context.groups.find(group=>group.ads.some(ad=>ad.status==='ACTIVE'));
  if(!source)throw new Error('No mapped Workforce ad is available for a sample.');
- const ads=source.ads.filter(ad=>ad.status==='ACTIVE').slice(0,2);
  const group={...source,key:hash(`sample:${profileId}`),manager:{...source.manager,id:profileId,name:recipient.full_name,email:recipient.email},cc:[]};
  const now=new Date();
- const activity:MailActivity[]=ads.map((ad,index)=>({
-  ad_id:ad.id,station_id:ad.stationId,station:ad.station,ad_name:ad.ad_name,role:ad.role,
-  occurred_at:new Date(now.getTime()-(index+1)*45*60_000).toISOString(),previous_status:index?'ACTIVE':'PAUSED',current_status:'ACTIVE',
-  previous_budget:index?100:100,current_budget:index?150:100,budget_kind:'daily',change_types:index?['new_ad','budget']:['poster','status']
- }));
- for(const kind of ['daily','event'] as const) {
-  await enqueue(company,group,'sample',`sample-v2:${ist(now).slice(0,10)}:${profileId}:${kind}`,{...payloadFor(group,now),sampleKind:kind,sampleActivities:kind==='event'?activity:undefined});
- }
- const jobs=checked(await db().from('recruitment_ad_mail_deliveries').select('*').eq('company_id',company).eq('recipient_id',profileId).eq('kind','sample').eq('status','queued'));
+ const activity=await loadAllSupabaseRows<MailActivity>((from,to)=>db().from('recruitment_ad_mail_activity').select('*').eq('company_id',company).gte('occurred_at',istDayStart(now)).lt('occurred_at',now.toISOString()).order('occurred_at').order('id').range(from,to),{maxRows:100000});
+ const dedupe=`sample-v3:${ist(now).slice(0,10)}:${profileId}:daily`;
+ await enqueue(company,group,'sample',dedupe,{...payloadFor(group,now),sampleKind:'daily',sampleActivities:activity.filter(item=>group.stations.includes(item.station_id))});
+ const jobs=checked(await db().from('recruitment_ad_mail_deliveries').select('*').eq('company_id',company).eq('recipient_id',profileId).eq('kind','sample').eq('status','queued').eq('dedupe_key',dedupe));
  let sent=0;for(const job of jobs)if(await deliver(company,job,context))sent++;
  return {sent,to:recipient.email};
 }

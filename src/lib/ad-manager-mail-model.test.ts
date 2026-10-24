@@ -1,5 +1,8 @@
 import {describe,it,expect} from 'vitest';
-import {adBudget,stationBudgets,morningDue,eveningDue,ist,mailGroups,normalizeAds,renderManagerMail,signAction,verifyAction,type MailPerson,type MailAd,type MailActivity} from './ad-manager-mail-model';
+import {adBudget,stationBudgets,dailyDue,ist,mailGroups,normalizeAds,renderManagerMail,signAction,verifyAction,type MailPerson,type MailAd,type MailActivity} from './ad-manager-mail-model';
+import {adChangesToday,adSpendToDate} from './ad-manager-mail-render';
+import {creativeChanged,creativeFingerprint} from './ad-mail-creative';
+import {readFileSync} from 'node:fs';
 const person=(id:string,role:string,stations:string[]):MailPerson=>({id,role,station_ids:stations,name:id,email:`${id}@example.com`,mobile:'1234567890'});
 const ad=(id:string,stationId:string,status='ACTIVE'):MailAd=>({id,stationId,station:stationId,role:'Delivery Associate',ad_name:id,status,daily_budget:250,poster_url:null,raw_payload:{},last_synced_at:null,created_on:'2026-09-20T00:00:00.000Z',lead_count:4,location_id:stationId,role_id:'da',ends_at:null,current_run_started_at:'2026-09-24T00:00:00.000Z'});
 describe('Workforce manager mail',()=>{
@@ -38,12 +41,15 @@ describe('Workforce manager mail',()=>{
   expect(merged.filter(group=>group.manager.id==='m')).toHaveLength(1);
   expect(merged.find(group=>group.manager.id==='m')?.stations).toEqual(['S1','S2','S3']);
  });
- it('uses exact IST morning and evening windows with monthly boundaries',()=>{
-  expect(morningDue(new Date('2026-09-28T02:59:00Z'))).toBe(false);
-  expect(morningDue(new Date('2026-09-28T03:00:00Z'))).toBe(true);
-  expect(morningDue(new Date('2026-09-28T03:05:00Z'))).toBe(false);
-  expect(eveningDue(new Date('2026-09-28T14:30:00Z'))).toBe(true);
-  expect(eveningDue(new Date('2026-09-28T14:35:00Z'))).toBe(false);
+ it('sends at 1 pm IST only, with one matching production cron',()=>{
+  expect(dailyDue(new Date('2026-09-28T07:29:59Z'))).toBe(false);
+  expect(dailyDue(new Date('2026-09-28T07:30:00Z'))).toBe(true);
+  expect(dailyDue(new Date('2026-09-28T07:34:59Z'))).toBe(true);
+  expect(dailyDue(new Date('2026-09-28T07:35:00Z'))).toBe(false);
+  expect(dailyDue(new Date('2026-09-28T03:00:00Z'))).toBe(false);
+  expect(dailyDue(new Date('2026-09-28T14:30:00Z'))).toBe(false);
+  const config=JSON.parse(readFileSync(new URL('../../vercel.json',import.meta.url),'utf8'));
+  expect(config.crons.filter((c:any)=>c.path==='/api/cron/recruitment-ad-mail')).toEqual([{path:'/api/cron/recruitment-ad-mail',schedule:'30 7 * * *'}]);
   expect(ist(new Date('2026-09-30T19:00:00Z')).slice(0,7)).toBe('2026-10');
  });
  it('rejects expired and altered action tokens',()=>{
@@ -51,25 +57,53 @@ describe('Workforce manager mail',()=>{
   const token=signAction(p,'secret');expect(verifyAction(token,'secret',1000)).toEqual(p);
   expect(()=>verifyAction(token,'other',1000)).toThrow();expect(()=>verifyAction(token,'secret',3000)).toThrow();expect(()=>verifyAction(token+'x','secret',1000)).toThrow();
  });
- it('renders a compact station table for the morning digest',()=>{
+ it('shows active ads only, real spend, location, designation, sample posters and one CTA',()=>{
+  const group=mailGroups([person('manager','CLM',['S1'])],[{...ad('a','S1'),stationName:'Adyar',spend_today:83.5,raw_payload:{insights:{data:[{spend:'1234.56'}]}}},ad('paused-secret','S1','PAUSED'),ad('ended-secret','S1','COMPLETED'),ad('out-of-scope','S2')])[0];
+  const mail=renderManagerMail({group,kind:'daily',date:'2026-09-28',sample:true,images:{a:'poster-a@dropx'}});
+  expect(mail.html).toContain('cid:poster-a@dropx');expect(mail.text).toContain('S1 · Adyar | Delivery Associate');
+  expect(mail.text).toContain('₹83.5');expect(mail.text).toContain('₹1,234.56');expect(mail.text).toContain('₹250/day');
+  for(const text of ['paused-secret','ended-secret','out-of-scope','LEADS','Post ad','Run days','Morning status','Evening activity'])expect(mail.html).not.toContain(text);
+  expect(mail.html.match(/<a /g)).toHaveLength(1);expect(mail.subject).toContain('[SAMPLE]');expect(mail.subject).toContain('Active ads & changes');
+ });
+ it('never substitutes configured budgets or missing insights for actual spend',()=>{
+  expect(adSpendToDate({...ad('a','S1'),total_spend:0})).toBeNull();
+  expect(adSpendToDate({...ad('a','S1'),total_spend:400})).toBe(400);
+  expect(adSpendToDate({...ad('a','S1'),raw_payload:{insights:{data:[]}}})).toBe(0);
+  expect(adSpendToDate({...ad('a','S1'),raw_payload:{insights:{data:[{spend:'bad'}]}}})).toBeNull();
+ });
+ it('escapes names and distinguishes shared campaign and lifetime budgets',()=>{
+  const group=mailGroups([person('manager','CLM',['S1'])],[{...ad('a','S1'),ad_name:'<img onerror=bad>',raw_payload:{campaign:{id:'c',lifetime_budget:500000}}}])[0];
+  const mail=renderManagerMail({group,kind:'daily',date:'2026-09-28'});
+  expect(mail.html).toContain('&lt;img onerror=bad&gt;');expect(mail.html).not.toContain('<img onerror');expect(mail.text).toContain('₹5,000 total budget · campaign');expect(mail.text).not.toContain('₹5,000/day');
+ });
+ const change=(overrides:Partial<MailActivity>={}):MailActivity=>({ad_id:'a',station_id:'S1',station:'S1',ad_name:'a',role:'DA',occurred_at:'2026-09-28T06:00:00Z',previous_status:'ACTIVE',current_status:'ACTIVE',previous_budget:100,current_budget:150,budget_kind:'daily',change_types:['budget'],...overrides});
+ it('collapses repeated changes into one net line and ignores old URL-only poster noise',()=>{
+  const rows=[change(),change({occurred_at:'2026-09-28T07:00:00Z',previous_budget:150,current_budget:200}),...Array.from({length:5066},()=>change({change_types:['poster']}))];
   const group=mailGroups([person('manager','CLM',['S1'])],[ad('a','S1')])[0];
-  const mail=renderManagerMail({group,kind:'daily',date:'2026-09-28',sample:true});
-  expect(mail.html).toContain('Configured budget');expect(mail.text).toContain('STATION | LIVE | PAUSED / ENDED');expect(mail.html).not.toContain('cid:');expect(mail.subject).toContain('Morning status');expect(mail.subject).toContain('[SAMPLE]');
+  const mail=renderManagerMail({group,kind:'daily',date:'2026-09-28',activities:rows});
+  expect(mail.text).toContain('Budget increased: ₹100 → ₹200/day');expect(mail.text).toContain('1 ad changed today');expect(mail.text).not.toContain('5066');expect(mail.text).not.toContain('Poster updated');expect(mail.html.length).toBeLessThan(7000);
+  expect(adChangesToday(ad('a','S1'),[change(),change({previous_budget:150,current_budget:100,occurred_at:'2026-09-28T07:00:00Z'})],'2026-09-28','2026-09-28T07:30:00Z')).toBe('');
  });
- it('adds active-ad detail and a safe inline creative preview to the morning report',()=>{
-  const group=mailGroups([person('manager','CLM',['S1'])],[ad('a','S1')])[0];
-  const mail=renderManagerMail({group,kind:'daily',date:'2026-09-28',images:{a:'poster-a@dropx'}});
-  expect(mail.html).toContain('Active ad details');expect(mail.html).toContain('cid:poster-a@dropx');expect(mail.html).toContain('LEADS');expect(mail.text).toContain('ACTIVE AD DETAILS');expect(mail.text).toContain('| 4 | 5');
+ it('includes only same-day, current-ad and current-station changes before the report',()=>{
+  const rows=[change({station_id:'other'}),change({ad_id:'other'}),change({occurred_at:'2026-09-27T06:00:00Z'}),change({occurred_at:'2026-09-28T10:00:00Z'})];
+  expect(adChangesToday(ad('a','S1'),rows,'2026-09-28','2026-09-28T07:30:00Z')).toBe('');
  });
- it('renders escaped evening activity rows without a per-change email',()=>{
-  const group=mailGroups([person('manager','CLM',['S1'])],[ad('active','S1')])[0];
-  const activity:MailActivity={ad_id:'active',station_id:'S1',station:'S1',ad_name:'<img onerror=bad>',role:'Delivery Associate',occurred_at:'2026-09-28T14:30:00.000Z',previous_status:'PAUSED',current_status:'ACTIVE',previous_budget:100,current_budget:150,budget_kind:'daily'};
-  const mail=renderManagerMail({group,kind:'event',date:'2026-09-28',activities:[activity]});expect(mail.html).toContain('&lt;img onerror=bad&gt;');expect(mail.html).toContain('Paused → Active · Budget ₹100/day → ₹150/day');expect(mail.html).not.toContain('<img onerror');expect(mail.subject).toContain('Evening activity');
+ it('reports real creative changes and new or resumed ads without counting historical discovery as new',()=>{
+  const row=change({change_types:['new_ad','poster','creative_verified'],previous_status:null});
+  expect(adChangesToday(ad('a','S1'),[row],'2026-09-28','2026-09-28T07:30:00Z')).toBe('Poster updated');
+  expect(adChangesToday({...ad('a','S1'),created_on:'2026-09-28T05:00:00Z'},[row],'2026-09-28','2026-09-28T07:30:00Z')).toBe('Started today · Poster updated');
+  expect(adChangesToday(ad('a','S1'),[change({previous_status:'PAUSED',change_types:['status']})],'2026-09-28','2026-09-28T07:30:00Z')).toBe('Resumed today');
  });
- it('labels new ads and poster changes and includes affected-ad detail in the evening report',()=>{
-  const group=mailGroups([person('manager','CLM',['S1'])],[ad('active','S1')])[0];
-  const activity:MailActivity={ad_id:'active',station_id:'S1',station:'S1',ad_name:'New poster',role:'Delivery Associate',occurred_at:'2026-09-28T14:30:00.000Z',previous_status:null,current_status:'ACTIVE',previous_budget:null,current_budget:150,budget_kind:'daily',change_types:['new_ad','poster']};
-  const mail=renderManagerMail({group,kind:'event',date:'2026-09-28',activities:[activity],images:{active:'poster-active@dropx'}});
-  expect(mail.html).toContain('New ad posted · Poster updated');expect(mail.html).toContain('Affected ad details');expect(mail.html).toContain('cid:poster-active@dropx');expect(mail.text).toContain('AFFECTED AD DETAILS');
+ it('does not count CDN refreshes as poster changes, and upgrades legacy baselines silently',()=>{
+  const first=creativeFingerprint({poster_url:'https://s.fbcdn.net/a?token=old',raw_payload:{creative:{id:'123'}}});
+  const same=creativeFingerprint({poster_url:'https://s.fbcdn.net/other?token=new',raw_payload:{creative:{id:'123'}}});
+  expect(same).toBe(first);expect(creativeChanged('legacy-hash',first)).toBe(false);
+  expect(creativeChanged(first,creativeFingerprint({raw_payload:{creative:{id:'456'}}}))).toBe(true);
+  expect(creativeFingerprint({poster_url:'https://s.fbcdn.net/a?token=old'})).toBe(creativeFingerprint({poster_url:'https://s.fbcdn.net/a?token=new'}));
+ });
+ it('does not silently drop active ads above forty',()=>{
+  const group=mailGroups([person('manager','CLM',['S1'])],Array.from({length:45},(_,i)=>ad(`ad-${i}`,'S1')))[0];
+  const mail=renderManagerMail({group,kind:'daily',date:'2026-09-28'});
+  for(let i=0;i<45;i++)expect(mail.text).toContain(`| ad-${i}\n`);
  });
 });
