@@ -8,7 +8,8 @@
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:mcp": "node --experimental-strip-types --test src/lib/mcp/*.test.mjs"
+    "test:mcp": "node --experimental-strip-types --test src/lib/mcp/*.test.mjs",
+    "prebuild": "vitest run src/lib/ad-manager-mail.test.ts src/lib/ad-manager-mail-model.test.ts src/lib/da-onboarding-mail-model.test.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.4",

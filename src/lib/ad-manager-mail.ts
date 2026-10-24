@@ -88,7 +88,7 @@ export async function runAdMail(company:string,preview=false) {
   const observation=await recordActivity(company,context,settings,now);
   if(morning) for(const group of context.groups) await enqueue(company,group,'daily',`morning:${ist(now).slice(0,10)}:${group.manager.id}`,payloadFor(group,now));
   if(evening) {
-   const activity=checked(await db().from('recruitment_ad_mail_activity').select('*').eq('company_id',company).gte('occurred_at',istDayStart(now)).lt('occurred_at',now.toISOString()).order('occurred_at').limit(5000)) as MailActivity[];
+   const activity=await loadAllSupabaseRows<MailActivity>((from,to)=>db().from('recruitment_ad_mail_activity').select('*').eq('company_id',company).gte('occurred_at',istDayStart(now)).lt('occurred_at',now.toISOString()).order('occurred_at').order('id').range(from,to),{maxRows:100000});
    for(const group of context.groups) {
     const scoped=activity.filter(item=>group.stations.includes(item.station_id));
     await enqueue(company,group,'event',`evening:${ist(now).slice(0,10)}:${group.manager.id}`,{...payloadFor(group,now),adIds:[...new Set(scoped.map(item=>item.ad_id))],activityIds:scoped.map(item=>item.id).filter(Boolean) as string[]});
@@ -96,20 +96,29 @@ export async function runAdMail(company:string,preview=false) {
   }
   const dispatchKind=morning?'daily':evening?'event':null;
   if(!dispatchKind) return {enabled:true,sent:0,queued:0,groups:context.groups.length,...observation};
-  const pending=checked(await db().from('recruitment_ad_mail_deliveries').select('*').eq('company_id',company).eq('kind',dispatchKind).eq('status','queued').order('created_at').limit(500));
+  const pending=checked(await db().from('recruitment_ad_mail_deliveries').select('*').eq('company_id',company).eq('kind',dispatchKind).eq('status','queued').eq('payload->>date',ist(now).slice(0,10)).order('created_at').limit(500));
   for(let index=0;index<pending.length&&Date.now()-now.getTime()<210_000;index+=6) {
    const batch=await Promise.all(pending.slice(index,index+6).map((job:any)=>deliver(company,job,context)));
    sent+=batch.filter(Boolean).length;
   }
   checked(await db().from('recruitment_ad_mail_deliveries').update({status:'needs_review',error:'Interrupted SMTP attempt; check delivery before retry.'}).eq('company_id',company).eq('status','sending').lt('created_at',new Date(Date.now()-15*60_000).toISOString()));
-  return {enabled:true,sent,queued:pending.length,groups:context.groups.length,...observation};
+  const outcomes=checked(await db().from('recruitment_ad_mail_deliveries').select('status').eq('company_id',company).eq('kind',dispatchKind).eq('payload->>date',ist(now).slice(0,10)).limit(500));
+  const summary={enabled:true,sent,queued:pending.length,deferred:outcomes.filter((row:any)=>row.status==='queued').length,failed:outcomes.filter((row:any)=>row.status==='failed').length,needsReview:outcomes.filter((row:any)=>['sending','needs_review'].includes(row.status)).length,groups:context.groups.length,...observation};
+  console.info('Recruit ad mail completed',JSON.stringify({date:ist(now).slice(0,10),kind:dispatchKind,...summary}));
+  return summary;
  } finally {checked(await db().from('recruitment_ad_mail_settings').update({lease_until:null,updated_at:new Date().toISOString()}).eq('company_id',company));}
 }
 
 async function deliveryActivities(company:string,activityIds:string[]|undefined) {
  if(!activityIds?.length) return [] as MailActivity[];
- const result=await db().from('recruitment_ad_mail_activity').select('*').eq('company_id',company).in('id',activityIds).order('occurred_at');
- return checked(result) as MailActivity[];
+ // A regional report can contain thousands of UUIDs. A single PostgREST IN URL
+ // exceeds the gateway limit; bounded reads also avoid response-row truncation.
+ const ids=[...new Set(activityIds)];const rows:MailActivity[]=[];
+ for(let offset=0;offset<ids.length;offset+=100) {
+  const result=await db().from('recruitment_ad_mail_activity').select('*').eq('company_id',company).in('id',ids.slice(offset,offset+100)).order('occurred_at');
+  rows.push(...checked(result) as MailActivity[]);
+ }
+ return rows.sort((a,b)=>a.occurred_at.localeCompare(b.occurred_at));
 }
 
 /** Embed only vetted, bounded images so a report never exposes an arbitrary remote URL to recipients. */
@@ -139,8 +148,8 @@ async function deliver(company:string,job:any,context:Awaited<ReturnType<typeof 
  }
  if(!group){checked(await db().from('recruitment_ad_mail_deliveries').update({status:'cancelled',error:'Recipient or station scope changed.'}).eq('id',job.id).eq('company_id',company));return false;}
  const kind=sample?payload.sampleKind!:job.kind as 'daily'|'event';
- const activities=kind==='event'?(payload.sampleActivities||await deliveryActivities(company,payload.activityIds)):[];
  try {
+  const activities=kind==='event'?(payload.sampleActivities||await deliveryActivities(company,payload.activityIds)):[];
   const smtp=checked(await db().from('email_notification_settings').select('is_enabled,smtp_host,smtp_port,smtp_user,smtp_pass,smtp_from,from_name').eq('company_id',company).eq('id',true).single());
   if(!smtp.is_enabled||!smtp.smtp_host||!smtp.smtp_from)throw new Error('Company email service is disabled or incomplete.');
   const visualAds=(kind==='daily'?group.ads.filter(ad=>ad.status==='ACTIVE'):group.ads.filter(ad=>activities.some(activity=>activity.ad_id===ad.id))).slice(0,8);
@@ -166,7 +175,7 @@ async function deliver(company:string,job:any,context:Awaited<ReturnType<typeof 
    console.error('recruit-ad-mail SMTP failed',job.id,(error as {code?:string}).code||'unknown');return false;
   }finally{transport.close();}
  }catch(error){
-  checked(await db().from('recruitment_ad_mail_deliveries').update({status:'failed',error:'Email preparation failed. Check SMTP configuration and server logs.'}).eq('company_id',company).eq('id',job.id).eq('status','queued'));
+  checked(await db().from('recruitment_ad_mail_deliveries').update({status:'failed',error:'Email preparation failed before SMTP. Check source data, email configuration and server logs.'}).eq('company_id',company).eq('id',job.id).eq('status','queued'));
   console.error('recruit-ad-mail preparation failed',job.id,error instanceof Error?error.message:'unknown');return false;
  }
 }
