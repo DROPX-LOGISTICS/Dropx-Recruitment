@@ -9,7 +9,7 @@ import {
   type RecruitmentMenuId,
   type RecruitmentWorkspaceMenuActions
 } from "./recruitment-menu-roles";
-import { calculateEffectiveRecruitmentLocationScope } from "./recruitment-location-scope";
+import { calculateEffectiveRecruitmentLocationScope, type RecruitmentScopeMembership } from "./recruitment-location-scope";
 import { loadWorkforceConfig, workforceFunctionFor, type RecruitmentFunction } from "./recruitment-workforce-config";
 import { supabaseAdmin } from "./supabase-admin";
 import { attachTemporaryLocations } from "./recruitment-temporary-locations-server";
@@ -127,6 +127,7 @@ async function effectiveLocationScope(input: {
   universalStationIds: string[];
   inheritUniversalScope: boolean;
   selectedRecruitmentLocationIds: string[];
+  productMembership: RecruitmentScopeMembership;
 }) {
   if (!supabaseAdmin) throw new Error("Supabase is not configured.");
   const [mainStations, recruitmentLocations] = await Promise.all([
@@ -142,6 +143,7 @@ async function effectiveLocationScope(input: {
   if (mainStations.error) throw new Error(mainStations.error.message);
   if (recruitmentLocations.error) throw new Error(recruitmentLocations.error.message);
   return calculateEffectiveRecruitmentLocationScope({
+    productMembership: input.productMembership,
     isMasterOwner: input.isMasterOwner,
     universalLocationAccessMode: input.roleLocationAccessMode,
     universalStationIds: input.universalStationIds,
@@ -179,7 +181,7 @@ async function previewContext(
     supabaseAdmin.from("recruitment_user_roles").select("role_id").eq("user_access_id", access.data.id),
     loadWorkforceConfig(companyId),
     supabaseAdmin.from("company_product_memberships")
-      .select("role_id,role_code_snapshot,has_all_location_access,location_scope_ids")
+      .select("role_id,role_code_snapshot,has_all_location_access,location_scope_ids,source_system,designation_id")
       .eq("company_id", companyId).eq("product_code", "recruit")
       .eq("user_id", profileId).eq("is_active", true).maybeSingle()
   ]);
@@ -216,6 +218,7 @@ async function previewContext(
   });
   const management = resolvedManagement(permissionSet, access.data);
   const locationScope = await effectiveLocationScope({
+    productMembership: membership.data,
     companyId,
     isMasterOwner: isOwner,
     roleLocationAccessMode: universalRole?.location_access_mode,
@@ -332,7 +335,7 @@ export async function resolveMobileSession(
       .eq("is_active", true)
       .maybeSingle(),
     supabaseAdmin.from("company_product_memberships")
-      .select("role_id,role_code_snapshot,has_all_location_access,location_scope_ids")
+      .select("role_id,role_code_snapshot,has_all_location_access,location_scope_ids,source_system,designation_id")
       .eq("company_id", companyId).eq("product_code", "recruit")
       .eq("user_id", session.data.profile_id).eq("is_active", true).maybeSingle()
   ]);
@@ -408,6 +411,7 @@ export async function resolveMobileSession(
   });
   const management = resolvedManagement(permissionSet, access.data);
   const locationScope = await effectiveLocationScope({
+    productMembership: membership.data,
     companyId,
     isMasterOwner: isOwner,
     roleLocationAccessMode: universalRole?.location_access_mode,
@@ -496,7 +500,7 @@ export async function loadRecruitSessionForProfile(
       .eq("is_active", true)
       .maybeSingle(),
     supabaseAdmin.from("company_product_memberships")
-      .select("role_id,role_code_snapshot,has_all_location_access,location_scope_ids")
+      .select("role_id,role_code_snapshot,has_all_location_access,location_scope_ids,source_system,designation_id")
       .eq("company_id", companyId)
       .eq("product_code", "recruit")
       .eq("user_id", profileId)
@@ -563,6 +567,7 @@ export async function loadRecruitSessionForProfile(
   });
   const management = resolvedManagement(permissionSet, access.data);
   const locationScope = await effectiveLocationScope({
+    productMembership: membership.data,
     companyId,
     isMasterOwner: isOwner,
     roleLocationAccessMode: universalRole?.location_access_mode,

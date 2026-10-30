@@ -8,7 +8,7 @@ import {
   saveUniversalRecruitmentRolePermissions,
   type RecruitmentAccessTemplate
 } from "@/lib/recruitment-menu-roles";
-import { calculateEffectiveRecruitmentLocationScope } from "@/lib/recruitment-location-scope";
+import { calculateEffectiveRecruitmentLocationScope, isPeopleManagedRecruitmentScope } from "@/lib/recruitment-location-scope";
 import { canDelegateTemporaryLocation, canManageTemporaryLocations, canUseRecruitmentMenu, hasTemporaryLocationEditPermission, recruitmentSession, requiredEnv } from "@/lib/recruitment-api";
 import { activeTemporaryLocations } from "@/lib/recruitment-temporary-locations-server";
 import { withTemporaryLocations } from "@/lib/recruitment-temporary-locations";
@@ -90,7 +90,7 @@ export async function GET(request: Request) {
       supabaseAdmin.from("profiles").select("id,full_name,email,mobile,phone,employee_id,role,role_id,reports_to_user_id,location_scope_ids,invite_method,is_active,is_master_owner")
         .eq("company_id", companyId).eq("is_active", true).order("full_name"),
       loadRecruitDesignationAccess(companyId),
-      supabaseAdmin.from("company_product_memberships").select("user_id,role_id,role_code_snapshot,has_all_location_access,location_scope_ids,is_active").eq("company_id", companyId).eq("product_code", "recruit").eq("is_active", true),
+      supabaseAdmin.from("company_product_memberships").select("user_id,role_id,role_code_snapshot,has_all_location_access,location_scope_ids,is_active,source_system,designation_id").eq("company_id", companyId).eq("product_code", "recruit").eq("is_active", true),
       supabaseAdmin.from("designations").select("code,name,is_active")
         .eq("company_id", companyId).eq("is_active", true).order("code"),
       loadMainDashboardStations(companyId),
@@ -125,6 +125,7 @@ export async function GET(request: Request) {
         || String(mainRole?.code ?? profile?.role ?? "").trim().toUpperCase() === "OWNER";
       const selectedLocationIds = locationsByAccess.get(row.id) ?? [];
       const effectiveScope = calculateEffectiveRecruitmentLocationScope({
+        productMembership: productMembershipByUser.get(row.profile_id),
         isMasterOwner: profile?.is_master_owner === true,
         universalLocationAccessMode: mainRole?.location_access_mode,
         universalStationIds: Array.isArray(profile?.location_scope_ids)
@@ -181,22 +182,30 @@ export async function GET(request: Request) {
           productMembershipByUser.get(profile.id)?.role_id,
           productMembershipByUser.get(profile.id)?.role_code_snapshot
         );
-        const scopeIds = Array.isArray(profile.location_scope_ids) ? profile.location_scope_ids : [];
+        const membership = productMembershipByUser.get(profile.id);
+        const peopleManagedScope = isPeopleManagedRecruitmentScope(membership);
+        const scopeIds = peopleManagedScope
+          ? membership?.location_scope_ids ?? []
+          : profile.location_scope_ids ?? [];
+        const allLocations = profile.is_master_owner || (peopleManagedScope
+          ? membership?.has_all_location_access === true
+          : mainRole?.location_access_mode === "all_locations");
         return {
           ...profile,
+          peopleManagedScope,
           peopleDesignation: peopleDesignations.get(profile.id) ?? null,
           universalRole: mainRole ? {
             id: mainRole.id,
             code: mainRole.code,
             name: mainRole.name,
-            allLocations: mainRole.location_access_mode === "all_locations"
+            allLocations
           } : profile.is_master_owner ? {
             id: "owner",
             code: "OWNER",
             name: "Owner",
             allLocations: true
           } : null,
-          universalLocations: mainRole?.location_access_mode === "all_locations" || profile.is_master_owner
+          universalLocations: allLocations
             ? []
             : mainStations
                 .filter((station) => scopeIds.includes(station.id))
@@ -369,13 +378,19 @@ export async function POST(request: Request) {
       ? true
       : requestedScopeMode === "inherit";
     const currentProductMembership = await supabaseAdmin.from("company_product_memberships")
-      .select("role_id,role_code_snapshot,has_all_location_access,location_scope_ids,source_system")
+      .select("role_id,role_code_snapshot,has_all_location_access,location_scope_ids,source_system,designation_id")
       .eq("company_id", companyId)
       .eq("product_code", "recruit")
       .eq("user_id", universalProfile.id)
       .eq("is_active", true)
       .maybeSingle();
     if (currentProductMembership.error) throw currentProductMembership.error;
+    const peopleManagedScope = isPeopleManagedRecruitmentScope(currentProductMembership.data);
+    if (peopleManagedScope && !inheritUniversalScope) {
+      return NextResponse.json({
+        error: "Locations are managed in People and inherited automatically. Change managed locations in the person's People profile."
+      }, { status: 400 });
+    }
     const recruitRoleId = currentProductMembership.data?.role_id ?? null;
     if (!universalProfile.is_master_owner && !recruitRoleId) {
       return NextResponse.json({ error: "Enable Recruit for this person's People designation before granting Recruit access." }, { status: 400 });
@@ -439,7 +454,9 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Workforce users can only be assigned blue-collar roles." }, { status: 400 });
     }
     const universalAllLocations = universalProfile.is_master_owner === true
-      || mainRole.data?.location_access_mode === "all_locations";
+      || (peopleManagedScope
+        ? currentProductMembership.data?.has_all_location_access === true
+        : mainRole.data?.location_access_mode === "all_locations");
     if (!inheritUniversalScope && !universalAllLocations && locationIds.length) {
       const universalStationIds = new Set(
         Array.isArray(universalProfile.location_scope_ids) ? universalProfile.location_scope_ids : []
@@ -516,7 +533,14 @@ export async function POST(request: Request) {
       throw new Error("Recruitment station scope could not be saved.");
     }
 
-    const membership = await supabaseAdmin.from("company_product_memberships").upsert({
+    // Recruit may change status, but must not overwrite People's live role or
+    // station projection with a stale copy while saving local menu access.
+    const membership = peopleManagedScope
+      ? await supabaseAdmin.from("company_product_memberships").update({
+          is_active: body.isActive !== false,
+          updated_at: new Date().toISOString()
+        }).eq("company_id", companyId).eq("product_code", "recruit").eq("user_id", universalProfile.id)
+      : await supabaseAdmin.from("company_product_memberships").upsert({
       company_id: companyId,
       product_code: "recruit",
       user_id: universalProfile.id,

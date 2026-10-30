@@ -3,6 +3,20 @@ export type RecruitmentLocationReference = {
   code: string | null;
 };
 
+export type RecruitmentScopeMembership = {
+  source_system?: string | null;
+  designation_id?: string | null;
+  has_all_location_access?: boolean | null;
+  location_scope_ids?: string[] | null;
+};
+
+/** These memberships are kept current by People's scope sync trigger. */
+export function isPeopleManagedRecruitmentScope(membership?: RecruitmentScopeMembership | null) {
+  return membership?.source_system === "designation_policy"
+    || Boolean(membership?.designation_id
+      && ["google_workspace", "person_override"].includes(membership.source_system ?? ""));
+}
+
 export type EffectiveRecruitmentLocationScope = {
   mode: "inherit" | "custom";
   allLocations: boolean;
@@ -21,9 +35,10 @@ function uniqueValidIds(values: string[], validIds: Set<string>) {
 }
 
 /**
- * The main DropX dashboard is the normal location-access ceiling.
+ * People-managed memberships inherit their live projected station scope.
+ * Other accounts retain the main DropX dashboard as their access ceiling.
  *
- * `inherit` means "use the user's live universal scope", not "all company
+ * For legacy/non-People accounts, `inherit` means "use the user's live universal scope", not "all company
  * stations". `custom` can only narrow that live universal scope. This keeps
  * Recruitment configurable without allowing a stale Recruitment row to
  * expand a user's access after their main-dashboard scope changes. Separately
@@ -37,7 +52,22 @@ export function calculateEffectiveRecruitmentLocationScope(input: {
   selectedRecruitmentLocationIds: string[];
   mainStations: RecruitmentLocationReference[];
   recruitmentLocations: RecruitmentLocationReference[];
+  productMembership?: RecruitmentScopeMembership | null;
 }): EffectiveRecruitmentLocationScope {
+  // People is authoritative for its linked users. The legacy Recruit station
+  // list is a second, stale copy (often their old home station), not a veto on
+  // the current People assignment. Empty People scope must remain empty.
+  if (isPeopleManagedRecruitmentScope(input.productMembership)) {
+    return calculateEffectiveRecruitmentLocationScope({
+      ...input,
+      productMembership: null,
+      universalLocationAccessMode: input.productMembership?.has_all_location_access === true
+        ? "all_locations" : "assigned_locations",
+      universalStationIds: input.productMembership?.location_scope_ids ?? [],
+      recruitmentScopeMode: "inherit",
+      selectedRecruitmentLocationIds: []
+    });
+  }
   const validRecruitmentIds = new Set(input.recruitmentLocations.map((location) => location.id));
   const selectedLocationIds = uniqueValidIds(
     input.selectedRecruitmentLocationIds,

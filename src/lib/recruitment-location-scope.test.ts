@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { calculateEffectiveRecruitmentLocationScope } from "./recruitment-location-scope";
+import { calculateEffectiveRecruitmentLocationScope, isPeopleManagedRecruitmentScope } from "./recruitment-location-scope";
 
 const mainStations = [
   { id: "main-kl-1", code: "CHM" },
@@ -13,6 +13,56 @@ const recruitmentLocations = [
 ];
 
 describe("calculateEffectiveRecruitmentLocationScope", () => {
+  const peopleInput = {
+    isMasterOwner: false,
+    universalLocationAccessMode: "assigned_locations",
+    universalStationIds: ["old-home-station"],
+    recruitmentScopeMode: "custom" as const,
+    selectedRecruitmentLocationIds: ["recruit-ap-1"],
+    mainStations,
+    recruitmentLocations,
+    productMembership: {
+      source_system: "designation_policy", designation_id: "clm",
+      has_all_location_access: false, location_scope_ids: ["main-kl-1", "main-kl-2"]
+    }
+  };
+  it("inherits People locations despite a stale Recruit custom assignment (Akshay regression)", () => {
+    const scope = calculateEffectiveRecruitmentLocationScope(peopleInput);
+    expect(scope.locationIds).toEqual(["recruit-kl-1", "recruit-kl-2"]);
+    expect(scope.mode).toBe("inherit");
+    expect(scope.allLocations).toBe(false);
+  });
+  it("keeps People-managed person overrides in sync (Govind regression)", () => {
+    const scope = calculateEffectiveRecruitmentLocationScope({ ...peopleInput, productMembership: {
+      ...peopleInput.productMembership, source_system: "person_override", location_scope_ids: ["main-kl-2"]
+    } });
+    expect(scope.locationIds).toEqual(["recruit-kl-2"]);
+  });
+  it("does not revive removed People locations or fall back to the role's global setting", () => {
+    const scope = calculateEffectiveRecruitmentLocationScope({ ...peopleInput,
+      universalLocationAccessMode: "all_locations",
+      productMembership: { ...peopleInput.productMembership, location_scope_ids: [] }
+    });
+    expect(scope.locationIds).toEqual([]);
+    expect(scope.allLocations).toBe(false);
+  });
+  it("honours a People all-location grant and ignores unknown station IDs", () => {
+    expect(calculateEffectiveRecruitmentLocationScope({ ...peopleInput, productMembership: {
+      ...peopleInput.productMembership, has_all_location_access: true
+    } }).allLocations).toBe(true);
+    expect(calculateEffectiveRecruitmentLocationScope({ ...peopleInput, productMembership: {
+      ...peopleInput.productMembership, location_scope_ids: ["unknown"]
+    } }).locationIds).toEqual([]);
+  });
+  it("retains custom subsets for non-People accounts and explicit product-owned overrides", () => {
+    for (const source_system of ["manual", "product_owner", "product_admin", "location_identity"]) {
+      const input = { ...peopleInput, universalStationIds: ["main-kl-1", "main-ap-1"],
+        productMembership: { ...peopleInput.productMembership, source_system } };
+      expect(isPeopleManagedRecruitmentScope(input.productMembership)).toBe(false);
+      expect(calculateEffectiveRecruitmentLocationScope(input).locationIds).toEqual(["recruit-ap-1"]);
+    }
+    expect(isPeopleManagedRecruitmentScope({ source_system: "person_override" })).toBe(false);
+  });
   it("maps inherited universal station IDs to Recruitment location IDs", () => {
     const scope = calculateEffectiveRecruitmentLocationScope({
       isMasterOwner: false,

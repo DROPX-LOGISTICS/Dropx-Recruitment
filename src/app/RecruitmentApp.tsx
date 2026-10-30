@@ -6,6 +6,8 @@ import AdSchedule from "./AdSchedule";
 import AdMailPanel from "./AdMailPanel";
 import DaOnboardingMailPanel from "./DaOnboardingMailPanel";
 import TemporaryLocationAccess from "./TemporaryLocationAccess";
+import PreviewUserSearch from "./PreviewUserSearch";
+import type { PreviewUser } from "@/lib/preview-user-search";
 import { groupRecruitNavigation } from "@/lib/recruitment-navigation";
 import MetaReceivedTime from "./MetaReceivedTime";
 import AdHealthPanel, { AdDeliveryDiagnostics } from "./AdHealthPanel";
@@ -213,7 +215,7 @@ export default function RecruitmentApp() {
   const [options, setOptions] = useState<any>({ locations: [], roles: [], statuses: [], workforceStatuses: [], finalStatuses: [], assignees: [] });
   const [filters, setFilters] = useState(emptyLeadFilters);
   const [facets, setFacets] = useState<any>(null);
-  const [previewUsers, setPreviewUsers] = useState<any[]>([]);
+  const [previewUsers, setPreviewUsers] = useState<PreviewUser[]>([]);
 
   useEffect(() => {
     const saved = localStorage.getItem("recruitment_session");
@@ -656,7 +658,7 @@ export default function RecruitmentApp() {
     </aside>
     {mobileMenuOpen?<button className="mobile-menu-backdrop" aria-label="Close menu" onClick={()=>setMobileMenuOpen(false)}/>:null}
     <section className="workspace">
-      <header><button className="mobile-menu-trigger" aria-label="Open menu" aria-expanded={mobileMenuOpen} onClick={()=>setMobileMenuOpen(true)}><i/><span><small>Recruitment</small>{pageTitle}</span></button><div className="desktop-page-title"><h1>{pageTitle}</h1><p>{pageSubtitle}</p></div>{user.canPreviewUsers?<label className="owner-preview-switcher"><span>View as</span><select value={user.isPreview?user.profileId:""} onChange={(event)=>changePreview(event.target.value)}><option value="">My view</option>{previewUsers.filter((item)=>item.profileId!==user.viewerProfileId).map((item)=><option value={item.profileId} key={item.profileId}>{item.name} · {item.designationName||item.roleName||item.designationCode||"User"}</option>)}</select></label>:null}<div className="stream-switch" aria-label="Recruitment section">
+      <header><button className="mobile-menu-trigger" aria-label="Open menu" aria-expanded={mobileMenuOpen} onClick={()=>setMobileMenuOpen(true)}><i/><span><small>Recruitment</small>{pageTitle}</span></button><div className="desktop-page-title"><h1>{pageTitle}</h1><p>{pageSubtitle}</p></div>{user.canPreviewUsers?<PreviewUserSearch users={previewUsers} viewerProfileId={user.viewerProfileId} selectedUser={user.isPreview ? {profileId:user.profileId,name:user.name||user.email||"User",designationName:user.designationName,designationCode:user.designationCode} : null} onChange={changePreview}/>:null}<div className="stream-switch" aria-label="Recruitment section">
         {user.workforce ? <button className={stream === "workforce" ? "selected" : ""} onClick={() => switchStream("workforce")}>Workforce</button> : null}
         {user.hr ? <button className={stream === "hr" ? "selected" : ""} onClick={() => switchStream("hr")}>HR</button> : null}
       </div></header>
@@ -3301,8 +3303,8 @@ function TeamAccess({ data, token, stream, canEdit, reload }: { data: any; token
           <div className="form-grid">
             <SearchSelect label="Universal company user" value={form.profileId} options={profileOptions} onChange={selectProfile}/>
             <label>People designation<select value={selectedProfile?.peopleDesignation?.code||""} disabled><option value="">{selectedProfile?"Not mapped in People":"Select a company user"}</option>{selectedProfile?.peopleDesignation?<option value={selectedProfile.peopleDesignation.code}>{selectedProfile.peopleDesignation.name}</option>:null}</select></label>
-            <SearchSelect label="Station access" value={selectedProfile?.is_master_owner?"inherit":form.scopeMode} options={[["inherit",universalAllLocations?"All permitted stations":`Use company scope — ${(selectedProfile?.universalLocations??[]).length} stations`],["custom","Choose a smaller station subset"]]} onChange={(scopeMode)=>setForm({...form,scopeMode:scopeMode as "inherit"|"custom",locationIds:scopeMode==="inherit"?[]:form.locationIds})} placeholder="Choose station access"/>
-            {form.scopeMode==="custom"&&!selectedProfile?.is_master_owner?<div className="searchable-scope"><span>Station subset</span><MultiFilter label="Stations" value={form.locationIds.join(",")} options={locationOptions.map((item:any)=>[item.id,`${item.code} — ${item.name}`])} onChange={(value)=>setForm({...form,locationIds:value.split(",").filter(Boolean)})}/><small>Only stations within the user&apos;s company scope are available.</small></div>:null}
+            {selectedProfile?.peopleManagedScope?<div className="searchable-scope"><span>Station access · Managed in People</span><b>{universalScope(selectedProfile)}</b><small>Inherited automatically. Update managed locations in the person&apos;s People profile; no separate Recruit assignment is needed.</small></div>:<SearchSelect label="Station access" value={selectedProfile?.is_master_owner?"inherit":form.scopeMode} options={[["inherit",universalAllLocations?"All permitted stations":`Use company scope — ${(selectedProfile?.universalLocations??[]).length} stations`],["custom","Choose a smaller station subset"]]} onChange={(scopeMode)=>setForm({...form,scopeMode:scopeMode as "inherit"|"custom",locationIds:scopeMode==="inherit"?[]:form.locationIds})} placeholder="Choose station access"/>}
+            {form.scopeMode==="custom"&&!selectedProfile?.is_master_owner&&!selectedProfile?.peopleManagedScope?<div className="searchable-scope"><span>Station subset</span><MultiFilter label="Stations" value={form.locationIds.join(",")} options={locationOptions.map((item:any)=>[item.id,`${item.code} — ${item.name}`])} onChange={(value)=>setForm({...form,locationIds:value.split(",").filter(Boolean)})}/><small>Only stations within the user&apos;s company scope are available.</small></div>:null}
             {selectedProfile?<div className="searchable-scope"><span>Designation access</span><MultiFilter label="Designations" value={streamRoleIds.join(",")} options={visibleRoles.map((item:any)=>[item.id,`${item.code} — ${item.name}`])} onChange={(value)=>setForm({...form,roleIds:[...otherStreamRoleIds,...value.split(",").filter(Boolean)]})}/><small>Leave empty for all {stream==="hr"?"HR":"Workforce"} designations.</small></div>:null}
             <SearchSelect label="Status" value={form.isActive?"active":"inactive"} options={[["active","Active"],["inactive","Inactive"]]} onChange={(value)=>setForm({...form,isActive:value==="active"})}/>
           </div>

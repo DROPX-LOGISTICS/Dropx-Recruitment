@@ -68,7 +68,9 @@ export async function ensureRecruitmentAccess(companyId: string, profile: Recrui
     profile_id: profile.id,
     can_access_workforce: true,
     can_access_hr: owner,
-    can_access_all_locations: membership.data.has_all_location_access,
+    // This legacy field means inherit, not global access. The session resolver
+    // maps the live People/company station scope and never grants all by this flag.
+    can_access_all_locations: true,
     can_manage_masters: owner,
     can_manage_ads: owner,
     can_manage_users: owner,
