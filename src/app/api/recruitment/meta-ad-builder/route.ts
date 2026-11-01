@@ -1,3 +1,4 @@
+import { assertMetaCampaignCompatibility, metaCampaignCategoryLabel } from "@/lib/meta-campaign-category";
 import { assertReviewedAudience } from "@/lib/meta-targeting";
 import { metaDeliveryStatus } from "@/lib/meta-ad-delivery";
 import { NextResponse } from "next/server";
@@ -13,6 +14,7 @@ import {
   publishMetaRecruitmentAd,
   setMetaObjectStatus,
   validateMetaAdDraft,
+  validateMetaRecruitmentAdSet,
   type MetaAdDraft,
   type MetaPublishProgress
 } from "@/lib/meta-ad-builder";
@@ -142,14 +144,16 @@ export async function POST(request: Request) {
       ? catalog.campaigns.find((campaign) => campaign.id === draft.campaignId)
       : null;
     if (draft.campaignMode === "existing" && !selectedCampaign) {
-      return NextResponse.json({ error: "Choose a valid Employment Leads campaign." }, { status: 400 });
+      return NextResponse.json({ error: "Choose a valid Leads campaign." }, { status: 400 });
     }
     if (launchMode === "live" && selectedCampaign && selectedCampaign.effectiveStatus !== "ACTIVE") {
       return NextResponse.json({
         error: "The selected campaign is not active. Choose an active campaign or create a new campaign for a live launch."
       }, { status: 400 });
     }
+    assertMetaCampaignCompatibility({ category: draft.campaignCategory, accountCountry: catalog.accountCountry, radiusKm: draft.audience.radiusKm, campaign: selectedCampaign });
     const review = {
+      campaignCategory: metaCampaignCategoryLabel(draft.campaignCategory),
       workspace,
       station: `${locationResult.data.code} — ${locationResult.data.name}`,
       designation: `${roleResult.data.code} — ${roleResult.data.name}`,
@@ -162,7 +166,10 @@ export async function POST(request: Request) {
       audience: draft.audience,
       launchMode
     };
-    if (body.validateOnly === true) return NextResponse.json({ valid: true, review });
+    if (body.validateOnly === true) {
+      const metaAudienceValidated = await validateMetaRecruitmentAdSet(draft);
+      return NextResponse.json({ valid: true, review: { ...review, metaAudienceValidated } });
+    }
 
     assertReviewedAudience(body.reviewedAudience, draft.audience);
 

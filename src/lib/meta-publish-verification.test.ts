@@ -24,6 +24,8 @@ describe("publishing read-back verification", () => {
       const now = Date.now();
       let data: unknown = { success: true };
       if (path.endsWith("/99999")) data = {status:{video_status:"ready"}};
+      if (path.endsWith("/act_123") && method === "GET") data = { business_country_code: "IN" };
+      if (path.endsWith("/111") && method === "GET") data = { id: "111", objective: "OUTCOME_LEADS", special_ad_categories: ["EMPLOYMENT"] };
       if (path.endsWith("/campaigns")) data = { id: "111" };
       if (path.endsWith("/adsets")) data = { id: "222" };
       if (path.endsWith("/adcreatives")) data = { id: "333" };

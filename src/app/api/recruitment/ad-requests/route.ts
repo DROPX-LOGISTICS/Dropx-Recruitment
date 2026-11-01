@@ -637,6 +637,7 @@ export async function PATCH(request: Request) {
           });
           const draft = {
             campaignMode: sourceDraft.campaignMode === "existing" ? "existing" : "new",
+            campaignCategory: sourceDraft.campaignCategory,
             campaignId: String(sourceDraft.campaignId || "").trim() || null,
             campaignName: String(sourceDraft.campaignName || `${code} Recruitment`).trim(),
             formId: String(sourceDraft.formId || "").trim(),

@@ -1,8 +1,11 @@
-export const META_AUDIENCE_RADIUS_MIN_KM = 15;
+export const META_AUDIENCE_RADIUS_MIN_KM = 3;
 export const META_AUDIENCE_RADIUS_MAX_KM = 80;
 export const META_AUDIENCE_RADIUS_DEFAULT_KM = 15;
 
 export const META_AUDIENCE_RADIUS_PRESETS = [
+  { value: 3, label: "Neighbourhood", detail: "Closest to station" },
+  { value: 5, label: "Nearby", detail: "Short commute" },
+  { value: 10, label: "Local area", detail: "Local hiring" },
   { value: 15, label: "Local", detail: "Nearby hiring" },
   { value: 25, label: "City", detail: "City + nearby towns" },
   { value: 40, label: "District", detail: "Wider district" },

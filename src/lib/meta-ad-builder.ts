@@ -1,3 +1,4 @@
+import { assertMetaCampaignCompatibility, normalizeMetaCampaignCategory, type MetaCampaignCategory } from "./meta-campaign-category";
 import { assertCreativeReplacementDelivery } from "./meta-creative-delivery";
 import { assertMetaTargeting } from "./meta-targeting";
 import { metaDeliveryStatus, type MetaDeliverySnapshot } from "./meta-ad-delivery";
@@ -13,6 +14,7 @@ export type MetaAdBuilderCatalog = {
   accountId: string;
   accountName: string;
   currency: string;
+  accountCountry: string;
   pageId: string;
   pageName: string;
   forms: Array<{ id: string; name: string; status: string; createdTime: string | null }>;
@@ -28,6 +30,7 @@ export type MetaAdBuilderCatalog = {
 
 export type MetaAdDraft = {
   campaignMode: "new" | "existing";
+  campaignCategory?: MetaCampaignCategory;
   campaignId?: string | null;
   campaignName?: string | null;
   formId: string;
@@ -160,6 +163,7 @@ export function validateMetaAdDraft(input: MetaAdDraft): MetaAdDraft {
   return {
     ...input,
     campaignMode,
+    campaignCategory: normalizeMetaCampaignCategory(input.campaignCategory),
     campaignId: String(input.campaignId || "").trim() || null,
     campaignName: String(input.campaignName || "").trim() || null,
     formId: String(input.formId).trim(),
@@ -249,14 +253,14 @@ async function assertVideoReady(videoId?: string | null) {
   }
 }
 
-export function buildEmploymentCampaignValues(name: string) {
+export function buildEmploymentCampaignValues(name: string, category: MetaCampaignCategory = "EMPLOYMENT"): Record<string, string> {
   return {
     name,
     objective: "OUTCOME_LEADS",
     buying_type: "AUCTION",
     ...buildAdSetBudgetCampaignValues(),
-    special_ad_categories: JSON.stringify(["EMPLOYMENT"]),
-    special_ad_category_country: JSON.stringify(["IN"]),
+    special_ad_categories: JSON.stringify(category === "EMPLOYMENT" ? ["EMPLOYMENT"] : []),
+    ...(category === "EMPLOYMENT" ? { special_ad_category_country: JSON.stringify(["IN"]) } : {}),
     status: "PAUSED"
   };
 }
@@ -717,7 +721,7 @@ export async function getMetaPageAccessToken() {
 export async function getMetaAdBuilderCatalog(): Promise<MetaAdBuilderCatalog> {
   const connection = await metaConnection();
   const [account, pageContext, campaignsPayload] = await Promise.all([
-    graphGet(connection, `act_${connection.accountId}`, { fields: "id,name,currency" }),
+    graphGet(connection, `act_${connection.accountId}`, { fields: "id,name,currency,business_country_code" }),
     resolveMetaPage(connection),
     graphGet(connection, `act_${connection.accountId}/campaigns`, {
       fields: "id,name,status,effective_status,objective,special_ad_categories",
@@ -745,6 +749,7 @@ export async function getMetaAdBuilderCatalog(): Promise<MetaAdBuilderCatalog> {
     accountId: String(account.id || `act_${connection.accountId}`),
     accountName: String(account.name || "Meta Ad Account"),
     currency: String(account.currency || "INR"),
+    accountCountry: String(account.business_country_code || "").toUpperCase(),
     pageId: String(page.id || connection.pageId),
     pageName: String(page.name || "Meta Page"),
     forms: forms.map((item) => ({
@@ -766,9 +771,31 @@ export async function getMetaAdBuilderCatalog(): Promise<MetaAdBuilderCatalog> {
         ? item.special_ad_categories.map(String)
         : []
     })).filter((item) => item.id && item.objective === "OUTCOME_LEADS"
-      && item.specialAdCategories.includes("EMPLOYMENT"))
+      && (item.specialAdCategories.length === 0
+        || (item.specialAdCategories.length === 1 && ["EMPLOYMENT", "NONE"].includes(item.specialAdCategories[0]))))
       .sort((left, right) => left.name.localeCompare(right.name))
   };
+}
+
+/** Meta dry-run: validates against a real campaign without creating an ad set. */
+export async function validateMetaRecruitmentAdSet(input: MetaAdDraft) {
+  const draft = validateMetaAdDraft(input);
+  if (draft.campaignMode !== "existing") return false;
+  const connection = await metaConnection();
+  const [account, campaign] = await Promise.all([
+    graphGet(connection, `act_${connection.accountId}`, { fields: "business_country_code" }),
+    graphGet(connection, String(draft.campaignId), { fields: "id,objective,special_ad_categories" })
+  ]);
+  assertMetaCampaignCompatibility({ category: draft.campaignCategory,
+    accountCountry: String(account.business_country_code || ""), radiusKm: draft.audience.radiusKm,
+    campaign: { objective: String(campaign.objective || ""), specialAdCategories:
+      Array.isArray(campaign.special_ad_categories) ? campaign.special_ad_categories.map(String) : [] } });
+  await graphRequest(connection, `act_${connection.accountId}/adsets`, "POST", {
+    ...buildEmploymentAdSetValues({ name: draft.adSetName, campaignId: String(draft.campaignId),
+      dailyBudget: draft.dailyBudget, pageId: connection.pageId, daysRequired: draft.daysRequired, audience: draft.audience }),
+    execution_options: JSON.stringify(["validate_only"])
+  });
+  return true;
 }
 
 export function sameMetaPublishDraft(left: MetaAdDraft, right: MetaAdDraft) {
@@ -795,6 +822,9 @@ export async function publishMetaRecruitmentAd(input: {
       throw new Error("This partial publish belongs to a different ad setup. Open a new publisher instead of reusing its Meta objects.");
     }
   }
+  const account = await graphGet(connection, `act_${connection.accountId}`, { fields: "business_country_code" });
+  const accountCountry = String(account.business_country_code || "").toUpperCase();
+  assertMetaCampaignCompatibility({ category: draft.campaignCategory, accountCountry, radiusKm: draft.audience.radiusKm });
   const prefix = draft.audience.stationCode.toUpperCase();
   if (![draft.adName, draft.adSetName].every((name) => name.toUpperCase().startsWith(prefix + "_"))) {
     throw new Error(`Ad and ad set names must start with ${prefix}_ to match the selected station.`);
@@ -812,22 +842,33 @@ export async function publishMetaRecruitmentAd(input: {
       const categories = Array.isArray(selected.special_ad_categories)
         ? selected.special_ad_categories.map(String)
         : [];
-      if (String(selected.objective || "") !== "OUTCOME_LEADS" || !categories.includes("EMPLOYMENT")) {
-        throw new Error("The selected campaign must use the Leads objective and Employment special ad category.");
-      }
+      assertMetaCampaignCompatibility({ category: draft.campaignCategory, accountCountry,
+        radiusKm: draft.audience.radiusKm,
+        campaign: { objective: String(selected.objective || ""), specialAdCategories: categories } });
       progress.campaignId = String(selected.id || draft.campaignId);
     } else {
       const campaign = await graphRequest(
         connection,
         `act_${connection.accountId}/campaigns`,
         "POST",
-        buildEmploymentCampaignValues(String(draft.campaignName))
+        buildEmploymentCampaignValues(String(draft.campaignName), draft.campaignCategory)
       );
       progress.campaignId = String(campaign.id || "");
       if (!progress.campaignId) throw new Error("Meta did not return the new campaign ID.");
     }
     await saveProgress();
   }
+
+  // Recheck category even on a partial-publish retry: campaigns can change in Meta.
+  const savedCampaign = await graphGet(connection, String(progress.campaignId), {
+    fields: "id,objective,special_ad_categories"
+  });
+  assertMetaCampaignCompatibility({ category: draft.campaignCategory, accountCountry,
+    radiusKm: draft.audience.radiusKm, campaign: {
+      objective: String(savedCampaign.objective || ""),
+      specialAdCategories: Array.isArray(savedCampaign.special_ad_categories)
+        ? savedCampaign.special_ad_categories.map(String) : []
+    } });
 
   if (!progress.adSetId) {
     // Confirm the campaign-level budget-sharing choice immediately before
@@ -839,19 +880,16 @@ export async function publishMetaRecruitmentAd(input: {
       "POST",
       buildAdSetBudgetCampaignValues()
     );
-    const adSet = await graphRequest(
-      connection,
-      `act_${connection.accountId}/adsets`,
-      "POST",
-      buildEmploymentAdSetValues({
-        name: draft.adSetName,
-        campaignId: progress.campaignId,
-        dailyBudget: draft.dailyBudget,
-        pageId: connection.pageId,
-        daysRequired: draft.daysRequired,
-        audience: draft.audience
-      })
-    );
+    const adSetValues = buildEmploymentAdSetValues({
+      name: draft.adSetName, campaignId: progress.campaignId,
+      dailyBudget: draft.dailyBudget, pageId: connection.pageId,
+      daysRequired: draft.daysRequired, audience: draft.audience
+    });
+    // Validate the exact request with Meta; never retry with a different category or radius.
+    await graphRequest(connection, `act_${connection.accountId}/adsets`, "POST", {
+      ...adSetValues, execution_options: JSON.stringify(["validate_only"])
+    });
+    const adSet = await graphRequest(connection, `act_${connection.accountId}/adsets`, "POST", adSetValues);
     progress.adSetId = String(adSet.id || "");
     if (!progress.adSetId) throw new Error("Meta did not return the new ad set ID.");
     await saveProgress();

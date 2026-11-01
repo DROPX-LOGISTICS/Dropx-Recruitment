@@ -110,19 +110,19 @@ describe("Meta recruitment ad builder", () => {
     expect(JSON.parse(targeting.targeting).geo_locations.custom_locations[0].radius).toBe(80);
   });
 
-  it("rejects audiences below 15 km, above 80 km or with decimal radii", () => {
+  it("rejects audiences below 3 km, above 80 km or with decimal radii", () => {
     expect(() => validateMetaAdDraft({
       ...validDraft,
-      audience: { ...validDraft.audience, radiusKm: 14 }
-    })).toThrow("between 15 and 80 km");
+      audience: { ...validDraft.audience, radiusKm: 2 }
+    })).toThrow("between 3 and 80 km");
     expect(() => validateMetaAdDraft({
       ...validDraft,
       audience: { ...validDraft.audience, radiusKm: 81 }
-    })).toThrow("between 15 and 80 km");
+    })).toThrow("between 3 and 80 km");
     expect(() => validateMetaAdDraft({
       ...validDraft,
       audience: { ...validDraft.audience, radiusKm: 47.5 }
-    })).toThrow("between 15 and 80 km");
+    })).toThrow("between 3 and 80 km");
   });
 
   it("rejects missing or invalid station-contact coordinates", () => {

@@ -6,11 +6,12 @@ import {
 } from "./meta-audience-radius";
 
 describe("Meta audience radius options", () => {
-  it("supports exact whole-kilometre choices from 15 through 80", () => {
+  it("supports exact whole-kilometre choices from 3 through 80", () => {
+    for (const radius of [3, 5, 10, 14]) expect(isValidMetaAudienceRadius(radius)).toBe(true);
     expect(isValidMetaAudienceRadius(15)).toBe(true);
     expect(isValidMetaAudienceRadius("47")).toBe(true);
     expect(isValidMetaAudienceRadius(80)).toBe(true);
-    expect(isValidMetaAudienceRadius(14)).toBe(false);
+    expect(isValidMetaAudienceRadius(2)).toBe(false);
     expect(isValidMetaAudienceRadius(80.5)).toBe(false);
     expect(isValidMetaAudienceRadius(81)).toBe(false);
   });
