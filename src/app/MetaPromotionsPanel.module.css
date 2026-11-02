@@ -56,6 +56,15 @@
 .audience :global(.audience-coordinates){grid-template-columns:1fr 1fr}
 .audience :global(.audience-coordinates>button){grid-column:1/-1;justify-self:end}
 .pinSummary{font-variant-numeric:tabular-nums}
+.routingHint{font-size:11px;line-height:1.45;color:#63718a;align-self:center}
+.fields .leadDestination{margin:0;padding:8px 10px;border-radius:7px;background:#edf7f3;color:#23664c;font-size:11px}
+.advanced{border:1px solid #dce2ed;border-radius:8px;font-size:12px}
+.advanced>summary{padding:10px;cursor:pointer;font-weight:650}
+.advanced>div{padding:0 10px 10px}
+.fields label>small{font-size:10px;line-height:1.4;color:#63718a;font-weight:400}
+.body :global(.publisher-review){padding:0;border:0;margin:0}
+.body :global(.publisher-review dl){grid-template-columns:repeat(2,minmax(0,1fr))}
+.body :global(.publisher-review dl span){min-width:0;overflow-wrap:anywhere}
 @media(max-width:760px){
   .composer{grid-template-columns:1fr;gap:14px}
   .composer :global(.audience-radius-presets){grid-template-columns:repeat(8,minmax(0,1fr))}

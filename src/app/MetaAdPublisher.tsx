@@ -19,9 +19,10 @@ import MetaAudienceRadiusPicker from "./MetaAudienceRadiusPicker";
 import MetaLocationPinPicker from "./MetaLocationPinPicker";
 import MetaCampaignCategoryPicker from "./MetaCampaignCategoryPicker";
 import { matchesMetaCampaignCategory } from "@/lib/meta-campaign-category";
+import styles from "./MetaPromotionsPanel.module.css";
 
 type Workspace = "workforce" | "hr";
-type Props = { token:string; stream:Workspace; options:any; close:()=>void; openPromotions?:()=>void; afterPublish:()=>Promise<void> };
+type Props = { token:string; stream:Workspace; options:any; close:()=>void; openPromotions?:(locationId:string)=>void; initialLocationId?:string; afterPublish:()=>Promise<void> };
 
 function authHeaders(token:string){return {...recruitmentClientHeaders(token),"Content-Type":"application/json"};}
 function requestKey(){return typeof crypto!=="undefined"&&"randomUUID" in crypto?crypto.randomUUID().replaceAll("-",""):`${Date.now()}_${Math.random().toString(36).slice(2)}`;}
@@ -49,7 +50,10 @@ export function PlacementGallery({image,headline,copy,cta,width,height,kind="ima
   </section>;
 }
 
-export default function MetaAdPublisher({token,stream,options,close,openPromotions,afterPublish}:Props){
+export default function MetaAdPublisher({token,stream,options,close,openPromotions,initialLocationId="",afterPublish}:Props){
+  const dialog=useRef<HTMLDialogElement>(null);
+  const body=useRef<HTMLDivElement>(null);
+  useEffect(()=>{dialog.current?.showModal();},[]);
   const [catalog,setCatalog]=useState<any>(null);
   const [audience,setAudience]=useState<any>(null);
   const [audienceLoading,setAudienceLoading]=useState(false);
@@ -61,17 +65,17 @@ export default function MetaAdPublisher({token,stream,options,close,openPromotio
   const [clientRequestId]=useState(requestKey);
   const [posterPreview,setPosterPreview]=useState("");
   const [posterMeta,setPosterMeta]=useState<CreativePreview|null>(null);
-  const fileInput=useRef<HTMLInputElement>(null);
   const uploadController=useRef<AbortController|null>(null);
   const [uploadStatus,setUploadStatus]=useState("");
   useEffect(()=>()=>uploadController.current?.abort(),[]);
   const locations=options?.locations??[];
   const roles=useMemo(()=>(options?.roles??[]).filter((item:any)=>item.stream===stream),[options,stream]);
   const [form,setForm]=useState<Record<string,any>>({
-    locationId:"",roleId:"",campaignCategory:"EMPLOYMENT",campaignMode:"new",campaignId:"",campaignName:"",formId:"",dailyBudget:"300",daysRequired:"7",
+    locationId:initialLocationId,roleId:"",campaignCategory:"EMPLOYMENT",campaignMode:"new",campaignId:"",campaignName:"",formId:"",dailyBudget:"300",daysRequired:"7",
     adName:"",adSetName:"",creativeName:"",primaryText:"",headline:"",description:"",imageHash:"",posterUrl:"",videoId:"",
     destinationUrl:"https://recruit.dropxlogistics.com",callToAction:"APPLY_NOW",audienceRadiusKm:String(META_AUDIENCE_RADIUS_DEFAULT_KM),customPin:null,launchMode:"paused",confirmLive:false
   });
+  useEffect(()=>{body.current?.scrollTo({top:0});},[review]);
 
   useEffect(()=>{const controller=new AbortController();fetch(`/api/recruitment/meta-ad-builder?stream=${stream}`,{headers:{Authorization:`Bearer ${token}`},cache:"no-store",signal:controller.signal}).then(async(response)=>{const payload=await response.json();if(!response.ok)throw new Error(payload.error||"Unable to load Meta setup.");setCatalog(payload.catalog);}).catch((error)=>{if(error?.name!=="AbortError")setNotice(error instanceof Error?error.message:"Unable to load Meta setup.");}).finally(()=>setLoading(false));return()=>controller.abort();},[stream,token]);
   useEffect(()=>()=>{if(posterPreview.startsWith("blob:"))URL.revokeObjectURL(posterPreview);},[posterPreview]);
@@ -121,47 +125,55 @@ export default function MetaAdPublisher({token,stream,options,close,openPromotio
   const payload={stream,locationId:form.locationId,roleId:form.roleId,clientRequestId,launchMode:form.launchMode,confirmLive:form.confirmLive,draft:{campaignCategory:form.campaignCategory,campaignMode:form.campaignMode,campaignId:form.campaignId||null,campaignName:form.campaignName||null,formId:form.formId,dailyBudget:Number(form.dailyBudget),daysRequired:Number(form.daysRequired),adName:form.adName,adSetName:form.adSetName,creativeName:form.creativeName,primaryText:form.primaryText,headline:form.headline,description:form.description||null,imageHash:form.imageHash,videoId:form.videoId||null,posterUrl:form.posterUrl||null,destinationUrl:form.destinationUrl,callToAction:form.callToAction,audienceRadiusKm:Number(form.audienceRadiusKm),customPin:form.customPin}};
   async function submit(validateOnly:boolean){setBusy(true);setNotice("");try{if(uploading)throw new Error("Wait for the creative upload to finish.");if(audienceLoading)throw new Error("Wait for the station audience to finish loading.");if(!audience)throw new Error("Add a verified ad pin for this station in Station Contacts.");if(!isValidMetaAudienceRadius(form.audienceRadiusKm))throw new Error("Choose an audience radius from 3 to 80 km.");if(!matchedForms.length)throw new Error(`No active Meta form matches ${selectedRole?.code||"this designation"}.`);if(!form.formId)throw new Error(`Choose a ${selectedRole?.code||"designation"}-matched Meta form.`);if(!form.imageHash)throw new Error("Upload an image or video before reviewing the ad.");const response=await fetch("/api/recruitment/meta-ad-builder",{method:"POST",headers:authHeaders(token),body:JSON.stringify({...payload,validateOnly,reviewedAudience:review?.audience})});const result=await response.json();if(!response.ok)throw new Error(result.error||"Unable to publish the Meta ad.");if(validateOnly)setReview(result.review);else{setNotice(`Meta ad ${result.status==="ACTIVE"?"is live":result.status==="SCHEDULED"?"is scheduled":result.status==="PAUSED"?"was created paused":`was created · Meta status: ${String(result.status||"unknown").toLowerCase().replaceAll("_"," ")}`}. Ad ID: ${result.metaAdId||"saved"}`);await afterPublish();}}catch(error){setNotice(error instanceof Error?error.message:"Unable to publish the Meta ad.");}finally{setBusy(false);}}
 
-  return <div className="modal-backdrop meta-publisher-backdrop" onMouseDown={(event)=>{if(event.currentTarget===event.target&&!busy&&!uploading)close();}}><section className="modal meta-direct-publisher" role="dialog" aria-modal="true" aria-label={`Create ${stream} Meta ad`}>
-    <header className="modal-header"><div><span>{stream==="hr"?"HR HIRING":"WORKFORCE HIRING"}</span><h2>Post a Meta lead ad</h2><p>Upload, preview and publish without leaving DropX Recruitment.</p></div><button disabled={busy||uploading} onClick={close}>×</button></header>
-    {openPromotions?<div className="ad-insight-warning">Advertising a delivery service or customer offer? <button type="button" disabled={busy||uploading} onClick={openPromotions}>Open Promotions · age & gender controls</button></div>:null}
-    {loading?<div className="publisher-loading"><span className="loader"/><b>Loading your Meta account, forms and campaigns…</b></div>:null}
-    {!loading&&!review?<>
-      <div className="publisher-grid">
-        <label>Station<select value={form.locationId} onChange={(e)=>update("locationId",e.target.value)}><option value="">Select station</option>{locations.map((item:any)=><option key={item.id} value={item.id}>{item.code} — {item.name}</option>)}</select></label>
-        <label>Designation<select value={form.roleId} onChange={(e)=>update("roleId",e.target.value)}><option value="">Select {stream==="hr"?"HR position":"workforce role"}</option>{roles.map((item:any)=><option key={item.id} value={item.id}>{item.code} — {item.name}</option>)}</select></label>
-        <section className="meta-audience-card publisher-audience" aria-label="Audience and location">
-          <header className="publisher-audience-heading"><h3>Audience &amp; location</h3><p>Set the location pin and distance for this ad.</p></header>
-          <div>
-            <span>STATION DEFAULT PIN</span>
-            {audienceLoading?<b>Checking station coordinates…</b>:audience?<><b>{audience.stationCode} — {audience.stationName}</b><small>{audience.address||"Verified station pin"}</small><small>{Number(audience.latitude).toFixed(5)}, {Number(audience.longitude).toFixed(5)} · default for this station</small><a href={`https://www.google.com/maps?q=${audience.latitude},${audience.longitude}`} target="_blank" rel="noreferrer">Check station pin on map ↗</a></>:<><b>{form.locationId?"Audience unavailable":"Select a station"}</b><small>{form.locationId?"Add a verified ad pin in Station Contacts before publishing.":"The station pin is selected by default. You can adjust it for this ad."}</small></>}
-          </div>
-          <div className="publisher-audience-controls"><MetaLocationPinPicker key={`pin-${form.locationId}`} token={token} station={audience} value={form.customPin} radiusKm={Number(form.audienceRadiusKm)} disabled={busy||audienceLoading||!audience} scope={{stream,locationId:form.locationId,roleId:form.roleId}} onChange={pin=>update("customPin",pin)}/><MetaAudienceRadiusPicker value={String(form.audienceRadiusKm)} disabled={!audience||audienceLoading} onChange={(value)=>update("audienceRadiusKm",value)}/></div>
-        </section>
-        <label>Daily budget (₹)<input type="number" min="100" value={form.dailyBudget} onChange={(e)=>update("dailyBudget",e.target.value)}/></label>
-        <label>Run for<input type="number" min="1" max="90" value={form.daysRequired} onChange={(e)=>update("daysRequired",e.target.value)}/><small>days · delivery stops automatically at the end</small></label>
-        <MetaCampaignCategoryPicker value={form.campaignCategory} accountCountry={catalog?.accountCountry} onChange={(value)=>{update("campaignCategory",value);update("campaignId","");}}/>
-        <label>Campaign<select value={form.campaignMode} onChange={(e)=>update("campaignMode",e.target.value)}><option value="new">Create new Leads campaign</option><option value="existing">Use existing Leads campaign</option></select></label>
-        {form.campaignMode==="existing"?<label>Existing campaign<select value={form.campaignId} onChange={(e)=>update("campaignId",e.target.value)}><option value="">Select campaign</option>{(catalog?.campaigns??[]).filter((item:any)=>matchesMetaCampaignCategory(item.specialAdCategories,form.campaignCategory)).map((item:any)=><option key={item.id} value={item.id}>{item.name} · {item.effectiveStatus}</option>)}</select></label>:<label>Campaign name<input value={form.campaignName} onChange={(e)=>update("campaignName",e.target.value)}/></label>}
-        <label>Instant form<select value={form.formId} onChange={(e)=>update("formId",e.target.value)}><option value="">Select a form matching {selectedRole?.code||"designation"}</option>{matchedForms.map((item:any)=><option key={item.id} value={item.id}>{item.name}</option>)}</select><small>{selectedRole&&!matchedForms.length?`No active Meta form matches ${selectedRole.code}.`:"Only forms matching the selected designation are shown."}</small></label>
-        <label>Call to action<select value={form.callToAction} onChange={(e)=>update("callToAction",e.target.value)}><option value="APPLY_NOW">Apply now</option><option value="SIGN_UP">Sign up</option><option value="LEARN_MORE">Learn more</option></select></label>
-        <label className="publisher-ad-name">Ad name (Meta)<input value={form.adName} readOnly placeholder="Select station and designation"/><small>Convention: STATION_DESIGNATION_YYYYMMDD</small></label>
+  return <dialog ref={dialog} className={`${styles.dialog} ${styles.createDialog}`} aria-labelledby="recruitment-ad-title" onCancel={event=>{event.preventDefault();if(!busy&&!uploading)close();}}>
+    <header className={styles.header}><div><small>{stream==="hr"?"HR":"WORKFORCE"} · RECRUITMENT</small><h2 id="recruitment-ad-title">New lead ad</h2></div><button type="button" aria-label="Close recruitment ad" disabled={busy||uploading} onClick={close}>×</button></header>
+    <div ref={body} className={styles.body}>
+    {notice?<p className={styles.notice} role="status">{notice}</p>:null}
+    {loading?<p role="status">Loading Meta forms and campaigns…</p>:null}
+    {!loading&&!review?<fieldset className={styles.fields} disabled={busy||uploading}>
+      <div className={`${styles.two} ${styles.mobileStack}`}>
+        <label>Ad type<select value="recruitment" onChange={()=>openPromotions?.(form.locationId)}><option value="recruitment">Recruitment · instant form &amp; leads</option>{openPromotions?<option value="promotion">Service / customer promotion</option>:null}</select></label>
+        <label>Location<select value={form.locationId} onChange={e=>update("locationId",e.target.value)}><option value="">Choose station / store</option>{locations.map((item:any)=><option key={item.id} value={item.id}>{item.code} — {item.name}</option>)}</select></label>
+        <label>Designation<select value={form.roleId} onChange={e=>update("roleId",e.target.value)}><option value="">Select {stream==="hr"?"HR position":"workforce role"}</option>{roles.map((item:any)=><option key={item.id} value={item.id}>{item.code} — {item.name}</option>)}</select></label>
+        <label>Instant form<select disabled={!selectedRole} value={form.formId} onChange={e=>update("formId",e.target.value)}><option value="">{selectedRole?`Select a form for ${selectedRole.code}`:"Select designation first"}</option>{matchedForms.map((item:any)=><option key={item.id} value={item.id}>{item.name}</option>)}</select>{selectedRole&&!matchedForms.length?<small role="status">No active Meta form matches {selectedRole.code}.</small>:null}</label>
       </div>
-      <div className="publisher-copy-grid">
-        <div className="publisher-upload-wrap"><span>IMAGE OR VIDEO</span>
-          <input ref={fileInput} type="file" accept={META_MEDIA_ACCEPT} onChange={event=>{const file=event.target.files?.[0];if(file)void uploadPoster(file);event.currentTarget.value="";}} hidden/>
-          {posterMeta?.kind==="video"&&posterPreview?<div className="creative-video-upload"><video src={posterPreview} controls playsInline preload="metadata" aria-label="Uploaded recruitment video"/><button type="button" disabled={uploading} onClick={()=>fileInput.current?.click()}>Choose another file</button></div>:<button type="button" className={`publisher-upload ${posterPreview?"has-poster":""}`} disabled={uploading} onClick={()=>fileInput.current?.click()}>{posterPreview?<img src={posterPreview} alt="Uploaded recruitment image"/>:<i>＋</i>}<strong>{uploading?uploadStatus:posterPreview?"Replace creative":"Upload image or video"}</strong></button>}
-          <small>Images up to 12 MB · MP4/MOV up to 50 MB · 1 second–3 minutes</small>
-          {posterMeta?<small>{posterMeta.name} · {posterMeta.width}×{posterMeta.height}{posterMeta.duration?` · ${posterMeta.duration.toFixed(1)} seconds`:""}</small>:null}
+      <p className={styles.leadDestination}>Applications → <strong>{stream==="hr"?"HR":"Workforce"} · All Leads</strong>{selectedLocation&&selectedRole?` · ${selectedLocation.code} / ${selectedRole.code}`:" · Choose a location and designation"}</p>
+      <div className={styles.composer}>
+        <section className={styles.creative} aria-label="Recruitment ad details">
+          <h3>Ad details</h3>
+          <div className={styles.two}><label>Daily budget (₹)<input type="number" min="100" value={form.dailyBudget} onChange={e=>update("dailyBudget",e.target.value)}/></label><label>Run for (days)<input type="number" min="1" max="90" value={form.daysRequired} onChange={e=>update("daysRequired",e.target.value)}/></label></div>
+          <label>Headline<input value={form.headline} onChange={e=>update("headline",e.target.value)}/></label>
+          <label>Ad text<textarea rows={3} value={form.primaryText} onChange={e=>update("primaryText",e.target.value)}/></label>
+          <label>Image or video<input type="file" accept={META_MEDIA_ACCEPT} onChange={event=>{const file=event.target.files?.[0];if(file)void uploadPoster(file);event.currentTarget.value="";}}/><small>Images up to 12 MB · MP4/MOV up to 50 MB · 1 sec–3 min</small></label>
           {uploading?<p role="status">{uploadStatus}</p>:null}
-        </div>
-        <div className="publisher-copy-fields"><label>Destination link<input type="url" value={form.destinationUrl} onChange={(e)=>update("destinationUrl",e.target.value)}/></label><label>Headline<input value={form.headline} onChange={(e)=>update("headline",e.target.value)}/></label><label>Primary text<textarea value={form.primaryText} onChange={(e)=>update("primaryText",e.target.value)}/></label><label>Description<input value={form.description} onChange={(e)=>update("description",e.target.value)} placeholder="Salary, shift or benefit (optional)"/></label></div>
+          {posterPreview?posterMeta?.kind==="video"?<video className={styles.preview} src={posterPreview} controls playsInline preload="metadata" aria-label="Recruitment video preview"/>:<img className={styles.preview} src={posterPreview} alt="Recruitment image preview"/>:null}
+          <details className={styles.advanced}><summary>Campaign &amp; more options</summary><div className={styles.stack}>
+            <label>Campaign<select value={form.campaignMode} onChange={e=>update("campaignMode",e.target.value)}><option value="new">Create new Leads campaign</option><option value="existing">Use existing Leads campaign</option></select></label>
+            {form.campaignMode==="existing"?<label>Existing campaign<select value={form.campaignId} onChange={e=>update("campaignId",e.target.value)}><option value="">Select campaign</option>{(catalog?.campaigns??[]).filter((item:any)=>matchesMetaCampaignCategory(item.specialAdCategories,form.campaignCategory)).map((item:any)=><option key={item.id} value={item.id}>{item.name} · {item.effectiveStatus}</option>)}</select></label>:<label>Campaign name<input value={form.campaignName} onChange={e=>update("campaignName",e.target.value)}/></label>}
+            <label>Call to action<select value={form.callToAction} onChange={e=>update("callToAction",e.target.value)}><option value="APPLY_NOW">Apply now</option><option value="SIGN_UP">Sign up</option><option value="LEARN_MORE">Learn more</option></select></label>
+            <label>Destination link<input type="url" value={form.destinationUrl} onChange={e=>update("destinationUrl",e.target.value)}/></label>
+            <label>Description<input value={form.description} onChange={e=>update("description",e.target.value)} placeholder="Salary, shift or benefit (optional)"/></label>
+            <label>Ad name<input value={form.adName} readOnly placeholder="Select location and designation"/></label>
+            <label>Ad set name<input value={form.adSetName} onChange={e=>update("adSetName",e.target.value)}/></label>
+            <label>Creative name<input value={form.creativeName} onChange={e=>update("creativeName",e.target.value)}/></label>
+          </div></details>
+        </section>
+        <section className={styles.audience} aria-label="Audience and location">
+          <h3>Audience &amp; location</h3>
+          <MetaCampaignCategoryPicker value={form.campaignCategory} accountCountry={catalog?.accountCountry} onChange={value=>{update("campaignCategory",value);update("campaignId","");}}/>
+          {audienceLoading?<small role="status">Checking station coordinates…</small>:audience?<small>{audience.stationCode} · {Number(audience.latitude).toFixed(5)}, {Number(audience.longitude).toFixed(5)}</small>:<small>{form.locationId?"Add a verified ad pin in Station Contacts before publishing.":"Choose a station to load its pin."}</small>}
+          <MetaAudienceRadiusPicker value={String(form.audienceRadiusKm)} disabled={!audience||audienceLoading} onChange={value=>update("audienceRadiusKm",value)}/>
+          <MetaLocationPinPicker key={`pin-${form.locationId}`} token={token} station={audience} value={form.customPin} radiusKm={Number(form.audienceRadiusKm)} disabled={busy||audienceLoading||!audience} scope={{stream,locationId:form.locationId,roleId:form.roleId}} onChange={pin=>update("customPin",pin)}/>
+        </section>
       </div>
-      {posterPreview?<PlacementGallery image={posterPreview} kind={posterMeta?.kind} headline={form.headline} copy={form.primaryText} cta={form.callToAction} width={posterMeta?.width||1} height={posterMeta?.height||1}/>:null}
-      <details className="publisher-advanced"><summary>Advanced Meta names</summary><div><label>Ad set name<input value={form.adSetName} onChange={(e)=>update("adSetName",e.target.value)}/></label><label>Creative name<input value={form.creativeName} onChange={(e)=>update("creativeName",e.target.value)}/></label></div></details>
-      <fieldset className="launch-choice"><legend>Launch state</legend><label><input type="radio" checked={form.launchMode==="paused"} onChange={()=>update("launchMode","paused")}/> Create paused <small>Review in Active Ads, then resume from DropX.</small></label><label><input type="radio" checked={form.launchMode==="live"} onChange={()=>update("launchMode","live")}/> Launch live <small>Starts spending after Meta accepts it.</small></label>{form.launchMode==="live"?<label className="live-confirm"><input type="checkbox" checked={form.confirmLive} onChange={(e)=>update("confirmLive",e.target.checked)}/> I confirm the budget and want this ad to start immediately.</label>:null}</fieldset>
-    </>:null}
+      <div className={styles.two}>
+        <label>Launch state<select value={form.launchMode} onChange={e=>{update("launchMode",e.target.value);update("confirmLive",false);}}><option value="paused">Create paused</option><option value="live">Launch live</option></select></label>
+        <small className={styles.routingHint}>{form.launchMode==="live"?"Delivery starts after Meta accepts the ad.":"Review in Active Ads, then resume when ready."}</small>
+      </div>
+      {form.launchMode==="live"?<label className={styles.check}><input type="checkbox" checked={form.confirmLive} onChange={e=>update("confirmLive",e.target.checked)}/>I confirm the budget and want this ad to start immediately.</label>:null}
+    </fieldset>:null}
     {review?<section className="publisher-review"><div><span>FINAL REVIEW</span><h3>{review.station}</h3><p>{review.designation}</p></div><dl><span><dt>Workspace</dt><dd>{review.workspace==="hr"?"HR":"Workforce"}</dd></span><span><dt>Ad name</dt><dd>{form.adName}</dd></span><span><dt>Campaign</dt><dd>{review.campaign}<br/>{review.campaignCategory}</dd></span><span><dt>Form</dt><dd>{review.form}</dd></span><span><dt>Audience</dt><dd>{review.audience?.stationCode} · 0–{review.audience?.radiusKm} km<br/>{metaAudienceRadiusLabel(review.audience?.radiusKm)}<br/>{review.audience?.address}<br/><a href={`https://www.google.com/maps?q=${review.audience?.latitude},${review.audience?.longitude}`} target="_blank" rel="noreferrer">{review.audience?.latitude}, {review.audience?.longitude} · View pin ↗</a></dd></span><span><dt>Budget</dt><dd>₹{Number(review.dailyBudget).toLocaleString("en-IN")}/day × {review.durationDays} days</dd></span><span><dt>Launch</dt><dd>{review.launchMode==="live"?"Start live":"Create paused"}</dd></span></dl><p>{review.metaAudienceValidated?"Meta accepted this campaign and audience in a validation-only check. Ad review still applies.":"Meta will validate the campaign and exact audience before the ad can start spending."}</p>{posterPreview?<PlacementGallery image={posterPreview} kind={posterMeta?.kind} headline={form.headline} copy={form.primaryText} cta={form.callToAction} width={posterMeta?.width||1} height={posterMeta?.height||1}/>:null}</section>:null}
-    {notice?<div className={notice.startsWith("Meta ad")||notice.startsWith("Creative uploaded")?"success-banner":"error-banner"}>{notice}</div>:null}
-    <footer className="publisher-actions"><button disabled={busy||uploading} onClick={review?()=>setReview(null):close}>{review?"Back to edit":"Cancel"}</button>{!loading&&!review?<button className="primary-action" disabled={busy||uploading||audienceLoading||!audience||!form.imageHash||!isValidMetaAudienceRadius(form.audienceRadiusKm)} onClick={()=>void submit(true)}>{uploading?"Uploading…":audienceLoading?"Checking station…":busy?"Checking…":"Review ad"}</button>:null}{review&&!notice.startsWith("Meta ad")?<button className="primary-action" disabled={busy} onClick={()=>void submit(false)}>{busy?"Creating in Meta…":form.launchMode==="live"?"Confirm & launch live":"Confirm & create paused"}</button>:null}{notice.startsWith("Meta ad")?<button className="primary-action" onClick={close}>Done</button>:null}</footer>
-  </section></div>;
+    </div>
+    <footer className={styles.footer}><button disabled={busy||uploading} onClick={review?()=>setReview(null):close}>{review?"Back to edit":"Cancel"}</button>{!loading&&!review?<button className={styles.primary} disabled={busy||uploading||audienceLoading||!audience||!form.roleId||!form.formId||!form.imageHash||(form.launchMode==="live"&&!form.confirmLive)||!isValidMetaAudienceRadius(form.audienceRadiusKm)} onClick={()=>void submit(true)}>{uploading?"Uploading…":audienceLoading?"Checking station…":busy?"Checking…":"Review ad"}</button>:null}{review&&!notice.startsWith("Meta ad")?<button className={styles.primary} disabled={busy} onClick={()=>void submit(false)}>{busy?"Creating in Meta…":form.launchMode==="live"?"Confirm & launch live":"Confirm & create paused"}</button>:null}{notice.startsWith("Meta ad")?<button className={styles.primary} onClick={close}>Done</button>:null}</footer>
+  </dialog>;
 }

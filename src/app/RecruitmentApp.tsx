@@ -221,6 +221,7 @@ export default function RecruitmentApp() {
   const [adRequest, setAdRequest] = useState<{ type: "new_ad" | "budget_change" | "stop_ad" | "resume_ad" | "extend_ad"; ad?: any } | null>(null);
   const [directAdPublisher, setDirectAdPublisher] = useState(false);
   const [promotionsOpen, setPromotionsOpen] = useState(false);
+  const [adComposerEntry, setAdComposerEntry] = useState({ locationId: "", newPromotion: false });
   const [options, setOptions] = useState<any>({ locations: [], roles: [], statuses: [], workforceStatuses: [], finalStatuses: [], assignees: [] });
   const [filters, setFilters] = useState(emptyLeadFilters);
   const [facets, setFacets] = useState<any>(null);
@@ -752,8 +753,8 @@ export default function RecruitmentApp() {
     </section>
     {detailBusy && !selectedLead ? <div className="inline-loading"><div className="loader" /></div> : null}
     {adRequest ? <AdRequestForm token={token} options={options} stream={stream} requestType={adRequest.type} ad={adRequest.ad} directMode={menuLevel(stream,"Active Ads")==="all"} close={() => setAdRequest(null)} afterSave={async () => { setAdRequest(null); await load(); }} /> : null}
-    {directAdPublisher?<MetaAdPublisher token={token} stream={stream} options={options} close={()=>setDirectAdPublisher(false)} openPromotions={()=>{setDirectAdPublisher(false);setPromotionsOpen(true);}} afterPublish={async()=>{await load();}}/>:null}
-    {promotionsOpen?<MetaPromotionsPanel token={token} stream={stream} locations={options?.locations??[]} close={()=>setPromotionsOpen(false)}/>:null}
+    {directAdPublisher?<MetaAdPublisher token={token} stream={stream} options={options} initialLocationId={adComposerEntry.locationId} close={()=>{setDirectAdPublisher(false);setAdComposerEntry({locationId:"",newPromotion:false});}} openPromotions={(locationId)=>{setAdComposerEntry({locationId,newPromotion:true});setDirectAdPublisher(false);setPromotionsOpen(true);}} afterPublish={async()=>{await load();}}/>:null}
+    {promotionsOpen?<MetaPromotionsPanel token={token} stream={stream} locations={options?.locations??[]} initialLocationId={adComposerEntry.locationId} startCreating={adComposerEntry.newPromotion} close={()=>{setPromotionsOpen(false);setAdComposerEntry({locationId:"",newPromotion:false});}} openRecruitment={(locationId)=>{setAdComposerEntry({locationId,newPromotion:false});setPromotionsOpen(false);setDirectAdPublisher(true);}}/>:null}
   </main>;
 }
 

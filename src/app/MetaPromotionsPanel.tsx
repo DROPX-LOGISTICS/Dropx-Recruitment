@@ -10,7 +10,7 @@ import MetaLocationPinPicker from "./MetaLocationPinPicker";
 import styles from "./MetaPromotionsPanel.module.css";
 
 type Location = { id: string; code: string; name: string };
-type Props = { token: string; stream: "workforce" | "hr"; locations: Location[]; close: () => void };
+type Props = { token: string; stream: "workforce" | "hr"; locations: Location[]; close: () => void; openRecruitment: (locationId: string) => void; initialLocationId?: string; startCreating?: boolean };
 type Form = { locationId: string; purpose: PromotionPurpose; campaignCategory: string; adName: string; dailyBudget: string; daysRequired: string; destinationUrl: string; headline: string; primaryText: string; description: string; imageHash: string; posterUrl: string; audienceRadiusKm: string; customPin: AdAudiencePin | null; demographics: PromotionDemographics };
 type Promotion = { id: string; ad_name: string; status: string; meta_ad_id?: string; error_message?: string; location_id: string; draft: Form; snapshot?: any };
 type Loaded = { ad: Promotion; version: string; status: string; point: (AdAudiencePin & { radiusKm: number }) | null; demographics: PromotionDemographics };
@@ -32,13 +32,13 @@ export function PromotionDemographicFields({ value, onChange }: { value: Promoti
     <label>Maximum age<select value={value.ageMax} onChange={e => onChange({ ...value, ageMax: Number(e.target.value) })}>{ages.map(n => <option key={n} value={n}>{ageLabel(n)}</option>)}</select></label>
   </div>;
 }
-export default function MetaPromotionsPanel({ token, stream, locations, close }: Props) {
+export default function MetaPromotionsPanel({ token, stream, locations, close, openRecruitment, initialLocationId = "", startCreating = false }: Props) {
   const dialog = useRef<HTMLDialogElement>(null);
   const reviewBox = useRef<HTMLElement>(null);
   const uploadController = useRef<AbortController | null>(null);
   const [ads, setAds] = useState<Promotion[]>([]), [loading, setLoading] = useState(true), [busy, setBusy] = useState(false);
-  const [mode, setMode] = useState<"list" | "new" | "edit" | "delivery">("list");
-  const [form, setForm] = useState(initialForm), [station, setStation] = useState<AdAudiencePin | null>(null);
+  const [mode, setMode] = useState<"list" | "new" | "edit" | "delivery">(startCreating ? "new" : "list");
+  const [form, setForm] = useState(() => ({ ...initialForm(), locationId: initialLocationId })), [station, setStation] = useState<AdAudiencePin | null>(null);
   const [selected, setSelected] = useState<Loaded | null>(null), [review, setReview] = useState<any>(null);
   const [confirmed, setConfirmed] = useState(false), [notice, setNotice] = useState("");
   const [requestId, setRequestId] = useState(() => crypto.randomUUID()), [preview, setPreview] = useState("");
@@ -111,7 +111,8 @@ export default function MetaPromotionsPanel({ token, stream, locations, close }:
         <div className={mode === "new" ? styles.composer : styles.stack}>
         {mode === "new" ? <section className={styles.creative} aria-label="Promotion details">
           <h3>Ad details</h3>
-          <div className={`${styles.two} ${styles.mobileStack}`}><label>Promotion type<select value={form.purpose} onChange={e => update("purpose", e.target.value as PromotionPurpose)}><option value="service_offer">Delivery / service promotion</option><option value="customer_offer">Customer offer</option><option value="brand">Brand promotion</option></select></label><label>Location<select value={form.locationId} onChange={e => update("locationId", e.target.value)}><option value="">Choose station / store</option>{locations.map(l => <option key={l.id} value={l.id}>{l.code} — {l.name}</option>)}</select></label></div>
+          <div className={`${styles.two} ${styles.mobileStack}`}><label>Ad type<select value={form.purpose} onChange={e => { if (e.target.value === "recruitment") openRecruitment(form.locationId); else update("purpose", e.target.value as PromotionPurpose); }}><option value="recruitment">Recruitment · instant form & leads</option><option value="service_offer">Delivery / service promotion</option><option value="customer_offer">Customer offer</option><option value="brand">Brand promotion</option></select></label><label>Location<select value={form.locationId} onChange={e => update("locationId", e.target.value)}><option value="">Choose station / store</option>{locations.map(l => <option key={l.id} value={l.id}>{l.code} — {l.name}</option>)}</select></label></div>
+          <small className={styles.routingHint}>Need a designation and instant form? Select Recruitment to receive applications in Leads.</small>
           <label>Ad name<input value={form.adName} maxLength={200} onChange={e => update("adName", e.target.value)} placeholder="Calicut delivery service offer" /></label>
           <div className={styles.two}><label>Daily budget (₹)<input type="number" min="100" value={form.dailyBudget} onChange={e => update("dailyBudget", e.target.value)} /></label><label>Run for (days)<input type="number" min="1" max="90" value={form.daysRequired} onChange={e => update("daysRequired", e.target.value)} /></label></div>
           <label>Website destination<input type="url" value={form.destinationUrl} onChange={e => update("destinationUrl", e.target.value)} placeholder="https://your-service-page.example" /></label>
