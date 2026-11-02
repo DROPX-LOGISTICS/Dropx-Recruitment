@@ -68,7 +68,7 @@ export default function MetaAdAudienceEditor({ token, ad, close, afterSave }: { 
   return <div className="modal-backdrop"><section ref={dialog} tabIndex={-1} className="modal request-modal audience-editor" role="dialog" aria-modal="true" aria-label="Edit ad audience" onKeyDown={event => {
     if (event.key === "Escape" && !busy) close();
     if (event.key !== "Tab") return;
-    const focusable = dialog.current?.querySelectorAll<HTMLElement>('button:not([disabled]),input:not([disabled]),a[href],select:not([disabled])');
+    const focusable = dialog.current?.querySelectorAll<HTMLElement>('button:not([disabled]),input:not([disabled]),a[href],select:not([disabled]),summary');
     if (!focusable?.length) return;
     const first = focusable[0], last = focusable[focusable.length - 1];
     if (event.shiftKey && (document.activeElement === first || document.activeElement === dialog.current)) { event.preventDefault(); last.focus(); }
