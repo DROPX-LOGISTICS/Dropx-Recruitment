@@ -4,6 +4,7 @@ import { assertMetaTargeting } from "./meta-targeting";
 import { metaDeliveryStatus, type MetaDeliverySnapshot } from "./meta-ad-delivery";
 import { getConnectionConfig } from "./connection-config";
 import { withMetaObjectEditGate } from "./meta-graph-throttle";
+import { AUDIENCE_EDIT_FIELDS, changeMetaAudience, type AudienceSnapshot, type AudiencePoint } from "./meta-ad-audience-edit";
 import {
   META_AUDIENCE_RADIUS_MAX_KM,
   META_AUDIENCE_RADIUS_MIN_KM
@@ -58,7 +59,7 @@ export type MetaLocationAudience = {
   latitude: number;
   longitude: number;
   radiusKm: number;
-  source: "station_contacts" | "location_master";
+  source: "station_contacts" | "location_master" | "ad_override";
 };
 
 export type MetaPublishProgress = {
@@ -122,7 +123,7 @@ export function validateMetaLocationAudience(input: MetaLocationAudience): MetaL
     latitude,
     longitude,
     radiusKm,
-    source: input.source === "location_master" ? "location_master" : "station_contacts"
+    source: input.source === "ad_override" ? "ad_override" : input.source === "location_master" ? "location_master" : "station_contacts"
   };
 }
 
@@ -333,9 +334,11 @@ async function graphRequest(
   connection: Awaited<ReturnType<typeof metaConnection>>,
   path: string,
   method: "GET" | "POST" = "GET",
-  values?: Record<string, string>
+  values?: Record<string, string>,
+  beforeEdit?: () => Promise<void>
 ) {
   const execute = async () => {
+    await beforeEdit?.();
     const encodedPath = path.split("/").map((part) => encodeURIComponent(part)).join("/");
     const url = new URL(`https://graph.facebook.com/${connection.graphVersion}/${encodedPath}`);
     const response = await fetch(url, {
@@ -374,6 +377,38 @@ export async function getMetaAdDeliverySnapshot(adId: string) {
   return await graphGet(await metaConnection(), adId, {
     fields: "id,name,status,configured_status,effective_status,adset{id,name,status,effective_status,start_time,end_time,daily_budget,targeting},campaign{id,name,status,effective_status}"
   }) as MetaDeliverySnapshot & Record<string, unknown>;
+}
+
+export async function getMetaAudienceSnapshot(adId: string) {
+  return await graphGet(await metaConnection(), requireMetaObjectId(adId, "Ad ID"), { fields: AUDIENCE_EDIT_FIELDS }) as AudienceSnapshot;
+}
+
+export async function editMetaAdAudience(input: { adId: string; expectedVersion: string; station: AudiencePoint | null; center: unknown; radiusKm: unknown; customPin?: unknown; validateOnly: boolean }) {
+  const connection = await metaConnection();
+  return changeMetaAudience({ ...input,
+    read: async () => await graphGet(connection, requireMetaObjectId(input.adId, "Ad ID"), { fields: AUDIENCE_EDIT_FIELDS }) as AudienceSnapshot,
+    post: (id, values, check) => graphRequest(connection, id, "POST", values, check)
+  });
+}
+
+export async function searchMetaAudienceLocations(query: string) {
+  const connection = await metaConnection();
+  const result = await graphGet(connection, "search", { type: "adgeolocation", q: query,
+    location_types: JSON.stringify(["city", "zip"]), country_code: "IN", limit: "8" });
+  const kinds: Record<string, string> = { city: "cities", zip: "zips", neighborhood: "neighborhoods", subcity: "subcities" };
+  const places = (Array.isArray(result.data) ? result.data : []).filter((item: any) => item.country_code === "IN" && kinds[item.type]);
+  if (!places.length) return [];
+  const params: Record<string, string> = { type: "adgeolocationmeta", show_polygons_and_coordinates: "true" };
+  for (const kind of Object.keys(kinds)) {
+    const keys = places.filter((item: any) => item.type === kind).map((item: any) => String(item.key));
+    if (keys.length) params[kinds[kind]] = JSON.stringify(keys);
+  }
+  const metadata = await graphGet(connection, "search", params);
+  return places.map((item: any) => ({
+    key: String(item.key || ""), label: [item.name, item.region, item.country_name].filter(Boolean).join(", "),
+    latitude: Number((metadata.data as any)?.[kinds[item.type]]?.[item.key]?.latitude),
+    longitude: Number((metadata.data as any)?.[kinds[item.type]]?.[item.key]?.longitude)
+  })).filter((item: any) => Number.isFinite(item.latitude) && Number.isFinite(item.longitude) && item.latitude >= 5 && item.latitude <= 38 && item.longitude >= 67 && item.longitude <= 98);
 }
 
 export async function setMetaObjectStatus(objectId: string, status: "ACTIVE" | "PAUSED") {

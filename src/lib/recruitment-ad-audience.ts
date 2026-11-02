@@ -1,11 +1,13 @@
 import { validateMetaLocationAudience, type MetaLocationAudience } from "./meta-ad-builder";
 import { META_AUDIENCE_RADIUS_DEFAULT_KM } from "./meta-audience-radius";
 import { supabaseAdmin } from "./supabase-admin";
+import { validateAdAudiencePin } from "./meta-audience-pin";
 
 export async function resolveRecruitmentAdAudience(input: {
   companyId: string;
   locationId: string;
   radiusKm?: unknown;
+  customPin?: unknown;
 }): Promise<MetaLocationAudience> {
   if (!supabaseAdmin) throw new Error("Supabase is not configured.");
   const locationId = String(input.locationId || "").trim();
@@ -37,7 +39,8 @@ export async function resolveRecruitmentAdAudience(input: {
     .eq("location_id", locationId)
     .maybeSingle();
   if (adPinResult.error) throw new Error(adPinResult.error.message);
-  const adPin = adPinResult.data;
+  const override = input.customPin == null ? null : validateAdAudiencePin(input.customPin);
+  const adPin = override ? { ad_latitude: override.latitude, ad_longitude: override.longitude } : adPinResult.data;
   if (adPin?.ad_latitude == null || adPin?.ad_longitude == null) {
     throw new Error(`Add the Meta ad pin for ${code} in Station Contacts before publishing.`);
   }
@@ -45,12 +48,12 @@ export async function resolveRecruitmentAdAudience(input: {
     locationId,
     stationCode: code,
     stationName: String(station.station_name || code).trim(),
-    address: null,
+    address: override?.label || null,
     latitude: adPin.ad_latitude,
     longitude: adPin.ad_longitude,
     radiusKm: input.radiusKm == null || String(input.radiusKm).trim() === ""
       ? META_AUDIENCE_RADIUS_DEFAULT_KM
       : Number(input.radiusKm),
-    source: "station_contacts"
+    source: override ? "ad_override" : "station_contacts"
   });
 }

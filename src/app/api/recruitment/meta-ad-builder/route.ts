@@ -122,7 +122,8 @@ export async function POST(request: Request) {
     const audience = await resolveRecruitmentAdAudience({
       companyId,
       locationId,
-      radiusKm: sourceDraft.audienceRadiusKm
+      radiusKm: sourceDraft.audienceRadiusKm,
+      customPin: sourceDraft.customPin
     });
     const draft = validateMetaAdDraft({ ...sourceDraft, audience } as MetaAdDraft);
     const stationCode = String(locationResult.data.code || "").trim().toUpperCase();

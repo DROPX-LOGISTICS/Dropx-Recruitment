@@ -16,6 +16,14 @@ describe("authoritative publishing location", () => {
     expect(result).toMatchObject({ stationName: "Vadakara", latitude: 11.61979, longitude: 75.58657, source: "station_contacts" });
     expect(fixture.tables).toEqual(["recruitment_locations", "stations", "recruitment_location_contacts"]);
   });
+  it("uses an ad-only override while retaining the canonical station identity", async () => {
+    const result = await resolveRecruitmentAdAudience({ companyId: "company", locationId: "location-klza", radiusKm: 5, customPin: { latitude: 11.259, longitude: 75.7914, label: "Calicut" } });
+    expect(result).toMatchObject({ stationName: "Vadakara", latitude: 11.259, longitude: 75.7914, radiusKm: 5, source: "ad_override" });
+    expect(fixture.adLatitude).toBe(11.61979);
+  });
+  it("rejects a malformed override rather than silently using the station pin", async () => {
+    await expect(resolveRecruitmentAdAudience({ companyId: "company", locationId: "location-klza", customPin: { latitude: "", longitude: 75 } })).rejects.toThrow("valid");
+  });
   it("fails closed on a missing canonical station link", async () => {
     fixture.stationId = null;
     await expect(resolveRecruitmentAdAudience({ companyId: "company", locationId: "location-klza" })).rejects.toThrow("not linked");

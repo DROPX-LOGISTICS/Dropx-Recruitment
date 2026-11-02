@@ -1,4 +1,5 @@
 "use client";
+import { recruitmentClientHeaders } from "@/lib/recruitment-client-headers";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -15,13 +16,14 @@ import {
   metaAudienceRadiusLabel
 } from "@/lib/meta-audience-radius";
 import MetaAudienceRadiusPicker from "./MetaAudienceRadiusPicker";
+import MetaLocationPinPicker from "./MetaLocationPinPicker";
 import MetaCampaignCategoryPicker from "./MetaCampaignCategoryPicker";
 import { matchesMetaCampaignCategory } from "@/lib/meta-campaign-category";
 
 type Workspace = "workforce" | "hr";
 type Props = { token:string; stream:Workspace; options:any; close:()=>void; afterPublish:()=>Promise<void> };
 
-function authHeaders(token:string){return {Authorization:`Bearer ${token}`,"Content-Type":"application/json"};}
+function authHeaders(token:string){return {...recruitmentClientHeaders(token),"Content-Type":"application/json"};}
 function requestKey(){return typeof crypto!=="undefined"&&"randomUUID" in crypto?crypto.randomUUID().replaceAll("-",""):`${Date.now()}_${Math.random().toString(36).slice(2)}`;}
 function ctaLabel(value:string){return value.replaceAll("_"," ").toLowerCase().replace(/^./,(letter)=>letter.toUpperCase());}
 
@@ -68,7 +70,7 @@ export default function MetaAdPublisher({token,stream,options,close,afterPublish
   const [form,setForm]=useState<Record<string,any>>({
     locationId:"",roleId:"",campaignCategory:"EMPLOYMENT",campaignMode:"new",campaignId:"",campaignName:"",formId:"",dailyBudget:"300",daysRequired:"7",
     adName:"",adSetName:"",creativeName:"",primaryText:"",headline:"",description:"",imageHash:"",posterUrl:"",videoId:"",
-    destinationUrl:"https://recruit.dropxlogistics.com",callToAction:"APPLY_NOW",audienceRadiusKm:String(META_AUDIENCE_RADIUS_DEFAULT_KM),launchMode:"paused",confirmLive:false
+    destinationUrl:"https://recruit.dropxlogistics.com",callToAction:"APPLY_NOW",audienceRadiusKm:String(META_AUDIENCE_RADIUS_DEFAULT_KM),customPin:null,launchMode:"paused",confirmLive:false
   });
 
   useEffect(()=>{const controller=new AbortController();fetch(`/api/recruitment/meta-ad-builder?stream=${stream}`,{headers:{Authorization:`Bearer ${token}`},cache:"no-store",signal:controller.signal}).then(async(response)=>{const payload=await response.json();if(!response.ok)throw new Error(payload.error||"Unable to load Meta setup.");setCatalog(payload.catalog);}).catch((error)=>{if(error?.name!=="AbortError")setNotice(error instanceof Error?error.message:"Unable to load Meta setup.");}).finally(()=>setLoading(false));return()=>controller.abort();},[stream,token]);
@@ -77,7 +79,7 @@ export default function MetaAdPublisher({token,stream,options,close,afterPublish
   const selectedLocation=locations.find((item:any)=>item.id===form.locationId);
   const selectedRole=roles.find((item:any)=>item.id===form.roleId);
   const matchedForms=useMemo(()=>matchingMetaFormsForDesignation(catalog?.forms??[],selectedRole??{}),[catalog?.forms,selectedRole?.code,selectedRole?.name,selectedRole?.aliases]);
-  function update(key:string,value:any){setReview(null);setNotice("");if(key==="locationId")setAudience(null);setForm((current)=>({...current,[key]:value}));}
+  function update(key:string,value:any){setReview(null);setNotice("");if(key==="locationId")setAudience(null);setForm((current)=>({...current,[key]:value,...(key==="locationId"?{customPin:null}:{})}));}
   useEffect(()=>{
     if(!form.locationId){setAudience(null);setAudienceLoading(false);return;}
     const controller=new AbortController();
@@ -116,8 +118,8 @@ export default function MetaAdPublisher({token,stream,options,close,afterPublish
     }finally{setUploading(false);}
   }
 
-  const payload={stream,locationId:form.locationId,roleId:form.roleId,clientRequestId,launchMode:form.launchMode,confirmLive:form.confirmLive,draft:{campaignCategory:form.campaignCategory,campaignMode:form.campaignMode,campaignId:form.campaignId||null,campaignName:form.campaignName||null,formId:form.formId,dailyBudget:Number(form.dailyBudget),daysRequired:Number(form.daysRequired),adName:form.adName,adSetName:form.adSetName,creativeName:form.creativeName,primaryText:form.primaryText,headline:form.headline,description:form.description||null,imageHash:form.imageHash,videoId:form.videoId||null,posterUrl:form.posterUrl||null,destinationUrl:form.destinationUrl,callToAction:form.callToAction,audienceRadiusKm:Number(form.audienceRadiusKm)}};
-  async function submit(validateOnly:boolean){setBusy(true);setNotice("");try{if(uploading)throw new Error("Wait for the creative upload to finish.");if(audienceLoading)throw new Error("Wait for the station audience to finish loading.");if(!audience)throw new Error("This station has no valid latitude/longitude in the Location Master.");if(!isValidMetaAudienceRadius(form.audienceRadiusKm))throw new Error("Choose an audience radius from 3 to 80 km.");if(!matchedForms.length)throw new Error(`No active Meta form matches ${selectedRole?.code||"this designation"}.`);if(!form.formId)throw new Error(`Choose a ${selectedRole?.code||"designation"}-matched Meta form.`);if(!form.imageHash)throw new Error("Upload an image or video before reviewing the ad.");const response=await fetch("/api/recruitment/meta-ad-builder",{method:"POST",headers:authHeaders(token),body:JSON.stringify({...payload,validateOnly,reviewedAudience:review?.audience})});const result=await response.json();if(!response.ok)throw new Error(result.error||"Unable to publish the Meta ad.");if(validateOnly)setReview(result.review);else{setNotice(`Meta ad ${result.status==="ACTIVE"?"is live":result.status==="SCHEDULED"?"is scheduled":result.status==="PAUSED"?"was created paused":`was created · Meta status: ${String(result.status||"unknown").toLowerCase().replaceAll("_"," ")}`}. Ad ID: ${result.metaAdId||"saved"}`);await afterPublish();}}catch(error){setNotice(error instanceof Error?error.message:"Unable to publish the Meta ad.");}finally{setBusy(false);}}
+  const payload={stream,locationId:form.locationId,roleId:form.roleId,clientRequestId,launchMode:form.launchMode,confirmLive:form.confirmLive,draft:{campaignCategory:form.campaignCategory,campaignMode:form.campaignMode,campaignId:form.campaignId||null,campaignName:form.campaignName||null,formId:form.formId,dailyBudget:Number(form.dailyBudget),daysRequired:Number(form.daysRequired),adName:form.adName,adSetName:form.adSetName,creativeName:form.creativeName,primaryText:form.primaryText,headline:form.headline,description:form.description||null,imageHash:form.imageHash,videoId:form.videoId||null,posterUrl:form.posterUrl||null,destinationUrl:form.destinationUrl,callToAction:form.callToAction,audienceRadiusKm:Number(form.audienceRadiusKm),customPin:form.customPin}};
+  async function submit(validateOnly:boolean){setBusy(true);setNotice("");try{if(uploading)throw new Error("Wait for the creative upload to finish.");if(audienceLoading)throw new Error("Wait for the station audience to finish loading.");if(!audience)throw new Error("Add a verified ad pin for this station in Station Contacts.");if(!isValidMetaAudienceRadius(form.audienceRadiusKm))throw new Error("Choose an audience radius from 3 to 80 km.");if(!matchedForms.length)throw new Error(`No active Meta form matches ${selectedRole?.code||"this designation"}.`);if(!form.formId)throw new Error(`Choose a ${selectedRole?.code||"designation"}-matched Meta form.`);if(!form.imageHash)throw new Error("Upload an image or video before reviewing the ad.");const response=await fetch("/api/recruitment/meta-ad-builder",{method:"POST",headers:authHeaders(token),body:JSON.stringify({...payload,validateOnly,reviewedAudience:review?.audience})});const result=await response.json();if(!response.ok)throw new Error(result.error||"Unable to publish the Meta ad.");if(validateOnly)setReview(result.review);else{setNotice(`Meta ad ${result.status==="ACTIVE"?"is live":result.status==="SCHEDULED"?"is scheduled":result.status==="PAUSED"?"was created paused":`was created · Meta status: ${String(result.status||"unknown").toLowerCase().replaceAll("_"," ")}`}. Ad ID: ${result.metaAdId||"saved"}`);await afterPublish();}}catch(error){setNotice(error instanceof Error?error.message:"Unable to publish the Meta ad.");}finally{setBusy(false);}}
 
   return <div className="modal-backdrop meta-publisher-backdrop" onMouseDown={(event)=>{if(event.currentTarget===event.target&&!busy&&!uploading)close();}}><section className="modal meta-direct-publisher" role="dialog" aria-modal="true" aria-label={`Create ${stream} Meta ad`}>
     <header className="modal-header"><div><span>{stream==="hr"?"HR HIRING":"WORKFORCE HIRING"}</span><h2>Post a Meta lead ad</h2><p>Upload, preview and publish without leaving DropX Recruitment.</p></div><button disabled={busy||uploading} onClick={close}>×</button></header>
@@ -129,9 +131,9 @@ export default function MetaAdPublisher({token,stream,options,close,afterPublish
         <section className="meta-audience-card publisher-audience">
           <div>
             <span>VERIFIED GEO AUDIENCE · LOCATION MASTER</span>
-            {audienceLoading?<b>Checking station coordinates…</b>:audience?<><b>{audience.stationCode} — {audience.stationName}</b><small>{audience.address||"Station address"}</small><small>{Number(audience.latitude).toFixed(5)}, {Number(audience.longitude).toFixed(5)} · coordinates are locked</small><a href={`https://www.google.com/maps?q=${audience.latitude},${audience.longitude}`} target="_blank" rel="noreferrer">Check station pin on map ↗</a></>:<><b>{form.locationId?"Audience unavailable":"Select a station"}</b><small>{form.locationId?"Add valid latitude and longitude in the Location Master before publishing.":"The station master will supply the audience coordinates."}</small></>}
+            {audienceLoading?<b>Checking station coordinates…</b>:audience?<><b>{audience.stationCode} — {audience.stationName}</b><small>{audience.address||"Station address"}</small><small>{Number(audience.latitude).toFixed(5)}, {Number(audience.longitude).toFixed(5)} · coordinates are locked</small><a href={`https://www.google.com/maps?q=${audience.latitude},${audience.longitude}`} target="_blank" rel="noreferrer">Check station pin on map ↗</a></>:<><b>{form.locationId?"Audience unavailable":"Select a station"}</b><small>{form.locationId?"Add a verified ad pin in Station Contacts before publishing.":"The station master will supply the audience coordinates."}</small></>}
           </div>
-          <MetaAudienceRadiusPicker key={form.locationId} value={String(form.audienceRadiusKm)} disabled={!audience||audienceLoading} onChange={(value)=>update("audienceRadiusKm",value)}/>
+          <div className="publisher-audience-controls"><MetaLocationPinPicker key={form.locationId} token={token} station={audience} value={form.customPin} radiusKm={Number(form.audienceRadiusKm)} disabled={busy||audienceLoading||!audience} scope={{stream,locationId:form.locationId,roleId:form.roleId}} onChange={pin=>update("customPin",pin)}/><MetaAudienceRadiusPicker key={form.locationId} value={String(form.audienceRadiusKm)} disabled={!audience||audienceLoading} onChange={(value)=>update("audienceRadiusKm",value)}/></div>
         </section>
         <label>Daily budget (₹)<input type="number" min="100" value={form.dailyBudget} onChange={(e)=>update("dailyBudget",e.target.value)}/></label>
         <label>Run for<input type="number" min="1" max="90" value={form.daysRequired} onChange={(e)=>update("daysRequired",e.target.value)}/><small>days · delivery stops automatically at the end</small></label>

@@ -677,7 +677,8 @@ export async function PATCH(request: Request) {
           const audience = await resolveRecruitmentAdAudience({
             companyId,
             locationId: String(current.data.location_id || ""),
-            radiusKm: sourceDraft.audienceRadiusKm
+            radiusKm: sourceDraft.audienceRadiusKm,
+      customPin: sourceDraft.customPin
           });
           const draft = {
             campaignMode: sourceDraft.campaignMode === "existing" ? "existing" : "new",
