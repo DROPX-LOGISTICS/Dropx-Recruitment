@@ -7,6 +7,10 @@ export type AdScheduleData = {
 };
 
 const parse = (value: unknown) => value ? Date.parse(String(value)) : Number.NaN;
+export function canExtendAd(ad: AdScheduleData & { meta_ad_id?: unknown }, now: number) {
+  return Boolean(ad.meta_ad_id) && ["ACTIVE", "PAUSED"].includes(String(ad.status).toUpperCase())
+    && parse(ad.ends_at) > now;
+}
 const scheduleDateFormatter = new Intl.DateTimeFormat("en-IN", {
   timeZone: "Asia/Kolkata", weekday: "short", day: "2-digit", month: "short", year: "numeric",
   hour: "2-digit", minute: "2-digit", hour12: true

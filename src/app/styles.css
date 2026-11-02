@@ -442,6 +442,16 @@ dl{display:grid;grid-template-columns:minmax(110px,35%) 1fr;gap:8px 12px;margin:
 /* Keep ad end dates visible without opening the insights dialog. */
 .active-ads-desktop-table table{min-width:1580px}
 .active-ads-desktop-table .ad-schedule-cell{min-width:220px;max-width:270px}
+.ad-extension-summary{background:#fff8f3;border:1px solid #fed7aa;border-radius:10px;padding:14px}
+.ad-extension-summary dl{display:grid;gap:12px;margin:0;grid-template-columns:repeat(2,minmax(0,1fr))}
+.ad-extension-summary dt{font-size:11px;color:#667085;margin-bottom:4px}
+.ad-extension-summary dd{margin:0;font-size:13px;font-weight:700;line-height:1.5;color:#172033}
+.ad-extension-summary .ad-extension-new-end dd{color:#b42359}
+.ad-extension-summary p{font-size:12px;color:#667085;line-height:1.5;margin:12px 0 0}
+.ad-extension-days{grid-column:1/-1}
+.ad-extension-presets{display:flex;gap:8px;margin:8px 0 0}
+.ad-extension-presets button[aria-pressed="true"]{background:#fff1f6;border-color:#d51e62;color:#b42359}
+@media(max-width:520px){.ad-extension-summary dl{grid-template-columns:1fr}}
 .ad-schedule{display:grid;gap:5px;line-height:1.45;white-space:normal;text-align:left}
 .ad-schedule>strong{display:block;font-size:11px;font-weight:800;color:#172033;white-space:normal}
 .ad-schedule-remaining{display:block;font-size:10px;font-weight:700;color:#067647}

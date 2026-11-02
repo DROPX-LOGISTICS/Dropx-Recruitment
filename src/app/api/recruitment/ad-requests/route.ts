@@ -23,6 +23,7 @@ import {
 import { resolveMetaDailyBudgetTarget } from "@/lib/meta-budget";
 import { RESTART_AD_FIELDS, restartCompletedMetaAd, validateRestartTerms, type RestartAdSnapshot } from "@/lib/meta-ad-restart";
 import { withMetaObjectEditGate } from "@/lib/meta-graph-throttle";
+import { extendMetaAd, validateExtensionTerms } from "@/lib/meta-ad-extension";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -138,7 +139,7 @@ async function metaPost(path: string, values: Record<string, string>, target = "
       });
     } catch (error) {
       if (error instanceof DOMException && error.name === "TimeoutError") {
-        throw new AdChangeError("Meta did not respond within 25 seconds. No local budget was changed; please try again.");
+        throw new AdChangeError("Meta did not respond within 25 seconds. Refresh Active Ads to check whether the change was saved before retrying.");
       }
       throw error;
     }
@@ -186,9 +187,46 @@ async function completeMetaChange(companyId: string, requestId: string) {
     .maybeSingle();
   if (pending.error) throw new Error(pending.error.message);
   if (!pending.data) throw new Error("Advertising request was not found.");
-  if (!["budget_change", "stop_ad", "resume_ad"].includes(pending.data.request_type)) return;
+  if (!["budget_change", "stop_ad", "resume_ad", "extend_ad"].includes(pending.data.request_type)) return;
   const ad = pending.data.recruitment_ads as any;
   if (!ad?.meta_ad_id) throw new AdChangeError("This ad has no Meta Ad ID, so the change cannot be completed automatically.");
+  if (pending.data.request_type === "extend_ad") {
+    const payload = requestRaw(pending.data.raw_payload);
+    try {
+      const result = await extendMetaAd({
+        adId: ad.meta_ad_id,
+        days: pending.data.days_required,
+        expectedEndTime: String(payload.expectedEndTime || ""),
+        expectedBudget: payload.oldBudget,
+        read: () => metaGet<RestartAdSnapshot>(ad.meta_ad_id, RESTART_AD_FIELDS),
+        post: (id, values) => metaPost(id, values, "ad extension")
+      });
+      const now = new Date().toISOString();
+      const saved = await supabaseAdmin.from("recruitment_ads").update({
+        status: metaDeliveryStatus(result.after),
+        daily_budget: result.dailyBudget,
+        raw_payload: {
+          ...ad.raw_payload, ...result.after,
+          last_extension: { requestId, at: now, previousEndTime: result.before.adset?.end_time,
+            endTime: result.endTime, days: pending.data.days_required, dailyBudget: result.dailyBudget }
+        },
+        last_synced_at: now, updated_at: now
+      }).eq("company_id", companyId).eq("id", ad.id);
+      if (saved.error) throw new Error("Meta accepted the extension, but Recruit could not save the latest schedule. Refresh Active Ads before retrying.");
+    } catch (error) {
+      // A timeout can happen after Meta accepts a write; reconcile rather than showing a stale schedule.
+      try {
+        const current = await getMetaAdDeliverySnapshot(ad.meta_ad_id);
+        const now = new Date().toISOString();
+        await supabaseAdmin.from("recruitment_ads").update({
+          status: metaDeliveryStatus(current), raw_payload: { ...ad.raw_payload, ...current },
+          last_synced_at: now, updated_at: now
+        }).eq("company_id", companyId).eq("id", ad.id);
+      } catch { /* The next Meta reconciliation will retry this read. */ }
+      throw new AdChangeError(error instanceof Error ? error.message : "Unable to extend this ad.");
+    }
+    return;
+  }
   if (pending.data.request_type === "stop_ad") {
     await metaPost(ad.meta_ad_id, { status: "PAUSED" });
     const saved = await supabaseAdmin.from("recruitment_ads").update({
@@ -399,7 +437,13 @@ export async function POST(request: Request) {
     }
     const body = await request.json() as Record<string, unknown>;
     const requestType = String(body.requestType ?? "new_ad");
-    if (!["new_ad", "budget_change", "stop_ad", "resume_ad"].includes(requestType)) return NextResponse.json({ error: "Invalid request type." }, { status: 400 });
+    if (!["new_ad", "budget_change", "stop_ad", "resume_ad", "extend_ad"].includes(requestType)) return NextResponse.json({ error: "Invalid request type." }, { status: 400 });
+    if (requestType === "extend_ad") {
+      try { validateExtensionTerms(body.daysRequired, body.expectedEndTime, body.oldBudget); }
+      catch (error) { return NextResponse.json({ error: (error as Error).message }, { status: 400 }); }
+      // An extension cannot smuggle in a budget change or a restart.
+      body.requestedBudget = null;
+    }
     if (body.restartCompleted === true) {
       if (requestType !== "resume_ad" || !Number.isFinite(Date.parse(String(body.expectedEndTime || "")))) {
         return NextResponse.json({ error: "Choose a completed ad from Active Ads before running it again." }, { status: 400 });
