@@ -48,6 +48,6 @@ export default function MetaAudienceRadiusPicker({ value, disabled = false, onCh
         ? `Within ${radius} km of the selected pin. Meta checks the permitted radius before saving.`
         : `Enter a whole number from ${META_AUDIENCE_RADIUS_MIN_KM} to ${META_AUDIENCE_RADIUS_MAX_KM} km.`}
     </p>
-    <div className="hiring-audience-note"><span>All genders</span><span>Ages 18–65+</span><small>Inclusive hiring audience</small></div>
+    <div className="hiring-audience-settings"><dl aria-label="Hiring audience settings"><div><dt>Gender</dt><dd>All genders</dd></div><div><dt>Age group</dt><dd>18–65+</dd></div></dl><small>Fixed inclusive settings for hiring ads. Location and radius are editable.</small></div>
   </fieldset>;
 }

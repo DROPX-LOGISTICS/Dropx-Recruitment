@@ -128,7 +128,8 @@ export default function MetaAdPublisher({token,stream,options,close,afterPublish
       <div className="publisher-grid">
         <label>Station<select value={form.locationId} onChange={(e)=>update("locationId",e.target.value)}><option value="">Select station</option>{locations.map((item:any)=><option key={item.id} value={item.id}>{item.code} — {item.name}</option>)}</select></label>
         <label>Designation<select value={form.roleId} onChange={(e)=>update("roleId",e.target.value)}><option value="">Select {stream==="hr"?"HR position":"workforce role"}</option>{roles.map((item:any)=><option key={item.id} value={item.id}>{item.code} — {item.name}</option>)}</select></label>
-        <section className="meta-audience-card publisher-audience">
+        <section className="meta-audience-card publisher-audience" aria-label="Audience and location">
+          <header className="publisher-audience-heading"><h3>Audience &amp; location</h3><p>Set the location pin and distance for this ad.</p></header>
           <div>
             <span>STATION DEFAULT PIN</span>
             {audienceLoading?<b>Checking station coordinates…</b>:audience?<><b>{audience.stationCode} — {audience.stationName}</b><small>{audience.address||"Verified station pin"}</small><small>{Number(audience.latitude).toFixed(5)}, {Number(audience.longitude).toFixed(5)} · default for this station</small><a href={`https://www.google.com/maps?q=${audience.latitude},${audience.longitude}`} target="_blank" rel="noreferrer">Check station pin on map ↗</a></>:<><b>{form.locationId?"Audience unavailable":"Select a station"}</b><small>{form.locationId?"Add a verified ad pin in Station Contacts before publishing.":"The station pin is selected by default. You can adjust it for this ad."}</small></>}

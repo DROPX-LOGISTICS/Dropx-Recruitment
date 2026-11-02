@@ -8,7 +8,11 @@ vi.mock("./recruitment-api", () => ({
 vi.mock("./scoped-recruitment-ad", () => ({ scopedRecruitmentAd: async () => f.scope ? { session: { isPreview: f.preview } } : { error: new Response("Denied", { status: 403 }) } }));
 vi.mock("./meta-ad-builder", () => ({ searchMetaAudienceLocations: (...args: any[]) => f.meta(...args) }));
 import { GET } from "../app/api/recruitment/meta-location-search/route";
-const request = (query = "q=Calicut&stream=workforce&locationId=station&roleId=role") => GET(new Request(`https://example.test?${query}`));
+const request = async (query = "q=Calicut&stream=workforce&locationId=station&roleId=role") => {
+  const response = await GET(new Request(`https://example.test?${query}`));
+  if (!response) throw new Error("Location search did not return a response.");
+  return response;
+};
 beforeEach(() => { f.authenticated = true; f.preview = false; f.scope = true; f.direct = true; f.publisher = false; f.meta.mockReset().mockResolvedValue([{ key: "123", label: "Calicut, Kerala", latitude: 11.259, longitude: 75.7914 }]); });
 describe("scoped Meta location search", () => {
   it.each(["workforce", "hr"])("returns verified coordinates in %s", async stream => {

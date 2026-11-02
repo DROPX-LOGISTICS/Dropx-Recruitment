@@ -65,15 +65,17 @@ export default function MetaLocationPinPicker({ token, station, value, radiusKm,
     } catch (error) { if (!request.signal.aborted) setNotice(error instanceof Error ? error.message : "Search unavailable. Use the map or coordinates."); }
     finally { if (!request.signal.aborted) setBusy(false); }
   }
-  return <details className="audience-pin-editor" open={open} onToggle={event => setOpen(event.currentTarget.open)}>
-    <summary>{value ? "Custom audience pin" : "Adjust pin or search location"}<span>{value ? "Edit" : "Optional"}</span></summary>
-    {open ? <div className="audience-pin-editor-content">
+  return <section className="audience-pin-editor" aria-label="Location pin controls">
+    <div className="audience-pin-editor-content">
+      <b className="audience-pin-title">{value ? "Custom audience pin" : "Location pin"}</b>
       <div className="audience-location-search"><input aria-label="Search city or PIN code" placeholder="Search city or PIN code in Meta" value={query} disabled={disabled || busy} maxLength={120} onChange={event => setQuery(event.target.value)} onKeyDown={event => { if (event.key === "Enter") { event.preventDefault(); if (query.trim().length >= 3 && !busy) void search(); } }}/><button type="button" disabled={disabled || busy || query.trim().length < 3} onClick={() => void search()}>{busy ? "Searching…" : "Search"}</button></div>
-      {results.length ? <div className="audience-location-results">{results.map(result => <button type="button" disabled={disabled} key={result.key} onClick={() => { onChange(result); setResults([]); setNotice("Check the pin on the map before saving."); }}>{result.label}</button>)}</div> : null}
+      {results.length ? <div className="audience-location-results">{results.map(result => <button type="button" disabled={disabled} key={result.key} onClick={() => { onChange(result); setResults([]); setOpen(true); setNotice("Check the pin on the map before saving."); }}>{result.label}</button>)}</div> : null}
       {notice ? <p className="audience-help" role="status">{notice}</p> : null}
-      {point ? <AudiencePinMap point={point} radiusKm={radiusKm} disabled={disabled} onChange={onChange}/> : <p className="audience-help">Search a location or enter coordinates to show the map.</p>}
+      <details className="audience-map-disclosure" open={open} onToggle={event => setOpen(event.currentTarget.open)}><summary>Move pin on map / enter coordinates</summary>
+      {open ? <div className="audience-map-fields">{point ? <AudiencePinMap point={point} radiusKm={radiusKm} disabled={disabled} onChange={onChange}/> : <p className="audience-help">Search a location or enter coordinates to show the map.</p>}
       <div className="audience-coordinates"><label>Latitude<input type="number" step="any" value={coords.latitude} disabled={disabled} onChange={event => setCoords({ ...coords, latitude: event.target.value })}/></label><label>Longitude<input type="number" step="any" value={coords.longitude} disabled={disabled} onChange={event => setCoords({ ...coords, longitude: event.target.value })}/></label><button type="button" disabled={disabled} onClick={() => { try { onChange(validateAdAudiencePin(coords)); setNotice(""); } catch (error) { setNotice(error instanceof Error ? error.message : "Invalid pin."); } }}>Use pin</button></div>
+      </div> : null}</details>
       <div className="audience-pin-bottom"><small>Only this ad’s audience changes. The station master stays unchanged.</small><button type="button" disabled={disabled || !station} onClick={() => { onChange(null); setResults([]); setNotice(""); }}>Reset to station</button></div>
-    </div> : null}
-  </details>;
+    </div>
+  </section>;
 }
