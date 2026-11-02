@@ -21,7 +21,7 @@ import MetaCampaignCategoryPicker from "./MetaCampaignCategoryPicker";
 import { matchesMetaCampaignCategory } from "@/lib/meta-campaign-category";
 
 type Workspace = "workforce" | "hr";
-type Props = { token:string; stream:Workspace; options:any; close:()=>void; afterPublish:()=>Promise<void> };
+type Props = { token:string; stream:Workspace; options:any; close:()=>void; openPromotions?:()=>void; afterPublish:()=>Promise<void> };
 
 function authHeaders(token:string){return {...recruitmentClientHeaders(token),"Content-Type":"application/json"};}
 function requestKey(){return typeof crypto!=="undefined"&&"randomUUID" in crypto?crypto.randomUUID().replaceAll("-",""):`${Date.now()}_${Math.random().toString(36).slice(2)}`;}
@@ -49,7 +49,7 @@ export function PlacementGallery({image,headline,copy,cta,width,height,kind="ima
   </section>;
 }
 
-export default function MetaAdPublisher({token,stream,options,close,afterPublish}:Props){
+export default function MetaAdPublisher({token,stream,options,close,openPromotions,afterPublish}:Props){
   const [catalog,setCatalog]=useState<any>(null);
   const [audience,setAudience]=useState<any>(null);
   const [audienceLoading,setAudienceLoading]=useState(false);
@@ -123,6 +123,7 @@ export default function MetaAdPublisher({token,stream,options,close,afterPublish
 
   return <div className="modal-backdrop meta-publisher-backdrop" onMouseDown={(event)=>{if(event.currentTarget===event.target&&!busy&&!uploading)close();}}><section className="modal meta-direct-publisher" role="dialog" aria-modal="true" aria-label={`Create ${stream} Meta ad`}>
     <header className="modal-header"><div><span>{stream==="hr"?"HR HIRING":"WORKFORCE HIRING"}</span><h2>Post a Meta lead ad</h2><p>Upload, preview and publish without leaving DropX Recruitment.</p></div><button disabled={busy||uploading} onClick={close}>×</button></header>
+    {openPromotions?<div className="ad-insight-warning">Advertising a delivery service or customer offer? <button type="button" disabled={busy||uploading} onClick={openPromotions}>Open Promotions · age & gender controls</button></div>:null}
     {loading?<div className="publisher-loading"><span className="loader"/><b>Loading your Meta account, forms and campaigns…</b></div>:null}
     {!loading&&!review?<>
       <div className="publisher-grid">

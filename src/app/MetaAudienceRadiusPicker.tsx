@@ -10,10 +10,11 @@ import {
 type Props = {
   value: string;
   disabled?: boolean;
+  showHiringSettings?: boolean;
   onChange: (value: string) => void;
 };
 
-export default function MetaAudienceRadiusPicker({ value, disabled = false, onChange }: Props) {
+export default function MetaAudienceRadiusPicker({ value, disabled = false, showHiringSettings = true, onChange }: Props) {
   const radius = Number(value);
   const valid = isValidMetaAudienceRadius(value);
 
@@ -48,6 +49,6 @@ export default function MetaAudienceRadiusPicker({ value, disabled = false, onCh
         ? `Within ${radius} km of the selected pin. Meta checks the permitted radius before saving.`
         : `Enter a whole number from ${META_AUDIENCE_RADIUS_MIN_KM} to ${META_AUDIENCE_RADIUS_MAX_KM} km.`}
     </p>
-    <div className="hiring-audience-settings"><dl aria-label="Hiring audience settings"><div><dt>Gender</dt><dd>All genders</dd></div><div><dt>Age group</dt><dd>18–65+</dd></div></dl><small>Fixed inclusive settings for hiring ads. Location and radius are editable.</small></div>
+    {showHiringSettings ? <div className="hiring-audience-settings"><dl aria-label="Hiring audience settings"><div><dt>Gender</dt><dd>All genders</dd></div><div><dt>Age group</dt><dd>18–65+</dd></div></dl><small>Fixed inclusive settings for hiring ads. Location and radius are editable.</small></div> : null}
   </fieldset>;
 }

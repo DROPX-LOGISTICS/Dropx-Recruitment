@@ -18,6 +18,7 @@ import type { HealthIssue } from "@/lib/ad-health";
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
+const MetaPromotionsPanel = dynamic(() => import("./MetaPromotionsPanel"), { ssr: false });
 import { DA_FINAL_OUTCOME_OPTIONS, daDependencyLabel, daSubStatusOptions } from "@/lib/da-inapp-onboarding";
 import { workforceStatusFilterOptions } from "@/lib/recruitment-workforce-status-filter";
 import {
@@ -219,6 +220,7 @@ export default function RecruitmentApp() {
   const pendingCandidateOpen = useRef<string | null>(null);
   const [adRequest, setAdRequest] = useState<{ type: "new_ad" | "budget_change" | "stop_ad" | "resume_ad" | "extend_ad"; ad?: any } | null>(null);
   const [directAdPublisher, setDirectAdPublisher] = useState(false);
+  const [promotionsOpen, setPromotionsOpen] = useState(false);
   const [options, setOptions] = useState<any>({ locations: [], roles: [], statuses: [], workforceStatuses: [], finalStatuses: [], assignees: [] });
   const [filters, setFilters] = useState(emptyLeadFilters);
   const [facets, setFacets] = useState<any>(null);
@@ -730,7 +732,7 @@ export default function RecruitmentApp() {
       {active === "Job Requisitions" && stream === "hr" ? <JobRequisitionsWorkspace data={moduleData} token={token} options={options} canAdd={canAddMenu("hr","Job Requisitions")} canEdit={canEditMenu("hr","Job Requisitions")} canApprove={menuLevel("hr","Job Requisitions")==="all"} reload={load} /> : null}
       {active === "Resume Intake" && stream === "hr" ? <ResumeIntakeWorkspace data={moduleData} token={token} canAdd={canAddMenu("hr","Resume Intake")} canEdit={canEditMenu("hr","Resume Intake")} reload={load} openCandidate={(id)=>{pendingCandidateOpen.current=id;navigate("All Leads");}} /> : null}
       {active === "AI Fit Review" && stream === "hr" ? <AiFitReviewWorkspace data={moduleData} token={token} canAdd={canAddMenu("hr","AI Fit Review")} canEdit={canEditMenu("hr","AI Fit Review")} reload={load} /> : null}
-      {active === "Active Ads" ? <>{stream === "workforce" && user.isOwner && !user.readOnly && !user.isPreview ? <AdMailPanel token={token}/> : null}<ActiveAds data={moduleData} token={token} stream={stream} roleCatalog={streamRoles} reload={load} canDirectPost={menuLevel(stream,"Active Ads")==="all"&&!user.readOnly&&!user.isPreview} openPublisher={()=>setDirectAdPublisher(true)} request={(type, ad)=>setAdRequest({type,ad})} /></> : null}
+      {active === "Active Ads" ? <>{stream === "workforce" && user.isOwner && !user.readOnly && !user.isPreview ? <AdMailPanel token={token}/> : null}<ActiveAds data={moduleData} token={token} stream={stream} roleCatalog={streamRoles} reload={load} canDirectPost={menuLevel(stream,"Active Ads")==="all"&&!user.readOnly&&!user.isPreview} openPublisher={()=>setDirectAdPublisher(true)} openPromotions={()=>setPromotionsOpen(true)} request={(type, ad)=>setAdRequest({type,ad})} /></> : null}
       {active === "Ad Requests" ? <AdRequests data={moduleData} token={token} reload={load} openForm={() => setAdRequest({type:"new_ad"})} /> : null}
       {active === "User Roles" ? <UserRoleMaster data={moduleData} token={token} stream={stream} canEdit={canEditMenu(stream,"User Roles")} reload={load} /> : null}
       {active === "Access Control" ? <TeamAccess data={moduleData} token={token} stream={stream} canEdit={canEditMenu(stream,"Access Control")} reload={load} /> : null}
@@ -750,7 +752,8 @@ export default function RecruitmentApp() {
     </section>
     {detailBusy && !selectedLead ? <div className="inline-loading"><div className="loader" /></div> : null}
     {adRequest ? <AdRequestForm token={token} options={options} stream={stream} requestType={adRequest.type} ad={adRequest.ad} directMode={menuLevel(stream,"Active Ads")==="all"} close={() => setAdRequest(null)} afterSave={async () => { setAdRequest(null); await load(); }} /> : null}
-    {directAdPublisher?<MetaAdPublisher token={token} stream={stream} options={options} close={()=>setDirectAdPublisher(false)} afterPublish={async()=>{await load();}}/>:null}
+    {directAdPublisher?<MetaAdPublisher token={token} stream={stream} options={options} close={()=>setDirectAdPublisher(false)} openPromotions={()=>{setDirectAdPublisher(false);setPromotionsOpen(true);}} afterPublish={async()=>{await load();}}/>:null}
+    {promotionsOpen?<MetaPromotionsPanel token={token} stream={stream} locations={options?.locations??[]} close={()=>setPromotionsOpen(false)}/>:null}
   </main>;
 }
 
@@ -3740,7 +3743,7 @@ function LeadProfile({ data, busy, options, canManage, close, save, notify }: {
   </section></div>;
 }
 
-function ActiveAds({ data, token, stream, roleCatalog, reload, request, canDirectPost, openPublisher }: {
+function ActiveAds({ data, token, stream, roleCatalog, reload, request, canDirectPost, openPublisher, openPromotions }: {
   data: any;
   token: string;
   stream: "workforce" | "hr";
@@ -3749,6 +3752,7 @@ function ActiveAds({ data, token, stream, roleCatalog, reload, request, canDirec
   request: (type: "new_ad" | "budget_change" | "stop_ad" | "resume_ad" | "extend_ad", ad?: any) => void;
   canDirectPost: boolean;
   openPublisher: () => void;
+  openPromotions: () => void;
 }) {
   const baseAds = data?.ads ?? [];
   const [deliveryNow,setDeliveryNow] = useState(Date.now);
@@ -3936,7 +3940,7 @@ function ActiveAds({ data, token, stream, roleCatalog, reload, request, canDirec
   return <section className="content-card leads-card active-ads-view">
     <div className="ad-view-head">
       <div><span>LIVE META PERFORMANCE</span><h2>Active Ads</h2><p>Every metric below follows the selected filters. Daily performance is for {insightState.date?new Date(`${insightState.date}T12:00:00`).toLocaleDateString("en-IN"):"today"}.</p></div>
-      <div className="ad-head-actions">{canRequestChange&&!canDirectPost?<button onClick={()=>request("new_ad")}>Request New Ad</button>:null}{canDirectPost?<button disabled={reconcileBusy} onClick={()=>void reconcileMetaAds()}>{reconcileBusy?"Reconciling…":"Reconcile Meta"}</button>:null}{canDirectPost?<><button className="edit-existing-ad-action" onClick={()=>setAudiencePickerOpen(true)}>Edit existing ad</button><button className="primary-action" onClick={openPublisher}>Create Meta Ad</button></>:null}</div>
+      <div className="ad-head-actions">{canRequestChange&&!canDirectPost?<button onClick={()=>request("new_ad")}>Request New Ad</button>:null}{canDirectPost?<button disabled={reconcileBusy} onClick={()=>void reconcileMetaAds()}>{reconcileBusy?"Reconciling…":"Reconcile Meta"}</button>:null}{canDirectPost?<><button onClick={openPromotions}>Service / customer promotions</button><button className="edit-existing-ad-action" onClick={()=>setAudiencePickerOpen(true)}>Edit existing ad</button><button className="primary-action" onClick={openPublisher}>Create Meta Ad</button></>:null}</div>
     </div>
     {(!data?.lastStatusSyncAt||deliveryNow-Date.parse(data.lastStatusSyncAt)>45*60000)?<div className="ad-insight-warning">Meta status refresh is overdue. Last successful refresh: {data?.lastStatusSyncAt?new Date(data.lastStatusSyncAt).toLocaleString("en-IN"):"not yet available"}. Scheduled end dates still apply.</div>:null}
     {reconcileNotice?<div className={reconcileNotice.tone==="error"?"error-banner":reconcileNotice.tone==="warning"?"ad-insight-warning":"success-banner"}>{reconcileNotice.message}<button type="button" onClick={()=>setReconcileNotice(null)}>×</button></div>:null}

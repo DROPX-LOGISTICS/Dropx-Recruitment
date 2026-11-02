@@ -330,6 +330,17 @@ async function metaConnection() {
   };
 }
 
+/** Server-only gateway reused by the separate customer-promotion flow. */
+export async function metaPromotionGateway() {
+  const connection = await metaConnection();
+  const account = await graphGet(connection, `act_${connection.accountId}`, { fields: "business_country_code,currency" });
+  if (String(account.business_country_code).toUpperCase() !== "IN") throw new Error("Standard India promotions require a verified Indian ad account.");
+  if (String(account.currency).toUpperCase() !== "INR") throw new Error("This promotion flow requires an INR ad account for its rupee budgets.");
+  return { accountId: connection.accountId, pageId: connection.pageId,
+    read: (path: string, fields: string) => graphGet(connection, path, { fields }),
+    post: (path: string, values: Record<string, string>, check?: () => Promise<void>) => graphRequest(connection, path, "POST", values, check) };
+}
+
 async function graphRequest(
   connection: Awaited<ReturnType<typeof metaConnection>>,
   path: string,

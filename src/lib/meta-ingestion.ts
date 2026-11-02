@@ -1,4 +1,5 @@
 import { reviewStationTargeting } from "./meta-targeting";
+import { isCustomerPromotion } from "./promotion-sync";
 import { metaDeliveryStatus } from "./meta-ad-delivery";
 import { createHash } from "node:crypto";
 import { getConnectionConfig } from "./connection-config";
@@ -190,6 +191,9 @@ async function syncMetaAdsAccount(options: MetaAdSyncOptions) {
     next = payload.paging?.next ?? null;
   }
 
+  const promotions = await admin.from("recruitment_promotion_ads").select("id,meta_ad_id,progress").eq("company_id", companyId());
+  if (promotions.error) throw new Error(promotions.error.message);
+  const promotionRecords = promotions.data ?? [];
   const locations = await admin.from("recruitment_locations")
     .select("code")
     .eq("company_id", companyId())
@@ -201,7 +205,7 @@ async function syncMetaAdsAccount(options: MetaAdSyncOptions) {
   const stationPins = new Map((canonicalStations.data ?? []).map((station) => [String(station.station_code).trim().toUpperCase(), station]));
   const stationCodes = (locations.data ?? []).map((item) => String(item.code || "")).filter(Boolean);
   const mappingMismatches = ads.flatMap((ad) => {
-    if (!ad.id || !ad.name) return [];
+    if (!ad.id || !ad.name || isCustomerPromotion(ad, promotionRecords)) return [];
     const mismatch = findMetaRouteMismatch({
       metaAdId: ad.id,
       adName: ad.name,
@@ -222,6 +226,15 @@ async function syncMetaAdsAccount(options: MetaAdSyncOptions) {
       const index = nextAd++;
       if (index >= ads.length) return;
       const ad = ads[index];
+      if (isCustomerPromotion(ad, promotionRecords)) {
+        const promotion = promotionRecords.find(item => item.meta_ad_id === ad.id);
+        if (promotion) {
+          const saved = await admin.from("recruitment_promotion_ads").update({ status: metaDeliveryStatus(ad), updated_at: new Date().toISOString() }).eq("company_id", companyId()).eq("id", promotion.id).neq("status", "failed").neq("status", "publishing");
+          if (saved.error) throw new Error(saved.error.message);
+        }
+        skipped++;
+        continue;
+      }
       if (!ad.id || !ad.name) {
         skipped++;
         continue;
