@@ -137,7 +137,7 @@ export default function MetaAdPublisher({token,stream,options,close,openPromotio
         <label>Designation<select value={form.roleId} onChange={e=>update("roleId",e.target.value)}><option value="">Select {stream==="hr"?"HR position":"workforce role"}</option>{roles.map((item:any)=><option key={item.id} value={item.id}>{item.code} — {item.name}</option>)}</select></label>
         <label>Instant form<select disabled={!selectedRole} value={form.formId} onChange={e=>update("formId",e.target.value)}><option value="">{selectedRole?`Select a form for ${selectedRole.code}`:"Select designation first"}</option>{matchedForms.map((item:any)=><option key={item.id} value={item.id}>{item.name}</option>)}</select>{selectedRole&&!matchedForms.length?<small role="status">No active Meta form matches {selectedRole.code}.</small>:null}</label>
       </div>
-      <p className={styles.leadDestination}>Applications → <strong>{stream==="hr"?"HR":"Workforce"} · All Leads</strong>{selectedLocation&&selectedRole?` · ${selectedLocation.code} / ${selectedRole.code}`:" · Choose a location and designation"}</p>
+      <p className={styles.leadDestination}>Applications → <strong>{stream==="hr"?"HR · Candidates":"Workforce · All Leads"}</strong>{selectedLocation&&selectedRole?` · ${selectedLocation.code} / ${selectedRole.code}`:" · Choose a location and designation"}</p>
       <div className={styles.composer}>
         <section className={styles.creative} aria-label="Recruitment ad details">
           <h3>Ad details</h3>
