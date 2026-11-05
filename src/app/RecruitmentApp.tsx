@@ -2,15 +2,16 @@
 
 import { metaDeliveryStatus } from "@/lib/meta-ad-delivery";
 import AdExtensionSummary from "./AdExtensionSummary";
-import MetaAdAudienceEditor from "./MetaAdAudienceEditor";
-import MetaAdAudiencePicker from "./MetaAdAudiencePicker";
+const MetaAdAudienceEditor = dynamic(() => import("./MetaAdAudienceEditor"), { ssr: false });
+const MetaAdAudiencePicker = dynamic(() => import("./MetaAdAudiencePicker"), { ssr: false });
 import { adRunEndTime, canExtendAd, formatAdScheduleDate } from "@/lib/ad-schedule";
 import AdSchedule from "./AdSchedule";
-import AdMailPanel from "./AdMailPanel";
-import DaOnboardingMailPanel from "./DaOnboardingMailPanel";
-import TemporaryLocationAccess from "./TemporaryLocationAccess";
+const AdMailPanel = dynamic(() => import("./AdMailPanel"), { ssr: false });
+const DaOnboardingMailPanel = dynamic(() => import("./DaOnboardingMailPanel"), { ssr: false });
+const TemporaryLocationAccess = dynamic(() => import("./TemporaryLocationAccess"), { ssr: false });
 import PreviewUserSearch from "./PreviewUserSearch";
 import type { PreviewUser } from "@/lib/preview-user-search";
+import { emptyRecruitFilters, parseRecruitRoute, recruitHref } from "@/lib/recruitment-routes";
 import { groupRecruitNavigation } from "@/lib/recruitment-navigation";
 import MetaReceivedTime from "./MetaReceivedTime";
 import AdHealthPanel, { AdDeliveryDiagnostics } from "./AdHealthPanel";
@@ -45,9 +46,9 @@ import {
 } from "@/lib/workforce-profile-changes";
 import RecruitLogin from "./RecruitLogin";
 import RecruitBrand from "./RecruitBrand";
-import FieldRouteMap from "./FieldRouteMap";
-import MetaAdPublisher from "./MetaAdPublisher";
-import MetaAudienceRadiusPicker from "./MetaAudienceRadiusPicker";
+const FieldRouteMap = dynamic(() => import("./FieldRouteMap"), { ssr: false });
+const MetaAdPublisher = dynamic(() => import("./MetaAdPublisher"), { ssr: false });
+const MetaAudienceRadiusPicker = dynamic(() => import("./MetaAudienceRadiusPicker"), { ssr: false });
 import MetaLocationPinPicker from "./MetaLocationPinPicker";
 import type { AdAudiencePin } from "@/lib/meta-audience-pin";
 import MetaCampaignCategoryPicker from "./MetaCampaignCategoryPicker";
@@ -85,19 +86,7 @@ type Lead = {
 };
 type LeadDetail = { lead: any; history: any[]; interviews?: any[]; messages: any[]; sources: any[]; documents?: any[] };
 
-const emptyLeadFilters = {
-  sort: "newest",
-  status: "",
-  finalStatus: "",
-  adIds: "",
-  station: "",
-  cluster: "",
-  role: "",
-  updatedAge: "",
-  interviewFrom: "",
-  interviewTo: "",
-  stale24: false
-};
+const emptyLeadFilters = emptyRecruitFilters;
 const headers = (token: string) => {
   const previewProfileId = typeof window === "undefined"
     ? ""
@@ -226,28 +215,39 @@ export default function RecruitmentApp() {
   const [adComposerEntry, setAdComposerEntry] = useState({ locationId: "", newPromotion: false });
   const [options, setOptions] = useState<any>({ locations: [], roles: [], statuses: [], workforceStatuses: [], finalStatuses: [], assignees: [] });
   const [filters, setFilters] = useState(emptyLeadFilters);
+  const [urlFilters,setUrlFilters] = useState(emptyLeadFilters);
+  const [urlSearch,setUrlSearch] = useState("");
   const [facets, setFacets] = useState<any>(null);
+  const urlReady = useRef(false);
+  const restoringUrl = useRef(false);
+  const [routeRevision,setRouteRevision] = useState(0);
+  const [linkNotice,setLinkNotice] = useState("");
   const [previewUsers, setPreviewUsers] = useState<PreviewUser[]>([]);
 
   useEffect(() => {
     const saved = localStorage.getItem("recruitment_session");
     if (!saved) return setChecking(false);
-    Promise.all([
-      fetch(`/api/mobile/bootstrap?v=${Date.now()}`, { headers: headers(saved), cache: "no-store" }),
-      fetch("/api/recruitment/options", { headers: headers(saved), cache:"no-store" })
-    ]).then(async ([sessionResponse,optionsResponse])=>{
-      if(!sessionResponse.ok)throw new Error();
-      return {session:await sessionResponse.json(),options:optionsResponse.ok?await optionsResponse.json():null};
-    }).then(({session,options:loadedOptions})=>{
-      const initialStream: "workforce"|"hr" = session.user.workforce?"workforce":session.user.hr?"hr":"workforce";
-      const firstMenu = session.user.recruitmentFunction==="influencer"
-        ? "Influencer Performance"
-        : Object.entries(session.user.menuAccess?.[initialStream]??{}).find(([,level])=>level!=="none")?.[0]??"Dashboard";
-      setToken(saved);setUser(session.user);setStream(initialStream);setActive(firstMenu);
-      if(loadedOptions)setOptions(loadedOptions);
-    })
-      .catch(() => localStorage.removeItem("recruitment_session"))
-      .finally(() => setChecking(false));
+    const controller=new AbortController();
+    // Options are independent: do not hold the authenticated shell behind master data.
+    fetch("/api/recruitment/options", {headers:headers(saved),cache:"no-store",signal:controller.signal})
+      .then(async response=>{if(response.ok)setOptions(await response.json());}).catch(()=>{});
+    fetch(`/api/mobile/bootstrap`, {headers:headers(saved),cache:"no-store",signal:controller.signal})
+      .then(async response=>{
+        if(!response.ok){if(response.status===401)localStorage.removeItem("recruitment_session");throw new Error("Unable to restore session. Please retry.");}
+        return response.json();
+      }).then(session=>{
+        const next=new URLSearchParams(window.location.search).get("next");
+        if(next?.startsWith("/mcp/consent")){window.location.replace(next);return;}
+        const requested=parseRecruitRoute(window.location.pathname,window.location.search);
+        const initialStream: "workforce"|"hr" = requested?.stream??(session.user.workforce?"workforce":session.user.hr?"hr":"workforce");
+        const firstMenu = session.user.recruitmentFunction==="influencer"?"Influencer Performance"
+          : Object.entries(session.user.menuAccess?.[initialStream]??{}).find(([,level])=>level!=="none")?.[0]??"Dashboard";
+        setToken(saved);setUser(session.user);setStream(initialStream);setActive(requested?.menu??firstMenu);
+        if(requested){setFilters(requested.filters);setUrlFilters(requested.filters);setSearch(requested.search);setUrlSearch(requested.search);setPage(requested.page);}
+        urlReady.current=true;
+      }).catch(caught=>{if(caught.name!=="AbortError")setError(caught.message);})
+      .finally(()=>{if(!controller.signal.aborted)setChecking(false);});
+    return ()=>controller.abort();
   }, []);
 
   useEffect(() => {
@@ -261,6 +261,28 @@ export default function RecruitmentApp() {
       .then((payload) => setPreviewUsers(payload.users ?? []))
       .catch(() => setPreviewUsers([]));
   }, [token, user?.canPreviewUsers]);
+
+  useEffect(()=>{
+    if(!user||!urlReady.current)return;
+    if(restoringUrl.current){restoringUrl.current=false;return;}
+    document.title=`${active} · ${stream==='workforce'?'Workforce':'HR'} · DropX Recruit`;
+    const href=recruitHref(stream,active,urlFilters,page,urlSearch);
+    if(window.location.pathname+window.location.search===href)return;
+    const method=window.location.pathname==='/'||window.location.pathname===href.split('?')[0]?'replaceState':'pushState';
+    window.history[method]({},'',href);
+  },[user,active,stream,urlFilters,page,urlSearch]);
+
+  useEffect(()=>{
+    const restore=()=>{
+      const route=parseRecruitRoute(window.location.pathname,window.location.search);
+      if(!route)return;
+      restoringUrl.current=true;loadController.current?.abort();loadVersion.current++;
+      setStream(route.stream);setActive(route.menu);setFilters(route.filters);setUrlFilters(route.filters);setPage(route.page);setSearch(route.search);setUrlSearch(route.search);
+      setSelectedLead(null);setModuleData(null);setLeads([]);setFacets(null);setRouteRevision(value=>value+1);
+    };
+    window.addEventListener('popstate',restore);
+    return ()=>window.removeEventListener('popstate',restore);
+  },[]);
 
   const refreshOptions = useCallback(async () => {
     if (!token) return;
@@ -284,6 +306,7 @@ export default function RecruitmentApp() {
     searchValue?: string;
   }) => {
     if (!token) return;
+    if(!canUseMenu(stream,active)){setBusy(false);return;}
     loadController.current?.abort();
     const controller = new AbortController();
     loadController.current = controller;
@@ -291,6 +314,7 @@ export default function RecruitmentApp() {
     const effectivePage = overrides?.page ?? page;
     const effectiveFilters = overrides?.filterValues ?? filters;
     const effectiveSearch = overrides?.searchValue ?? search;
+    setUrlFilters(effectiveFilters);setUrlSearch(effectiveSearch);
     setBusy(true); setError("");
     try {
       if (active === "Workforce Plan") {
@@ -399,7 +423,7 @@ export default function RecruitmentApp() {
             : endpoint === "masters"
               ? `?resource=${encodeURIComponent(active)}&stream=${stream}`
               : "";
-          const response = await fetch(`/api/recruitment/${endpoint}${reportStream}`, { headers: headers(token) });
+          const response = await fetch(`/api/recruitment/${endpoint}${reportStream}`, { headers: headers(token), signal:controller.signal });
           const payload = await response.json();
           if (!response.ok) throw new Error(payload.error);
           if (requestVersion !== loadVersion.current) return;
@@ -414,10 +438,9 @@ export default function RecruitmentApp() {
     } finally {
       if (requestVersion === loadVersion.current) setBusy(false);
     }
-  }, [active, filters, page, search, stream, token]);
+  }, [active, filters, page, search, stream, token, user]);
 
-  useEffect(() => { setPage(1); }, [active, stream]);
-  useEffect(() => { if (user) void load(); }, [active, page, stream, user]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (user) void load(); }, [active, page, stream, user, routeRevision]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function updateStatus(lead: Lead, status: string, details: {
     interviewAt?: string | null;
@@ -547,7 +570,7 @@ export default function RecruitmentApp() {
     setModuleData(null);
     setSelectedLead(null);
     setError("");
-    setActive(label);
+    setActive(label);setRouteRevision(value=>value+1);
   }
 
   function switchStream(next: "workforce" | "hr") {
@@ -557,7 +580,7 @@ export default function RecruitmentApp() {
     const firstMenu = user?.recruitmentFunction==="influencer"
       ? "Influencer Performance"
       : Object.entries(user?.menuAccess?.[next]??{}).find(([,level])=>level!=="none")?.[0]??"Dashboard";
-    setActive(firstMenu);
+    setActive(firstMenu);setRouteRevision(value=>value+1);
     setSelectedLead(null);
     setSearch("");
     setFilters(emptyLeadFilters);
@@ -631,7 +654,7 @@ export default function RecruitmentApp() {
   const nav = (stream === "workforce" ? workforceNav : hrNav).filter((item) =>
     user.menuAccess ? canUseMenu(stream,item[2]) : (!hasExplicitMenuPermissions || allowedMenus.has(item[2]))
   );
-  const streamAllowed = stream === "workforce" ? user.workforce : user.hr;
+  const streamAllowed = (stream === "workforce" ? user.workforce : user.hr) && canUseMenu(stream,active);
   const navGroups = groupRecruitNavigation(nav);
   const showLeads = ["All Leads","Archived Leads","No Response / Call Back","Interviews","Unmapped","Screening","Documents","Offers","Hired"].includes(active);
   const streamRoles = workspaceRoleCatalog(options.roles ?? [], stream);
@@ -663,8 +686,8 @@ export default function RecruitmentApp() {
     <aside className={`sidebar ${mobileMenuOpen ? "mobile-open" : ""}`} aria-label="Recruitment navigation">
       <div className="brand"><RecruitBrand /><button className="mobile-menu-close" aria-label="Close menu" onClick={()=>setMobileMenuOpen(false)}>×</button></div>
       <nav>{navGroups.map(([section,items]) => ["Masters", "Settings"].includes(section)
-        ? <RecruitNavGroup key={section} section={section} items={items} active={active} navigate={navigate}/>
-        : <div className="nav-section" key={section}><p>{section}</p>{items.map(([,label,route])=><button key={route} className={route===active?"active":""} onClick={()=>navigate(route)}><i>{route==="Dashboard"?"▦":"≡"}</i>{label}</button>)}</div>
+        ? <RecruitNavGroup key={section} section={section} items={items} active={active} stream={stream} navigate={navigate}/>
+        : <div className="nav-section" key={section}><p>{section}</p>{items.map(([,label,route])=><a key={route} href={recruitHref(stream,route)} className={route===active?"active":""} aria-current={route===active?"page":undefined} onClick={(event)=>{if(!event.metaKey&&!event.ctrlKey&&!event.shiftKey&&!event.altKey){event.preventDefault();navigate(route);}}}><i>{route==="Dashboard"?"▦":"≡"}</i>{label}</a>)}</div>
       )}</nav>
       <button className="identity" onClick={() => { localStorage.removeItem("recruitment_session"); location.reload(); }}>
         <b>{(user.name ?? "U")[0]}</b><span>{user.name ?? "DropX user"}{user.designationName ? <small>{user.designationName}</small> : null}<small>SIGN OUT</small></span>
@@ -672,7 +695,7 @@ export default function RecruitmentApp() {
     </aside>
     {mobileMenuOpen?<button className="mobile-menu-backdrop" aria-label="Close menu" onClick={()=>setMobileMenuOpen(false)}/>:null}
     <section className="workspace">
-      <header><button className="mobile-menu-trigger" aria-label="Open menu" aria-expanded={mobileMenuOpen} onClick={()=>setMobileMenuOpen(true)}><i/><span><small>Recruitment</small>{pageTitle}</span></button><div className="desktop-page-title"><h1>{pageTitle}</h1><p>{pageSubtitle}</p></div>{user.canPreviewUsers?<PreviewUserSearch users={previewUsers} viewerProfileId={user.viewerProfileId} selectedUser={user.isPreview ? {profileId:user.profileId,name:user.name||user.email||"User",designationName:user.designationName,designationCode:user.designationCode} : null} onChange={changePreview}/>:null}<div className="stream-switch" aria-label="Recruitment section">
+      <header><button className="mobile-menu-trigger" aria-label="Open menu" aria-expanded={mobileMenuOpen} onClick={()=>setMobileMenuOpen(true)}><i/><span><small>Recruitment</small>{pageTitle}</span></button><div className="desktop-page-title"><h1>{pageTitle}</h1><p>{pageSubtitle}</p></div>{user.canPreviewUsers?<PreviewUserSearch users={previewUsers} viewerProfileId={user.viewerProfileId} selectedUser={user.isPreview ? {profileId:user.profileId,name:user.name||user.email||"User",designationName:user.designationName,designationCode:user.designationCode} : null} onChange={changePreview}/>:null}<button className="copy-page-link" onClick={async()=>{try{await navigator.clipboard.writeText(window.location.href);setLinkNotice("Copied");setTimeout(()=>setLinkNotice(""),2000);}catch{setLinkNotice("Copy the address bar link");}}}>{linkNotice||"Copy link"}</button><div className="stream-switch" aria-label="Recruitment section">
         {user.workforce ? <button className={stream === "workforce" ? "selected" : ""} onClick={() => switchStream("workforce")}>Workforce</button> : null}
         {user.hr ? <button className={stream === "hr" ? "selected" : ""} onClick={() => switchStream("hr")}>HR</button> : null}
       </div></header>
@@ -3206,11 +3229,11 @@ function MasterReports({data}:{data:any}) {
   return <section className="reports-view"><section className="content-card report-builder"><h2>Restricted recruitment master reports</h2><p>Permission-controlled reports for recruiter productivity, joining/retention and the full manual IN/OUT audit trail.</p><div className="master-report-actions"><button className="primary-action" onClick={()=>download("Recruiter_Funnel",data?.recruiterFunnel??[])}>Download recruiter funnel</button><button className="primary-action" onClick={()=>download("Joining_Register",data?.joiningRegister??[])}>Download joining register</button><button className="primary-action" onClick={()=>download("Manual_Punch_Register",data?.manualPunchRegister??[])}>Download manual punch register</button></div></section><div className="metrics report-metrics">{[["Joined records",summary.joined],["30-day due",summary.due30],["Activity found",summary.activityFound],["Manual punches",(data?.manualPunchRegister??[]).length]].map(([label,value])=><article key={label}><span>{label}</span><strong>{Number(value||0).toLocaleString("en-IN")}</strong></article>)}</div><div className="report-panels"><article className="content-card report-panel"><h2>Recruiter funnel</h2><SimpleTable headers={["Employee ID","Recruiter","Calls / updates","No response","Callbacks","Interviews","Selected","Joined"]} rows={(data?.recruiterFunnel??[]).map((item:any)=>[item.employeeId,item.recruiter,item.calls,item.noResponse,item.callbacks,item.interviews,item.selected,item.joined])}/></article><article className="content-card report-panel"><h2>Joined associates and retention</h2><SimpleTable headers={["Candidate","Station","Employee ID","Provider ID","Recruiter","Join date","Days worked","Deliveries","30-day state"]} rows={(data?.joiningRegister??[]).map((item:any)=>[item.candidate,item.station,item.employeeId,item.providerEmployeeId,item.recruiter,item.joiningDate,item.daysWorked,item.deliveries,item.retention30])}/></article><article className="content-card report-panel"><h2>Manual IN / OUT register</h2><SimpleTable headers={["Date","Recruiter","Type","Requested","Location / GPS","Status","Reviewer","Worked min"]} rows={(data?.manualPunchRegister??[]).slice(0,200).map((item:any)=>[item.date,item.recruiter,item.punchType,item.requestedTime,[item.location,item.latitude==null?item.gps:`${Number(item.latitude).toFixed(6)}, ${Number(item.longitude).toFixed(6)} ±${Math.round(Number(item.accuracyMeters||0))}m`].filter(Boolean).join(" • "),item.status,item.reviewer,item.workedMinutes])}/></article></div></section>;
 }
 
-function RecruitNavGroup({ section, items, active, navigate }: { section: string; items: Array<[string, string, string]>; active: string; navigate: (route: string) => void }) {
+function RecruitNavGroup({ section, items, active, stream, navigate }: { stream:"workforce"|"hr"; section: string; items: Array<[string, string, string]>; active: string; navigate: (route: string) => void }) {
   const containsActive = items.some(([, , route]) => route === active);
   const [open, setOpen] = useState(containsActive);
   useEffect(() => { if (containsActive) setOpen(true); }, [containsActive]);
-  return <details className="nav-submenu" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}><summary>{section}</summary><div>{items.map(([, label, route]) => <button key={route} aria-current={route === active ? "page" : undefined} className={route === active ? "active" : ""} onClick={() => navigate(route)}><i>≡</i>{label}</button>)}</div></details>;
+  return <details className="nav-submenu" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}><summary>{section}</summary><div>{items.map(([, label, route]) => <a key={route} href={recruitHref(stream,route)} aria-current={route === active ? "page" : undefined} className={route === active ? "active" : ""} onClick={(event)=>{if(!event.metaKey&&!event.ctrlKey&&!event.shiftKey&&!event.altKey){event.preventDefault();navigate(route);}}}><i>≡</i>{label}</a>)}</div></details>;
 }
 
 function TeamAccess({ data, token, stream, canEdit, reload }: { data: any; token: string; stream:RecruitmentPermissionWorkspace;canEdit:boolean;reload: () => Promise<void> }) {

@@ -1,6 +1,6 @@
 import { storedAdDelivery } from "@/lib/meta-ad-delivery";
 import { NextResponse } from "next/server";
-import { applyLeadScope, canAccessLead, canUseRecruitmentMenu, hasFullLeadAccess, recruitmentSession, requiredEnv } from "@/lib/recruitment-api";
+import { canAccessLead, canUseRecruitmentMenu, hasFullLeadAccess, recruitmentSession, requiredEnv } from "@/lib/recruitment-api";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { currentRequisitionStatuses, remainingRequisitionOpenings } from "@/lib/hr-recruitment-overview";
 import { loadMainDashboardStations } from "@/lib/main-dashboard-masters";
@@ -10,36 +10,10 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-// Non-summary mode pages through every non-archived lead and every ad in scope (a company with
-// ~20k leads needs ~20 sequential pages -- see the comment further down) and re-derives every
-// metric/queue/station rollup in Node on each request. That's unavoidable without a much larger
-// SQL-aggregation rewrite, but this dashboard is loaded on essentially every app open and every
-// filter change, often by several people looking at the same station/cluster/role scope within
-// minutes of each other -- and none of these numbers need to be more current than a couple of
-// minutes old. A short TTL cache, keyed by the exact scope (company/stream/session's own
-// location+role scope/station+cluster+role filters), means those repeated identical loads share
-// one computed result instead of each re-scanning the same rows. Summary mode already does its
-// own count-based query per request and is comparatively cheap, so it's left uncached here.
+// Database rollups avoid sending the entire lead registry over the network.
+// Cached results remain scoped to the authenticated location/role permissions.
 const dashboardCache = new Map<string, { expires: number; body: Promise<Record<string, unknown>> }>();
 const DASHBOARD_CACHE_TTL_MS = 120_000;
-
-type DashboardLead = {
-  id: string;
-  full_name: string | null;
-  phone: string | null;
-  status: string | null;
-  final_status: string | null;
-  lead_created_at: string | null;
-  updated_at: string | null;
-  callback_at: string | null;
-  follow_up_at: string | null;
-  location_id: string | null;
-  role_id: string | null;
-  ad_id: string | null;
-  assigned_profile_id: string | null;
-  recruitment_locations: { code: string; name: string; poc_name: string | null; poc_mobile: string | null } | null;
-  recruitment_roles: { code: string; name: string; stream: string | null } | null;
-};
 
 type DashboardAd = {
   raw_payload?: unknown;
@@ -110,12 +84,6 @@ function lower(value: unknown) {
   return String(value ?? "").trim().toLowerCase();
 }
 
-function ageHours(value: string | null, now: number) {
-  if (!value) return 0;
-  const parsed = new Date(value).getTime();
-  return Number.isFinite(parsed) ? Math.max(0, (now - parsed) / 3_600_000) : 0;
-}
-
 function numberValue(value: unknown) {
   const parsed = Number(value ?? 0);
   return Number.isFinite(parsed) ? parsed : 0;
@@ -156,7 +124,8 @@ export async function GET(request: Request) {
     const roleCodes = csv(url.searchParams.get("role"));
     if (!canUseRecruitmentMenu(session, "Dashboard", "view", workspace)) return NextResponse.json({ error: "Dashboard view access is required." }, { status: 403 });
     const companyId = requiredEnv("RECRUITMENT_COMPANY_ID");
-    const mainStations = await loadMainDashboardStations(companyId);
+    const mainStations = url.searchParams.get("mode") !== "summary" || clusters.length
+      ? await loadMainDashboardStations(companyId) : [];
     const ownerByStationCode = new Map(mainStations.map((station) => [
       station.code,
       station.operationalOwner?.name ?? null
@@ -242,6 +211,8 @@ export async function GET(request: Request) {
       locationIds: locationIds ? [...locationIds].sort() : null,
       roleIds: roleIds ? [...roleIds].sort() : null,
       sessionOwner: session.isOwner,
+      sessionFullLeadAccess: hasFullLeadAccess(session),
+      requisitionAccess: ["view","edit","all"].map(action=>canUseRecruitmentMenu(session,"Job Requisitions",action as "view"|"edit"|"all","hr")),
       sessionAllLocations: session.allLocations,
       sessionLocationIds: [...session.locationIds].sort(),
       sessionRoleIds: [...session.roleIds].sort()
@@ -251,31 +222,20 @@ export async function GET(request: Request) {
       return NextResponse.json(await cachedDashboard.body);
     }
     const dashboardBody = (async (): Promise<Record<string, unknown>> => {
-    const dashboardQuery = () => {
-      let query: any = supabaseAdmin!.from("recruitment_leads")
-        .select("id,full_name,phone,status,final_status,lead_created_at,updated_at,callback_at,follow_up_at,location_id,role_id,ad_id,assigned_profile_id,recruitment_locations(code,name,poc_name,poc_mobile),recruitment_roles(code,name,stream)")
-        .eq("company_id", companyId).eq("archived", false);
-      query = applyLeadScope(query, session, stream);
-      if (locationIds) query = query.in("location_id", locationIds);
-      if (roleIds) query = query.in("role_id", roleIds);
-      return query;
-    };
-    // Leads and ads are paged sequentially, not with Promise.all, because a
-    // company with ~20k active leads needs ~20 pages here - firing them all
-    // at once opened ~20 concurrent joined/ordered queries against Supabase
-    // simultaneously, which exhausted the connection pool and surfaced as
-    // intermittent 500s / "canceling statement due to statement timeout" on
-    // this route even though each page is fast on its own. Sequential paging
-    // costs a bit of wall-clock time but stays within the pool's capacity.
-    let rows: DashboardLead[] = [];
-    if (!hasEmptyFilter) {
-      rows = await loadAllSupabaseRows<DashboardLead>((from, to) =>
-        dashboardQuery()
-          .order("lead_created_at", { ascending: false })
-          .order("id", { ascending: false })
-          .range(from, to) as any
-      );
+    const fullAccess=hasFullLeadAccess(session);
+    let rows:any[]=[];
+    let attention:Array<{id:string;name:string;phone:string|null;issue:string;priority:number}>=[];
+    if(!hasEmptyFilter) {
+      const rollup=await supabaseAdmin!.rpc('recruitment_dashboard_rollups',{
+        p_company_id:companyId,p_stream:stream==='workforce'||stream==='hr'?stream:null,
+        p_scope_location_ids:fullAccess||session.allLocations?null:session.locationIds,
+        p_scope_role_ids:fullAccess||!session.roleIds.length?null:session.roleIds,
+        p_filter_location_ids:locationIds,p_filter_role_ids:roleIds
+      });
+      if(rollup.error)throw new Error(rollup.error.message);
+      rows=rollup.data.groups;attention=rollup.data.attention;
     }
+    const totalLeads=rows.reduce((sum,row)=>sum+Number(row.total),0);
 
     let ads: DashboardAd[] = [];
     if (!hasEmptyFilter) {
@@ -324,7 +284,7 @@ export async function GET(request: Request) {
 
     const now = Date.now();
     const today = istDayBounds();
-    const metrics = { total: rows.length, noStatus: 0, noResponse: 0, callBack: 0, interviews: 0, joined: 0, pending24h: 0, unmapped: 0 };
+    const metrics = { total: totalLeads, noStatus: 0, noResponse: 0, callBack: 0, interviews: 0, joined: 0, pending24h: 0, unmapped: 0 };
     const queues = { noStatus: 0, retryDue: 0, callbackDue: 0, interviewsToday: 0, noStatus12h: 0, noStatus24h: 0, noStatus48h: 0 };
     const byStatus = new Map<string, number>();
     const byLocation = new Map<string, number>();
@@ -365,53 +325,28 @@ export async function GET(request: Request) {
       stale: number; retryDue: number; callbackDue: number; interviewsToday: number;
       unassigned: number; updatedToday: number; responseMinutes: number; responseCount: number;
     }>();
-    const attention: Array<{ id: string; name: string; phone: string | null; issue: string; priority: number }> = [];
-
     for (const lead of rows) {
-      const status = lower(lead.status);
-      const finalStatus = lower(lead.final_status);
-      const createdAge = ageHours(lead.lead_created_at, now);
-      const updatedAge = ageHours(lead.updated_at, now);
-      const createdAt = lead.lead_created_at ? new Date(lead.lead_created_at).getTime() : NaN;
-      const updatedAt = lead.updated_at ? new Date(lead.updated_at).getTime() : NaN;
-      const isJoined = status === "joined" || finalStatus === "joined";
-      const isNoStatus = !status || status === "new";
-      const isPending = isNoStatus || status === "no_response" || status === "call_back";
-      if (isNoStatus) metrics.noStatus++;
-      if (status === "no_response") metrics.noResponse++;
-      if (status === "call_back") metrics.callBack++;
-      if (status.startsWith("interview_")) metrics.interviews++;
-      if (status === "joined" || finalStatus === "joined") metrics.joined++;
-      if (isPending && createdAge >= 24) metrics.pending24h++;
-      if (!lead.location_id || !lead.role_id) metrics.unmapped++;
-      if (isNoStatus) {
-        queues.noStatus++;
-        if (createdAge >= 12) queues.noStatus12h++;
-        if (createdAge >= 24) queues.noStatus24h++;
-        if (createdAge >= 48) queues.noStatus48h++;
-      }
-      if (status === "no_response" && updatedAge >= 5 / 60) queues.retryDue++;
-      const callbackAt = lead.callback_at ? new Date(lead.callback_at).getTime() : NaN;
-      if (status === "call_back" && Number.isFinite(callbackAt) && callbackAt <= now) queues.callbackDue++;
-      const interviewAt = lead.follow_up_at ? new Date(lead.follow_up_at).getTime() : NaN;
-      if (status.startsWith("interview_") && Number.isFinite(interviewAt) && interviewAt >= today.start && interviewAt <= today.end) queues.interviewsToday++;
+      const status=lead.s;
+      const n=Number(lead.total);
+      const c = Object.fromEntries(Object.entries(lead).filter(([,value])=>typeof value==='number').map(([key,value])=>[key,Number(value)]));
+      metrics.noStatus+=c.no_status;metrics.noResponse+=c.no_response;metrics.callBack+=c.call_back;
+      metrics.interviews+=c.interviews;metrics.joined+=c.joined;metrics.pending24h+=c.stale;
+      if(!lead.location_id||!lead.role_id)metrics.unmapped+=n;
+      queues.noStatus+=c.no_status;queues.noStatus12h+=c.no_status_12h;queues.noStatus24h+=c.no_status_24h;
+      queues.noStatus48h+=c.no_status_48h;queues.retryDue+=c.retry_due;queues.callbackDue+=c.callback_due;queues.interviewsToday+=c.interviews_today;
 
       const statusLabel = status || "no_status";
-      byStatus.set(statusLabel, (byStatus.get(statusLabel) ?? 0) + 1);
+      byStatus.set(statusLabel, (byStatus.get(statusLabel) ?? 0) + n);
       const location = lead.recruitment_locations?.code ?? "Unmapped";
       const role = lead.recruitment_roles?.code ?? "Unmapped";
       const cluster = ownerByStationCode.get(location) ?? "Unmapped";
-      byLocation.set(location, (byLocation.get(location) ?? 0) + 1);
-      byRole.set(role, (byRole.get(role) ?? 0) + 1);
-      byCluster.set(cluster, (byCluster.get(cluster) ?? 0) + 1);
+      byLocation.set(location, (byLocation.get(location) ?? 0) + n);
+      byRole.set(role, (byRole.get(role) ?? 0) + n);
+      byCluster.set(cluster, (byCluster.get(cluster) ?? 0) + n);
       const key = `${location}|${role}`;
       const group = designation.get(key) ?? { location, role, total: 0, noStatus: 0, noResponse: 0, callBack: 0, interviews: 0, stale: 0 };
-      group.total++;
-      if (isNoStatus) group.noStatus++;
-      if (status === "no_response") group.noResponse++;
-      if (status === "call_back") group.callBack++;
-      if (status.startsWith("interview_")) group.interviews++;
-      if (isPending && createdAge >= 24) group.stale++;
+      group.total+=n;group.noStatus+=c.no_status;group.noResponse+=c.no_response;group.callBack+=c.call_back;
+      group.interviews+=c.interviews;group.stale+=c.stale;
       designation.set(key, group);
 
       const adKey = lead.ad_id && adDesignation.has(`ad:${lead.ad_id}`)
@@ -440,15 +375,9 @@ export async function GET(request: Request) {
         createdOn: null,
         lastSyncedAt: null
       };
-      adGroup.lifetimeTotalLeads++;
-      adGroup.totalLeads++;
-      if (isPending) adGroup.pending++;
-      if (isNoStatus) adGroup.noStatus++;
-      if (status === "no_response") adGroup.noResponse++;
-      if (status === "call_back") adGroup.callBack++;
-      if (status.startsWith("interview_")) adGroup.interviews++;
-      if (isPending && createdAge >= 24) adGroup.stale24h++;
-      if (isJoined) adGroup.joined++;
+      adGroup.lifetimeTotalLeads+=n;adGroup.totalLeads+=n;adGroup.pending+=c.pending;
+      adGroup.noStatus+=c.no_status;adGroup.noResponse+=c.no_response;adGroup.callBack+=c.call_back;
+      adGroup.interviews+=c.interviews;adGroup.stale24h+=c.stale;adGroup.joined+=c.joined;
       adDesignation.set(adKey, adGroup);
       const station = stations.get(location) ?? {
         code: location,
@@ -460,30 +389,12 @@ export async function GET(request: Request) {
         stale: 0, retryDue: 0, callbackDue: 0, interviewsToday: 0,
         unassigned: 0, updatedToday: 0, responseMinutes: 0, responseCount: 0
       };
-      station.total++;
-      if (isNoStatus) {
-        station.noStatus++;
-        if (!lead.assigned_profile_id) station.unassigned++;
-      }
-      if (isPending) station.pending++;
-      if (status.startsWith("interview_")) station.interviews++;
-      if (status === "joined" || finalStatus === "joined") station.joined++;
-      if (isPending && createdAge >= 24) station.stale++;
-      if (status === "no_response" && updatedAge >= 5 / 60) station.retryDue++;
-      if (status === "call_back" && Number.isFinite(callbackAt) && callbackAt <= now) station.callbackDue++;
-      if (status.startsWith("interview_") && Number.isFinite(interviewAt) && interviewAt >= today.start && interviewAt <= today.end) station.interviewsToday++;
-      if (Number.isFinite(updatedAt) && updatedAt >= today.start && updatedAt <= today.end) station.updatedToday++;
-      if (!isNoStatus && Number.isFinite(updatedAt) && Number.isFinite(createdAt) && updatedAt >= createdAt) {
-        station.responseMinutes += Math.round((updatedAt - createdAt) / 60_000);
-        station.responseCount++;
-      }
-      stations.set(location, station);
-
-      if (attention.length < 120) {
-        if (isNoStatus && createdAge >= 48) attention.push({ id: lead.id, name: lead.full_name || "Unnamed", phone: lead.phone, issue: "No status 48h+", priority: 100 });
-        else if (status === "call_back" && Number.isFinite(callbackAt) && callbackAt <= now) attention.push({ id: lead.id, name: lead.full_name || "Unnamed", phone: lead.phone, issue: "Call Back due", priority: 80 });
-        else if (status === "no_response" && updatedAge >= 1) attention.push({ id: lead.id, name: lead.full_name || "Unnamed", phone: lead.phone, issue: "No Response retry due", priority: 60 });
-      }
+      station.total+=n;station.noStatus+=c.no_status;station.unassigned+=c.unassigned;
+      station.pending+=c.pending;station.interviews+=c.interviews;station.joined+=c.joined;
+      station.stale+=c.stale;station.retryDue+=c.retry_due;station.callbackDue+=c.callback_due;
+      station.interviewsToday+=c.interviews_today;station.updatedToday+=c.updated_today;
+      station.responseMinutes+=c.response_minutes;station.responseCount+=c.response_count;
+      stations.set(location,station);
     }
 
     const designationPendency = [...designation.values()]
@@ -530,10 +441,10 @@ export async function GET(request: Request) {
       },
       period: { kind: "overall", from: null, to: today.date, label: "Overall" },
       health: {
-        attended: rows.length - metrics.noStatus,
-        attendedRate: rows.length ? Math.round(((rows.length - metrics.noStatus) / rows.length) * 1000) / 10 : 0,
-        routedRate: rows.length ? Math.round(((rows.length - metrics.unmapped) / rows.length) * 1000) / 10 : 0,
-        staleRate: rows.length ? Math.round((metrics.pending24h / rows.length) * 1000) / 10 : 0
+        attended: totalLeads - metrics.noStatus,
+        attendedRate: totalLeads ? Math.round(((totalLeads - metrics.noStatus) / totalLeads) * 1000) / 10 : 0,
+        routedRate: totalLeads ? Math.round(((totalLeads - metrics.unmapped) / totalLeads) * 1000) / 10 : 0,
+        staleRate: totalLeads ? Math.round((metrics.pending24h / totalLeads) * 1000) / 10 : 0
       },
       filters: { stream: stream ?? "", stations: stationCodes, clusters, roles: roleCodes },
       generatedAt: new Date().toISOString()

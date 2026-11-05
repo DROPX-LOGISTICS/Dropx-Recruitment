@@ -1,8 +1,17 @@
 {
   "crons": [
-    { "path": "/api/cron/recruitment-ad-mail", "schedule": "30 7 * * *" },
-    { "path": "/api/cron/recruitment-da-onboarding-mail", "schedule": "30 9 * * *" },
-    { "path": "/api/cron/recruitment-da-onboarding-mail", "schedule": "30 13 * * *" },
+    {
+      "path": "/api/cron/recruitment-ad-mail",
+      "schedule": "30 7 * * *"
+    },
+    {
+      "path": "/api/cron/recruitment-da-onboarding-mail",
+      "schedule": "30 9 * * *"
+    },
+    {
+      "path": "/api/cron/recruitment-da-onboarding-mail",
+      "schedule": "30 13 * * *"
+    },
     {
       "path": "/api/cron/recruitment-meta",
       "schedule": "*/5 * * * *"
@@ -11,5 +20,8 @@
       "path": "/api/cron/recruitment-whatsapp",
       "schedule": "*/5 * * * *"
     }
+  ],
+  "regions": [
+    "sin1"
   ]
 }
