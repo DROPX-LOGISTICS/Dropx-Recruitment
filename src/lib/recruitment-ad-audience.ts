@@ -25,7 +25,7 @@ export async function resolveRecruitmentAdAudience(input: {
   const code = String(locationResult.data.code || "").trim().toUpperCase();
   if (!locationResult.data.station_id) throw new Error(`${code} is not linked to the Location Master. Correct its station mapping before publishing.`);
   const stationResult = await supabaseAdmin.from("stations")
-    .select("id,station_code,station_name")
+    .select("id,station_code,station_name,address,latitude,longitude")
     .eq("company_id", input.companyId).eq("id", locationResult.data.station_id)
     .eq("is_active", true).maybeSingle();
   if (stationResult.error) throw new Error(stationResult.error.message);
@@ -40,20 +40,27 @@ export async function resolveRecruitmentAdAudience(input: {
     .maybeSingle();
   if (adPinResult.error) throw new Error(adPinResult.error.message);
   const override = input.customPin == null ? null : validateAdAudiencePin(input.customPin);
-  const adPin = override ? { ad_latitude: override.latitude, ad_longitude: override.longitude } : adPinResult.data;
-  if (adPin?.ad_latitude == null || adPin?.ad_longitude == null) {
-    throw new Error(`Add the Meta ad pin for ${code} in Station Contacts before publishing.`);
+  // A dedicated ad pin takes precedence. Only an entirely unset pin falls back
+  // to the canonical station; never combine coordinates from different sources.
+  const savedPin = adPinResult.data;
+  const hasSavedPin = savedPin?.ad_latitude != null || savedPin?.ad_longitude != null;
+  const source = override ? "ad_override" : hasSavedPin ? "station_contacts" : "location_master";
+  const pin = override || (hasSavedPin
+    ? { latitude: savedPin!.ad_latitude, longitude: savedPin!.ad_longitude }
+    : { latitude: station.latitude, longitude: station.longitude });
+  if (pin.latitude == null || pin.longitude == null) {
+    throw new Error(`Choose an ad pin below or add coordinates for ${code} in Station Contacts or the Location Master before publishing.`);
   }
   return validateMetaLocationAudience({
     locationId,
     stationCode: code,
     stationName: String(station.station_name || code).trim(),
-    address: override?.label || null,
-    latitude: adPin.ad_latitude,
-    longitude: adPin.ad_longitude,
+    address: override?.label || (source === "location_master" ? station.address : null) || null,
+    latitude: pin.latitude,
+    longitude: pin.longitude,
     radiusKm: input.radiusKm == null || String(input.radiusKm).trim() === ""
       ? META_AUDIENCE_RADIUS_DEFAULT_KM
       : Number(input.radiusKm),
-    source: override ? "ad_override" : "station_contacts"
+    source
   });
 }
