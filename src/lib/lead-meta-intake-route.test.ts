@@ -19,7 +19,9 @@ vi.mock("./supabase-admin", async () => {
       fixture.requests.push(url);
       const isIntake = url.pathname.endsWith("/recruitment_lead_source_events");
       const offset = Number(url.searchParams.get("offset") || 0);
-      const rows = isIntake ? fixture.events.slice(offset, offset + 1000) : fixture.rows;
+      const requestedIds = url.searchParams.get("id")?.replace(/^in\.\(|\)$/g, "").split(",");
+      const rows = isIntake ? fixture.events.slice(offset, offset + 1000)
+        : requestedIds ? fixture.rows.filter(row => requestedIds.includes(row.id)) : fixture.rows;
       return new Response(JSON.stringify(rows), {
         headers: { "Content-Type": "application/json", "Content-Range": "0-1/75" }
       });
@@ -107,5 +109,27 @@ describe("Meta intake time in workforce queues", () => {
     fixture.allowed = false;
     expect((await call()).status).toBe(403);
     expect(fixture.requests).toEqual([]);
+  });
+});
+
+
+describe("nearest first queue", () => {
+  it("sorts the full authorized set before pagination and retains all filters on hydration", async () => {
+    fixture.rows = Array.from({length:25}, (_,i)=>({id:`lead-${i.toString().padStart(2,'0')}`,lead_created_at:`2026-11-${(i+1).toString().padStart(2,'0')}T00:00:00Z`}));
+    const result=await (await call("stream=workforce&sort=nearest&page=2&limit=10&status=new&adIds=ad-one")).json();
+    expect(result.total).toBe(25);
+    // All unknown distances remain last, newest first, then paginated.
+    expect(result.leads.map((row:any)=>row.id)).toEqual(Array.from({length:10},(_,i)=>`lead-${(14-i).toString().padStart(2,'0')}`));
+    const queries=fixture.requests.filter(url=>url.pathname.endsWith('/recruitment_leads'));
+    expect(queries).toHaveLength(2);
+    for(const url of queries) {
+      expect(url.searchParams.get('company_id')).toBe('eq.company');
+      expect(url.searchParams.get('location_id')).toBe('eq.allowed-location');
+      expect(url.searchParams.get('ad_id')).toBe('in.(ad-one)');
+      expect(url.searchParams.get('status')).toBe('in.(new,)');
+    }
+    expect(queries[0].searchParams.get('select')).not.toContain('phone');
+    expect(queries[1].searchParams.get('id')).toContain('lead-14');
+    expect(queries[1].searchParams.get('limit')).toBe('10');
   });
 });

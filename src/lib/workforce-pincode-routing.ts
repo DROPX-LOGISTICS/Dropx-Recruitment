@@ -46,6 +46,10 @@ export function chooseWorkforceStationCode(input: {
     return { stationCode: manual.trim().toUpperCase(), source: "manual_override" as const, postCode };
   }
 
+  // Delivery coverage is not recruitment ownership. A known advertised station
+  // remains authoritative; explicit business PIN overrides above still apply.
+  if (advertised) return { stationCode: advertised, source: "advertised_station" as const, postCode };
+
   const network = [...new Set((input.networkStationCodes ?? []).map((value) => value.trim().toUpperCase()).filter(Boolean))];
   const delivered = (input.deliveredStationCodes ?? []).map((value) => value.trim().toUpperCase()).filter(Boolean);
   if (network.length) {
@@ -124,7 +128,12 @@ export async function resolveWorkforceLeadLocation(input: {
     };
   }
 
-  const evidence = await operationalStationEvidence(input.companyId, normalizedPostCode);
+  const manual = MANUAL_WORKFORCE_PINCODE_STATIONS[normalizedPostCode];
+  if (input.advertisedLocationId && input.advertisedStationCode && !manual) {
+    return { locationId: input.advertisedLocationId, stationCode: input.advertisedStationCode,
+      source: "advertised_station", postCode: normalizedPostCode };
+  }
+  const evidence = manual ? {} : await operationalStationEvidence(input.companyId, normalizedPostCode);
   const decision = chooseWorkforceStationCode({
     postCode: normalizedPostCode,
     stream: input.stream,

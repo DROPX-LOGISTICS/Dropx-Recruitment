@@ -1,3 +1,5 @@
+import { withLeadProximity } from "@/lib/lead-proximity-data";
+import { compareLeadProximity } from "@/lib/lead-proximity";
 import { NextResponse } from "next/server";
 import { applyLeadScope, canUseRecruitmentMenu, recruitmentSession, requiredEnv } from "@/lib/recruitment-api";
 import type { RecruitmentMenuId } from "@/lib/recruitment-menu-roles";
@@ -94,6 +96,7 @@ export async function GET(request: Request) {
     const stale24 = url.searchParams.get("stale24") === "true";
     const unmapped = url.searchParams.get("unmapped") === "true";
     const includeFacets = url.searchParams.get("facets") === "true";
+    const nearest = stream === "workforce" && url.searchParams.get("sort") === "nearest";
     const compact = url.searchParams.get("compact") === "true";
     if ((stream !== "workforce" && stream !== "hr") || !menu
       || !canUseRecruitmentMenu(session, menu, "view", stream)) {
@@ -134,12 +137,10 @@ export async function GET(request: Request) {
       }
     }
     const includeMetaIntake = stream === "workforce" && !compact;
-    let query: any = supabaseAdmin
-      .from("recruitment_leads")
-      .select(compact
-        ? "id,full_name,phone,city,post_code,status,remarks,updated_at,callback_at,follow_up_at,recruitment_locations(code,name),recruitment_roles(code,name)"
-        : "id, full_name, phone, email, city, post_code, ad_name, source, status, remarks, stream, archived, location_id, role_id, lead_created_at, updated_at, last_updated_by, callback_at, follow_up_at, duplicate_count, total_attempts, no_response_attempts, call_back_attempts, assigned_profile_id, assigned_profile:profiles!recruitment_leads_assigned_profile_id_fkey(id,full_name,email), last_updated_profile:profiles!recruitment_leads_last_updated_by_fkey(id,full_name,email), recruitment_locations(code,name), recruitment_roles(code,name)", { count: "exact" })
-      .eq("company_id", companyId);
+    const leadSelect = compact
+        ? "id,full_name,phone,city,post_code,status,remarks,updated_at,callback_at,follow_up_at,recruitment_locations(code,name,latitude,longitude),recruitment_roles(code,name)"
+        : "id, full_name, phone, email, city, post_code, ad_name, source, status, remarks, stream, archived, location_id, role_id, lead_created_at, updated_at, last_updated_by, callback_at, follow_up_at, duplicate_count, total_attempts, no_response_attempts, call_back_attempts, assigned_profile_id, assigned_profile:profiles!recruitment_leads_assigned_profile_id_fkey(id,full_name,email), last_updated_profile:profiles!recruitment_leads_last_updated_by_fkey(id,full_name,email), recruitment_locations(code,name,latitude,longitude), recruitment_roles(code,name)";
+    let query: any = supabaseAdmin.from("recruitment_leads").select(leadSelect, {count:"exact"}).eq("company_id",companyId);
     if (archive === "archived") query = query.eq("archived", true);
     else if (archive !== "all") query = query.eq("archived", false);
     query = applyLeadScope(query, session, stream);
@@ -226,11 +227,23 @@ export async function GET(request: Request) {
       if (safe) query = query.or(`full_name.ilike.%${safe}%,phone.ilike.%${safe}%,email.ilike.%${safe}%,city.ilike.%${safe}%,post_code.ilike.%${safe}%,ad_name.ilike.%${safe}%`);
     }
     const from = (page - 1) * limit;
-    const result = await query
-      .order("lead_created_at", { ascending: false })
-      .order("id", { ascending: false })
-      .range(from, from + limit - 1);
+    let result: {data:any[];count:number|null;error:any};
+    if(nearest) {
+      // Sort before pagination, across the filtered authorised queue. A narrow
+      // candidate projection keeps this bounded and avoids expanding every profile.
+      query=query.select('id,post_code,lead_created_at,recruitment_locations(code,latitude,longitude)').order('id');
+      const ordered = await loadAllSupabaseRows<any>((start,end)=>
+        query.range(start,end),{maxRows:50000});
+      const ranked=(await withLeadProximity(ordered)).sort(compareLeadProximity);
+      const ids=ranked.slice(from,from+limit).map(row=>row.id);
+      const loaded=ids.length?await query.select(leadSelect).in('id',ids).range(0,limit-1):{data:[],error:null};
+      const byId=new Map((loaded.data??[]).map((row:any)=>[row.id,row]));
+      result={data:ids.map(id=>byId.get(id)).filter(Boolean) as any[],count:ranked.length,error:loaded.error};
+    } else {
+      result=await query.order("lead_created_at",{ascending:false}).order("id",{ascending:false}).range(from,from+limit-1);
+    }
     if (result.error) throw new Error(result.error.message);
+    if(stream==='workforce'&&!compact)result.data=await withLeadProximity(result.data??[]);
 
     let facets = null;
     if (includeFacets) {
@@ -245,7 +258,7 @@ export async function GET(request: Request) {
         sessionAllLocations: session.allLocations,
         sessionLocationIds: [...session.locationIds].sort(),
         sessionRoleIds: [...session.roleIds].sort(),
-        status, finalStatus, stale24, unmapped,
+        status, finalStatus, stale24, unmapped, adIds, leadFrom, leadTo,
         interviewFrom, interviewTo, updatedAge: [...updatedAge].sort(), search,
         stationCodes: [...stationCodes].sort(), clusters: [...clusters].sort(), roleCodes: [...roleCodes].sort()
       });
@@ -265,6 +278,9 @@ export async function GET(request: Request) {
         if (structuredInterviewIds) scoped = structuredInterviewIds.length
           ? scoped.in("id", structuredInterviewIds)
           : scoped.eq("id", "00000000-0000-0000-0000-000000000000");
+        if(adIds.length)scoped=scoped.in('ad_id',adIds);
+        if(leadFrom)scoped=scoped.gte('lead_created_at',startOfIstDay(leadFrom));
+        if(leadTo)scoped=scoped.lte('lead_created_at',endOfIstDay(leadTo));
         return scoped;
       };
       // Paged sequentially (not with Promise.all) so a large queue doesn't

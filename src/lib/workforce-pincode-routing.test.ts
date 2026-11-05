@@ -23,7 +23,7 @@ describe("workforce PIN-code routing", () => {
     expect(chooseWorkforceStationCode({
       postCode: "673614",
       stream: "workforce",
-      advertisedStationCode: "PMB",
+      advertisedStationCode: null,
       networkStationCodes: ["QLDA", "PMB"],
       deliveredStationCodes: ["QLDA", "QLDA", "PMB"]
     })).toMatchObject({ stationCode: "QLDA", source: "service_network" });
@@ -33,7 +33,7 @@ describe("workforce PIN-code routing", () => {
     expect(chooseWorkforceStationCode({
       postCode: "673614",
       stream: "workforce",
-      advertisedStationCode: "PMB",
+      advertisedStationCode: null,
       deliveredStationCodes: ["QLDA", "QLDA", "PMB"]
     })).toMatchObject({ stationCode: "QLDA", source: "delivered_shipments" });
   });
@@ -42,6 +42,12 @@ describe("workforce PIN-code routing", () => {
     expect(chooseWorkforceStationCode({
       postCode: "999999", stream: "workforce", advertisedStationCode: "PMB"
     })).toMatchObject({ stationCode: "PMB", source: "advertised_station" });
+  });
+
+  it("preserves an XPT ad station over unrelated delivery coverage", () => {
+    expect(chooseWorkforceStationCode({ postCode: "670702", stream: "workforce",
+      advertisedStationCode: "TLPB-XPT", deliveredStationCodes: ["TLPB", "TLPB", "KLZA"],
+      networkStationCodes: ["TLPB"] })).toMatchObject({ stationCode: "TLPB-XPT", source: "advertised_station" });
   });
 
   it("never PIN-routes HR candidates", () => {

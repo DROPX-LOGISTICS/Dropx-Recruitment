@@ -1,3 +1,4 @@
+import { findMetaApplication } from "./meta-application-match";
 import { reviewStationTargeting } from "./meta-targeting";
 import { isCustomerPromotion } from "./promotion-sync";
 import { metaDeliveryStatus } from "./meta-ad-delivery";
@@ -539,22 +540,9 @@ export async function ingestMetaLeadgenValue(value: LeadgenValue, sourceSystem =
   const now = new Date().toISOString();
   const sourcePayload = { webhook: value, lead, fields };
   const payloadHash = createHash("sha256").update(JSON.stringify(sourcePayload)).digest("hex");
-  let existing = await supabaseAdmin.from("recruitment_leads").select("id, duplicate_count, meta_lead_id")
-    .eq("company_id", companyId()).eq("meta_lead_id", resolvedMetaLeadId).maybeSingle();
-  if (existing.error) throw new Error(existing.error.message);
-  if (!existing.data) {
-    existing = await supabaseAdmin.from("recruitment_leads").select("id, duplicate_count, meta_lead_id")
-      .eq("company_id", companyId()).eq("canonical_key", key).maybeSingle();
-    if (existing.error) throw new Error(existing.error.message);
-  }
-  if (!existing.data && normalizedPhone) {
-    existing = await supabaseAdmin.from("recruitment_leads").select("id, duplicate_count, meta_lead_id")
-      .eq("company_id", companyId()).eq("normalized_phone", normalizedPhone)
-      .order("archived", { ascending: true })
-      .order("updated_at", { ascending: false })
-      .limit(1).maybeSingle();
-    if (existing.error) throw new Error(existing.error.message);
-  }
+  const existing = await findMetaApplication(supabaseAdmin, companyId(), resolvedMetaLeadId, key, ad.adName, normalizedPhone);
+  // The application key includes the ad. A phone match from another campaign
+  // must not inherit its outcome, move its station, or hide the new application.
 
   let leadId = existing.data?.id as string | undefined;
   const isDifferentOccurrence = Boolean(
@@ -563,13 +551,11 @@ export async function ingestMetaLeadgenValue(value: LeadgenValue, sourceSystem =
   if (leadId && isDifferentOccurrence) {
     const duplicate = await supabaseAdmin.from("recruitment_leads").update({
       duplicate_count: Number(existing.data?.duplicate_count || 1) + 1,
-      ...(ad.route.stream === "workforce" && pincodeRoute.locationId
-        ? { location_id: pincodeRoute.locationId }
-        : {}),
       updated_at: now
     }).eq("company_id", companyId()).eq("id", leadId);
     if (duplicate.error) throw new Error(duplicate.error.message);
-  } else {
+  } else if (!leadId) {
+    // A replay without its source event must not reset an existing call outcome.
     const inserted = await supabaseAdmin.from("recruitment_leads").upsert({
       company_id: companyId(),
       meta_lead_id: resolvedMetaLeadId,

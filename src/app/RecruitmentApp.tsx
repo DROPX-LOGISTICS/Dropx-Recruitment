@@ -72,6 +72,7 @@ type Lead = {
   id: string; full_name: string | null; phone: string | null; email: string | null; city: string | null; post_code: string | null; ad_name: string | null;
   source: string | null; status: string; remarks: string | null; archived: boolean; lead_created_at: string | null; updated_at: string | null;
   meta_received_at?: string | null;
+  proximity?: {km:number|null;basis:string;reason?:string;localPin?:boolean};
   location_id?: string | null; role_id?: string | null;
   callback_at: string | null; follow_up_at: string | null; duplicate_count: number;
   total_attempts: number; no_response_attempts: number; call_back_attempts: number;
@@ -85,6 +86,7 @@ type Lead = {
 type LeadDetail = { lead: any; history: any[]; interviews?: any[]; messages: any[]; sources: any[]; documents?: any[] };
 
 const emptyLeadFilters = {
+  sort: "newest",
   status: "",
   finalStatus: "",
   adIds: "",
@@ -298,6 +300,7 @@ export default function RecruitmentApp() {
         const params = new URLSearchParams();
         params.set("stream", stream);
         params.set("menu", active);
+        if(stream==="workforce")params.set("sort",effectiveFilters.sort);
         if (effectiveFilters.station) params.set("station", effectiveFilters.station);
         if (effectiveFilters.cluster) params.set("cluster", effectiveFilters.cluster);
         if (effectiveFilters.role) params.set("role", effectiveFilters.role);
@@ -339,6 +342,7 @@ export default function RecruitmentApp() {
         // grants are evaluated against the intended queue instead of being
         // rejected as an unidentified request.
         params.set("menu", active);
+        if(stream==="workforce")params.set("sort",effectiveFilters.sort);
         const status = active === "No Response / Call Back" ? "no_response,call_back"
           : active === "Interviews" && stream === "workforce" ? WORKFORCE_ACTIVE_INTERVIEW_STATUS_QUERY
           : stream === "hr" ? hrQueueStatusQuery(active)
@@ -714,6 +718,7 @@ export default function RecruitmentApp() {
           <MultiFilter label="Designations" value={filters.role} options={availableRoles.map((item:any)=>[item.code,withCount(`${item.code} — ${item.name}`,facetRoleCounts.get(item.code))])} onChange={(value)=>setFilters({...filters,role:value})} onApply={applyLeadFilters} busy={busy}/>
           {active==="No Response / Call Back"?<MultiFilter label="Updated" value={filters.updatedAge} options={[["never","Never"],["lt30","Under 30 min"],["gt60","60+ min"],["gt120","120+ min"],["gt24h","24h+"],["gt2d","2 days+"]]} onChange={(value)=>setFilters({...filters,updatedAge:value})} onApply={applyLeadFilters} busy={busy}/>:null}
           {active==="Interviews"?<>{stream==="workforce"?<MultiFilter label="Outcome" value={filters.status} options={workforceInterviewFilterOptions(workforceStatusOptions(options)).map((item)=>[item.code,item.label])} onChange={(value)=>setFilters({...filters,status:value,finalStatus:""})} onApply={applyLeadFilters} busy={busy}/>:null}<label className="compact-date">From<input type="date" aria-label="Interview from" value={filters.interviewFrom} onChange={(event)=>setFilters({...filters,interviewFrom:event.target.value})}/></label><label className="compact-date">To<input type="date" aria-label="Interview to" value={filters.interviewTo} onChange={(event)=>setFilters({...filters,interviewTo:event.target.value})}/></label>{stream==="hr"?<MultiFilter label="Final status" value={filters.finalStatus} options={options.finalStatuses.map((item:string)=>[item,item])} onChange={(value)=>setFilters({...filters,finalStatus:value})} onApply={applyLeadFilters} busy={busy}/>:null}</>:null}
+          {stream==="workforce"?<select aria-label="Sort leads" value={filters.sort} onChange={(event)=>setFilters({...filters,sort:event.target.value})}><option value="newest">Newest first</option><option value="nearest">Nearby first · local PINs, then km</option></select>:null}
           {filters.stale24?<span className="filter-chip">24h+ pending</span>:null}
           {filters.adIds?<span className="filter-chip">Dashboard ad selection</span>:null}
           <button onClick={applyLeadFilters} disabled={busy}>{busy ? "Applying…" : "Apply filters"}</button>
@@ -862,6 +867,11 @@ function MyInterviewAssignments({ data, token, busy, canEdit, reload }: {
   </section>;
 }
 
+function LeadDistance({lead}:{lead:Lead}) {
+  const distance=lead.proximity;
+  return <small className={`lead-distance ${distance?.localPin||(distance?.km!=null&&distance.km<=10)?"near":""}`} title="Straight-line distance from the centre of the candidate’s PIN area to the assigned station. Not a road distance or exact home location. Confirm current location before deciding.">{distance?.localPin?<span>Local PIN · </span>:null}{distance?.km!=null?`≈ ${distance.km.toFixed(1)} km · PIN area`:(distance?.reason||"Distance unavailable")}</small>;
+}
+
 function WorkforceQueue({ leads, selected, busy, active, token, statusOptions, canEdit, open, update, retry, refresh }: {
   leads: Lead[];
   selected: LeadDetail | null;
@@ -877,7 +887,7 @@ function WorkforceQueue({ leads, selected, busy, active, token, statusOptions, c
 }) {
   const [now,setNow]=useState(Date.now);
   useEffect(()=>{const timer=window.setInterval(()=>setNow(Date.now()),60_000);return()=>window.clearInterval(timer);},[]);
-  return <><div className="table-scroll workforce-desktop-table"><table className="workforce-table"><thead><tr><th>Candidate</th><th>Location</th><th>Mobile number</th><th>Designation / station</th><th title="Latest time this lead was ingested into Recruit from Meta">Meta received (IST)</th><th>Status &amp; remark</th><th>Updated</th><th>Details</th></tr></thead><tbody>
+  return <><div className="table-scroll workforce-desktop-table"><table className="workforce-table"><thead><tr><th>Candidate</th><th>Location / distance</th><th>Mobile number</th><th>Designation / station</th><th title="Latest time this lead was ingested into Recruit from Meta">Meta received (IST)</th><th>Status &amp; remark</th><th>Updated</th><th>Details</th></tr></thead><tbody>
     {leads.map((lead)=><WorkforceLeadRow key={lead.id} lead={lead} now={now} detail={selected?.lead.id===lead.id?selected:null} busy={busy} active={active} token={token} statusOptions={statusOptions} canEdit={canEdit} open={open} update={update} retry={retry} refresh={refresh}/>) }
   </tbody></table></div><div className="workforce-mobile-list">{leads.map((lead)=><WorkforceMobileCard key={lead.id} lead={lead} now={now} detail={selected?.lead.id===lead.id?selected:null} busy={busy} active={active} token={token} statusOptions={statusOptions} canEdit={canEdit} open={open} update={update} retry={retry} refresh={refresh}/>)}</div>{!busy&&!leads.length?<div className="empty">No leads match this queue.</div>:null}</>;
 }
@@ -897,6 +907,7 @@ function WorkforceMobileCard({ lead, now, detail, busy, active, token, statusOpt
       <span className={`status status-${lead.status||"new"} status-tone-${statusTone(lead.status||"new")}`}>{statusOptions.find((item:any)=>item.code===lead.status)?.label||statusLabel(lead.status||"new")}</span>
       <i>{detail?"⌃":"⌄"}</i>
     </button>
+    <LeadDistance lead={lead}/>
     <div className="mobile-lead-contact"><a href={`tel:+91${phone}`}>{displayPhone(lead.phone)}</a>{phone.length===10?<><a href={`tel:+91${phone}`} aria-label={`Call ${lead.full_name||"candidate"}`}>Call</a><a href={`https://wa.me/91${phone}`} target="_blank" rel="noreferrer" aria-label={`WhatsApp ${lead.full_name||"candidate"}`}>WhatsApp</a></>:null}</div>
     {detail?<div className="mobile-lead-expanded">
       <dl className="mobile-lead-facts"><span><dt>Designation</dt><dd>{lead.recruitment_roles?.name||"Unmapped"}</dd></span><span><dt>Meta received (IST)</dt><dd><MetaReceivedTime value={lead.meta_received_at} now={now}/></dd></span><span><dt>Updated</dt><dd>{lead.updated_at?new Date(lead.updated_at).toLocaleString("en-IN",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"}):"—"}</dd></span><span><dt>Owner</dt><dd>{lead.last_updated_profile?.full_name||lead.last_updated_profile?.email||"System"}</dd></span></dl>
@@ -947,7 +958,7 @@ function WorkforceLeadRow({ lead, now, detail, busy, active, token, statusOption
   return <>
     <tr className={`workforce-lead-row${detail?" expanded-row":""}`}>
       <td className="queue-candidate"><b>{lead.full_name||"Unnamed"}</b>{lead.email?<small title={lead.email}>{lead.email}</small>:null}</td>
-      <td className="candidate-location"><b title={lead.city||""}>{lead.city||"—"}</b><small>{lead.post_code||"No pincode"}</small></td>
+      <td className="candidate-location"><b title={lead.city||""}>{lead.city||"—"}</b><small>{lead.post_code||"No pincode"}</small><LeadDistance lead={lead}/></td>
       <td className="queue-phone"><a className="large-phone" href={`tel:+91${phoneDigits(lead.phone)}`}>{displayPhone(lead.phone)}</a>{phoneDigits(lead.phone).length===10?<div className="contact-actions"><a href={`tel:+91${phoneDigits(lead.phone)}`} aria-label={`Call ${lead.full_name||"candidate"}`}>Call</a><a href={`https://wa.me/91${phoneDigits(lead.phone)}`} target="_blank" rel="noreferrer" aria-label={`WhatsApp ${lead.full_name||"candidate"}`}>WA</a></div>:null}</td>
       <td className="queue-role"><b>{lead.recruitment_roles?.name||"Unmapped designation"}</b><small>{lead.recruitment_locations?.code||"Unmapped station"}{lead.city?` • ${lead.city}`:""}</small></td>
       <td className="queue-meta-received"><MetaReceivedTime value={lead.meta_received_at} now={now}/></td>

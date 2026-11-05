@@ -614,3 +614,5 @@ dl{display:grid;grid-template-columns:minmax(110px,35%) 1fr;gap:8px 12px;margin:
 .hiring-audience-settings dd{margin:3px 0 0;font-size:12px;color:#344054;font-weight:700}
 .hiring-audience-settings>small{display:block;margin-top:8px;color:#667085;font-size:10px;line-height:1.4;text-transform:none}
 @media(max-width:520px){.audience-ad-results>button{align-items:flex-start}.ad-head-actions{display:grid;grid-template-columns:1fr 1fr;width:100%}.ad-head-actions button{min-height:38px}.publisher-audience-heading h3{font-size:14px}}
+
+.lead-distance{display:block;font-size:11px;color:#64748b;margin-top:4px}.lead-distance.near{color:#087443;font-weight:700}.mobile-lead-card>.lead-distance{padding:0 14px 8px}.filter-toolbar>select{border:1px solid var(--line);border-radius:8px;padding:9px;background:white;color:#475467;max-width:220px}
