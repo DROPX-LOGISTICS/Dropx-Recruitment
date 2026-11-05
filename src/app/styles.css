@@ -617,6 +617,6 @@ dl{display:grid;grid-template-columns:minmax(110px,35%) 1fr;gap:8px 12px;margin:
 
 .lead-distance{display:block;font-size:11px;color:#64748b;margin-top:4px}.lead-distance.near{color:#087443;font-weight:700}.mobile-lead-card>.lead-distance{padding:0 14px 8px}.filter-toolbar>select{border:1px solid var(--line);border-radius:8px;padding:9px;background:white;color:#475467;max-width:220px}
 
-.sidebar nav a{text-decoration:none}.copy-page-link{border:1px solid var(--line);background:white;border-radius:8px;padding:8px 12px;white-space:nowrap;font-size:12px}
+.sidebar nav a{text-decoration:none}
 
-@media(max-width:720px){.workspace>header{flex-wrap:wrap}.copy-page-link{margin-left:auto}}
+@media(max-width:720px){.workspace>header{flex-wrap:wrap}}

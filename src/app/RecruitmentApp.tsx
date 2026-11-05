@@ -221,7 +221,6 @@ export default function RecruitmentApp() {
   const urlReady = useRef(false);
   const restoringUrl = useRef(false);
   const [routeRevision,setRouteRevision] = useState(0);
-  const [linkNotice,setLinkNotice] = useState("");
   const [previewUsers, setPreviewUsers] = useState<PreviewUser[]>([]);
 
   useEffect(() => {
@@ -695,7 +694,7 @@ export default function RecruitmentApp() {
     </aside>
     {mobileMenuOpen?<button className="mobile-menu-backdrop" aria-label="Close menu" onClick={()=>setMobileMenuOpen(false)}/>:null}
     <section className="workspace">
-      <header><button className="mobile-menu-trigger" aria-label="Open menu" aria-expanded={mobileMenuOpen} onClick={()=>setMobileMenuOpen(true)}><i/><span><small>Recruitment</small>{pageTitle}</span></button><div className="desktop-page-title"><h1>{pageTitle}</h1><p>{pageSubtitle}</p></div>{user.canPreviewUsers?<PreviewUserSearch users={previewUsers} viewerProfileId={user.viewerProfileId} selectedUser={user.isPreview ? {profileId:user.profileId,name:user.name||user.email||"User",designationName:user.designationName,designationCode:user.designationCode} : null} onChange={changePreview}/>:null}<button className="copy-page-link" onClick={async()=>{try{await navigator.clipboard.writeText(window.location.href);setLinkNotice("Copied");setTimeout(()=>setLinkNotice(""),2000);}catch{setLinkNotice("Copy the address bar link");}}}>{linkNotice||"Copy link"}</button><div className="stream-switch" aria-label="Recruitment section">
+      <header><button className="mobile-menu-trigger" aria-label="Open menu" aria-expanded={mobileMenuOpen} onClick={()=>setMobileMenuOpen(true)}><i/><span><small>Recruitment</small>{pageTitle}</span></button><div className="desktop-page-title"><h1>{pageTitle}</h1><p>{pageSubtitle}</p></div>{user.canPreviewUsers?<PreviewUserSearch users={previewUsers} viewerProfileId={user.viewerProfileId} selectedUser={user.isPreview ? {profileId:user.profileId,name:user.name||user.email||"User",designationName:user.designationName,designationCode:user.designationCode} : null} onChange={changePreview}/>:null}<div className="stream-switch" aria-label="Recruitment section">
         {user.workforce ? <button className={stream === "workforce" ? "selected" : ""} onClick={() => switchStream("workforce")}>Workforce</button> : null}
         {user.hr ? <button className={stream === "hr" ? "selected" : ""} onClick={() => switchStream("hr")}>HR</button> : null}
       </div></header>
