@@ -1,0 +1,27 @@
+.panel{padding:14px;border:1px solid #e5d3dc;border-radius:12px;background:#fff9fc;min-width:0;display:grid;gap:12px}
+.panel>header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.panel header small{font-size:10px;font-weight:800;letter-spacing:.08em;color:#c82054}
+.panel header h3{margin:4px 0!important;font-size:16px!important}
+.panel header p{margin:0;color:#667085;font-size:12px}
+.panel fieldset{border:0;padding:0;margin:0;min-width:0;display:grid;gap:11px}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:10px;min-width:0}
+.help{margin:0!important;color:#667085;font-size:11px!important;line-height:1.5}
+.panel .primary{background:#cc2057;color:#fff;border-color:#cc2057}
+.actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.actions a{font-size:12px;font-weight:700;color:#b71b4d;padding:8px}
+.error{margin:0;color:#9f1239;background:#ffeaf0;border-radius:7px;padding:10px;font-size:12px}
+.result{display:grid;justify-items:center;gap:8px;border-top:1px solid #eadce3;padding-top:12px}
+.result img{display:block;max-width:100%;max-height:480px;object-fit:contain;border-radius:8px;background:#fff;box-shadow:0 4px 18px #45203312}
+.result p{margin:0;color:#667085;font-size:11px;text-align:center}
+@media(max-width:600px){.two{grid-template-columns:1fr}.panel{padding:11px}.actions button{flex:1}.result img{max-height:420px}}
+
+.brandNote{display:grid;gap:4px;background:#fff;border:1px solid #eadce3;padding:10px;border-radius:8px;font-size:12px;color:#202b40}.brandNote span,.brandNote small{font-size:11px;color:#667085;line-height:1.45}
+.panel label{display:grid;gap:6px;font-size:12px;font-weight:650;color:#344054;min-width:0}
+.panel label small{font-weight:400;color:#667085;font-size:11px;line-height:1.45}
+.panel input,.panel select,.panel textarea{box-sizing:border-box;width:100%;min-width:0;border:1px solid #d9dfe8;border-radius:8px;background:white;color:#243046;padding:10px 11px;font:inherit;font-weight:450;line-height:1.4}
+.panel textarea{resize:vertical;min-height:68px}
+.panel input:focus,.panel select:focus,.panel textarea:focus{outline:2px solid #d126602b;border-color:#ce2058}
+.panel button{border:1px solid #d9dfe8;border-radius:8px;background:white;padding:9px 12px;color:#344054;font:inherit;font-size:12px;font-weight:700;cursor:pointer}
+.panel button:disabled{opacity:.55;cursor:not-allowed}
+.panel .primary{background:#cc2057;color:#fff;border-color:#cc2057}
+.panel header>button{padding:5px 10px;font-size:20px;line-height:1}

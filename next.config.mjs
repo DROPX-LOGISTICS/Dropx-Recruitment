@@ -3,6 +3,9 @@ const nextConfig = {
   poweredByHeader: false,
   compress: true,
   experimental: {
+    outputFileTracingIncludes: {
+      "/api/recruitment/poster-generator": ["./public/dropx-logo.png", "./public/brand/*.png"]
+    },
     serverActions: { bodySizeLimit: "2mb" }
   },
   async headers() {

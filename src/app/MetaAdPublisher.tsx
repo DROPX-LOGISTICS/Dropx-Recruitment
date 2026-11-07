@@ -22,6 +22,7 @@ import { matchesMetaCampaignCategory } from "@/lib/meta-campaign-category";
 import styles from "./MetaPromotionsPanel.module.css";
 import SearchableAdSelect from "./SearchableAdSelect";
 import MetaPosterGuidance from "./MetaPosterGuidance";
+import MetaPosterGenerator from "./MetaPosterGenerator";
 
 type Workspace = "workforce" | "hr";
 type Props = { token:string; stream:Workspace; options:any; close:()=>void; openPromotions?:(locationId:string)=>void; initialLocationId?:string; afterPublish:()=>Promise<void> };
@@ -70,6 +71,7 @@ export default function MetaAdPublisher({token,stream,options,close,openPromotio
   const [posterMeta,setPosterMeta]=useState<CreativePreview|null>(null);
   const uploadController=useRef<AbortController|null>(null);
   const [uploadStatus,setUploadStatus]=useState("");
+  const [showGenerator,setShowGenerator]=useState(false);
   useEffect(()=>()=>uploadController.current?.abort(),[]);
   const locations=options?.locations??[];
   const roles=useMemo(()=>(options?.roles??[]).filter((item:any)=>item.stream===stream),[options,stream]);
@@ -147,7 +149,9 @@ export default function MetaAdPublisher({token,stream,options,close,openPromotio
           <div className={styles.two}><label>Daily budget (₹)<input type="number" min="100" value={form.dailyBudget} onChange={e=>update("dailyBudget",e.target.value)}/></label><label>Run for (days)<input type="number" min="1" max="90" value={form.daysRequired} onChange={e=>update("daysRequired",e.target.value)}/></label></div>
           <label>Headline<input value={form.headline} onChange={e=>update("headline",e.target.value)}/></label>
           <label>Ad text<textarea rows={3} value={form.primaryText} onChange={e=>update("primaryText",e.target.value)}/></label>
-          <label>Image or video<input type="file" accept={META_MEDIA_ACCEPT} onChange={event=>{const file=event.target.files?.[0];if(file)void uploadPoster(file);event.currentTarget.value="";}}/><small>Images up to 12 MB · MP4/MOV up to 50 MB · 1 sec–3 min</small></label>
+          <button type="button" disabled={!selectedLocation||!selectedRole||uploading} onClick={()=>setShowGenerator(value=>!value)}>{showGenerator?"Hide poster generator":"Generate poster with AI"}</button>
+          {showGenerator&&selectedLocation&&selectedRole?<MetaPosterGenerator key={`${selectedLocation.id}-${selectedRole.id}`} token={token} stream={stream} location={selectedLocation} role={selectedRole} close={()=>setShowGenerator(false)} onUse={file=>{setShowGenerator(false);void uploadPoster(file);}}/>:null}
+          <label>Or upload an image or video<input type="file" accept={META_MEDIA_ACCEPT} onChange={event=>{const file=event.target.files?.[0];if(file)void uploadPoster(file);event.currentTarget.value="";}}/><small>Images up to 12 MB · MP4/MOV up to 50 MB · 1 sec–3 min</small></label>
           <MetaPosterGuidance media={posterMeta}/>
           {uploading?<p role="status">{uploadStatus}</p>:null}
           {posterPreview?posterMeta?.kind==="video"?<video className={styles.preview} src={posterPreview} controls playsInline preload="metadata" aria-label="Recruitment video preview"/>:<img className={styles.preview} src={posterPreview} alt="Recruitment image preview"/>:null}
