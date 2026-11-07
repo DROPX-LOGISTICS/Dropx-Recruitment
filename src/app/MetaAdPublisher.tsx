@@ -20,6 +20,8 @@ import MetaLocationPinPicker from "./MetaLocationPinPicker";
 import MetaCampaignCategoryPicker from "./MetaCampaignCategoryPicker";
 import { matchesMetaCampaignCategory } from "@/lib/meta-campaign-category";
 import styles from "./MetaPromotionsPanel.module.css";
+import SearchableAdSelect from "./SearchableAdSelect";
+import MetaPosterGuidance from "./MetaPosterGuidance";
 
 type Workspace = "workforce" | "hr";
 type Props = { token:string; stream:Workspace; options:any; close:()=>void; openPromotions?:(locationId:string)=>void; initialLocationId?:string; afterPublish:()=>Promise<void> };
@@ -40,12 +42,12 @@ function PlacementCard({platform,placement,story,image,headline,copy,cta,width,h
 export function PlacementGallery({image,headline,copy,cta,width,height,kind="image"}:{image:string;headline:string;copy:string;cta:string;width:number;height:number;kind?:MetaMediaKind}){
   const ratioLabel=width===height?"1:1 original":`${width}:${height} original`;
   return <section className="placement-preview-section">
-    <header><div><span>LIVE CREATIVE PREVIEW</span><h3>Check every placement before publishing</h3></div><p>{kind==="video"?"Play the video and check its audio. Placement previews are estimates; Meta may adjust the final layout.":"Feed preserves the uploaded image. Story/Reels estimates the 9:16 background fill."}</p></header>
+    <header><div><span>LIVE CREATIVE PREVIEW</span><h3>Check every placement before publishing</h3></div><p>{kind==="video"?"Play the video and check its audio. Placement previews are estimates; Meta may adjust the final layout.":"These previews preserve the full image. Stories/Reels use a 9:16 frame; other ratios have padding. Meta may crop or adapt the final ad, so check its final placement preview."}</p></header>
     <div className="placement-preview-grid">
       <PlacementCard platform="Instagram" placement={`Feed · ${ratioLabel}`} image={image} kind={kind} headline={headline} copy={copy} cta={cta} width={width} height={height}/>
-      <PlacementCard platform="Instagram" placement="Story / Reels · 9:16 auto-fill" story image={image} kind={kind} headline={headline} copy={copy} cta={cta} width={width} height={height}/>
+      <PlacementCard platform="Instagram" placement="Story / Reels · 9:16 fit estimate" story image={image} kind={kind} headline={headline} copy={copy} cta={cta} width={width} height={height}/>
       <PlacementCard platform="Facebook" placement={`Feed · ${ratioLabel}`} image={image} kind={kind} headline={headline} copy={copy} cta={cta} width={width} height={height}/>
-      <PlacementCard platform="Facebook" placement="Story · 9:16 auto-fill" story image={image} kind={kind} headline={headline} copy={copy} cta={cta} width={width} height={height}/>
+      <PlacementCard platform="Facebook" placement="Story · 9:16 fit estimate" story image={image} kind={kind} headline={headline} copy={copy} cta={cta} width={width} height={height}/>
     </div>
   </section>;
 }
@@ -134,9 +136,9 @@ export default function MetaAdPublisher({token,stream,options,close,openPromotio
     {!loading&&!review?<fieldset className={styles.fields} disabled={busy||uploading}>
       <div className={`${styles.two} ${styles.mobileStack}`}>
         <label>Ad type<select value="recruitment" onChange={()=>openPromotions?.(form.locationId)}><option value="recruitment">Recruitment · instant form &amp; leads</option>{openPromotions?<option value="promotion">Service / customer promotion</option>:null}</select></label>
-        <label>Location<select value={form.locationId} onChange={e=>update("locationId",e.target.value)}><option value="">Choose station / store</option>{locations.map((item:any)=><option key={item.id} value={item.id}>{item.code} — {item.name}</option>)}</select></label>
-        <label>Designation<select value={form.roleId} onChange={e=>update("roleId",e.target.value)}><option value="">Select {stream==="hr"?"HR position":"workforce role"}</option>{roles.map((item:any)=><option key={item.id} value={item.id}>{item.code} — {item.name}</option>)}</select></label>
-        <label>Instant form<select disabled={!selectedRole} value={form.formId} onChange={e=>update("formId",e.target.value)}><option value="">{selectedRole?`Select a form for ${selectedRole.code}`:"Select designation first"}</option>{matchedForms.map((item:any)=><option key={item.id} value={item.id}>{item.name}</option>)}</select>{selectedRole&&!matchedForms.length?<small role="status">No active Meta form matches {selectedRole.code}.</small>:null}</label>
+        <SearchableAdSelect label="Location" value={form.locationId} onChange={value=>update("locationId",value)} placeholder="Choose station / store" options={locations.map((item:any)=>({value:item.id,label:`${item.code} — ${item.name}`}))}/>
+        <SearchableAdSelect label="Designation" value={form.roleId} onChange={value=>update("roleId",value)} placeholder={`Select ${stream==="hr"?"HR position":"workforce role"}`} options={roles.map((item:any)=>({value:item.id,label:`${item.code} — ${item.name}`}))}/>
+        <div><SearchableAdSelect label="Instant form" disabled={!selectedRole} value={form.formId} onChange={value=>update("formId",value)} placeholder={selectedRole?`Select a form for ${selectedRole.code}`:"Select designation first"} options={matchedForms.map((item:any)=>({value:item.id,label:item.name}))}/>{selectedRole&&!matchedForms.length?<small role="status">No active Meta form matches {selectedRole.code}.</small>:null}</div>
       </div>
       <p className={styles.leadDestination}>Applications → <strong>{stream==="hr"?"HR · Candidates":"Workforce · All Leads"}</strong>{selectedLocation&&selectedRole?` · ${selectedLocation.code} / ${selectedRole.code}`:" · Choose a location and designation"}</p>
       <div className={styles.composer}>
@@ -146,11 +148,12 @@ export default function MetaAdPublisher({token,stream,options,close,openPromotio
           <label>Headline<input value={form.headline} onChange={e=>update("headline",e.target.value)}/></label>
           <label>Ad text<textarea rows={3} value={form.primaryText} onChange={e=>update("primaryText",e.target.value)}/></label>
           <label>Image or video<input type="file" accept={META_MEDIA_ACCEPT} onChange={event=>{const file=event.target.files?.[0];if(file)void uploadPoster(file);event.currentTarget.value="";}}/><small>Images up to 12 MB · MP4/MOV up to 50 MB · 1 sec–3 min</small></label>
+          <MetaPosterGuidance media={posterMeta}/>
           {uploading?<p role="status">{uploadStatus}</p>:null}
           {posterPreview?posterMeta?.kind==="video"?<video className={styles.preview} src={posterPreview} controls playsInline preload="metadata" aria-label="Recruitment video preview"/>:<img className={styles.preview} src={posterPreview} alt="Recruitment image preview"/>:null}
           <details className={styles.advanced}><summary>Campaign &amp; more options</summary><div className={styles.stack}>
             <label>Campaign<select value={form.campaignMode} onChange={e=>update("campaignMode",e.target.value)}><option value="new">Create new Leads campaign</option><option value="existing">Use existing Leads campaign</option></select></label>
-            {form.campaignMode==="existing"?<label>Existing campaign<select value={form.campaignId} onChange={e=>update("campaignId",e.target.value)}><option value="">Select campaign</option>{(catalog?.campaigns??[]).filter((item:any)=>matchesMetaCampaignCategory(item.specialAdCategories,form.campaignCategory)).map((item:any)=><option key={item.id} value={item.id}>{item.name} · {item.effectiveStatus}</option>)}</select></label>:<label>Campaign name<input value={form.campaignName} onChange={e=>update("campaignName",e.target.value)}/></label>}
+            {form.campaignMode==="existing"?<SearchableAdSelect label="Existing campaign" value={form.campaignId} onChange={value=>update("campaignId",value)} placeholder="Select campaign" options={(catalog?.campaigns??[]).filter((item:any)=>matchesMetaCampaignCategory(item.specialAdCategories,form.campaignCategory)).map((item:any)=>({value:item.id,label:`${item.name} · ${item.effectiveStatus}`}))}/>:<label>Campaign name<input value={form.campaignName} onChange={e=>update("campaignName",e.target.value)}/></label>}
             <label>Call to action<select value={form.callToAction} onChange={e=>update("callToAction",e.target.value)}><option value="APPLY_NOW">Apply now</option><option value="SIGN_UP">Sign up</option><option value="LEARN_MORE">Learn more</option></select></label>
             <label>Destination link<input type="url" value={form.destinationUrl} onChange={e=>update("destinationUrl",e.target.value)}/></label>
             <label>Description<input value={form.description} onChange={e=>update("description",e.target.value)} placeholder="Salary, shift or benefit (optional)"/></label>

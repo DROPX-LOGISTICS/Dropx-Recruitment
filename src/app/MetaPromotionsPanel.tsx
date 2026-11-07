@@ -1,8 +1,10 @@
 "use client";
+import SearchableAdSelect from "./SearchableAdSelect";
+import MetaPosterGuidance from "./MetaPosterGuidance";
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { recruitmentClientHeaders } from "@/lib/recruitment-client-headers";
-import { uploadCreativeFile } from "@/lib/meta-media-upload";
+import { uploadCreativeFile, type CreativePreview } from "@/lib/meta-media-upload";
 import type { PromotionDemographics, PromotionPurpose } from "@/lib/promotion-audience";
 import type { AdAudiencePin } from "@/lib/meta-audience-pin";
 import MetaAudienceRadiusPicker from "./MetaAudienceRadiusPicker";
@@ -42,6 +44,7 @@ export default function MetaPromotionsPanel({ token, stream, locations, close, o
   const [selected, setSelected] = useState<Loaded | null>(null), [review, setReview] = useState<any>(null);
   const [confirmed, setConfirmed] = useState(false), [notice, setNotice] = useState("");
   const [requestId, setRequestId] = useState(() => crypto.randomUUID()), [preview, setPreview] = useState("");
+  const [previewMeta, setPreviewMeta] = useState<CreativePreview | null>(null);
   const [delivery, setDelivery] = useState<"ACTIVE" | "PAUSED">("ACTIVE");
   const reload = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
@@ -63,7 +66,7 @@ export default function MetaPromotionsPanel({ token, stream, locations, close, o
     setForm(current => ({ ...current, [key]: value, ...(key === "locationId" ? { customPin: null } : {}) }));
     setReview(null); setNotice("");
   }
-  function startNew() { setForm(initialForm()); setSelected(null); setReview(null); setConfirmed(false); setNotice(""); setPreview(""); setRequestId(crypto.randomUUID()); setMode("new"); }
+  function startNew() { setForm(initialForm()); setSelected(null); setReview(null); setConfirmed(false); setNotice(""); setPreview(""); setPreviewMeta(null); setRequestId(crypto.randomUUID()); setMode("new"); }
   async function open(ad: Promotion, next: "edit" | "delivery") {
     setBusy(true); setNotice(""); setReview(null); setConfirmed(false); setRequestId(crypto.randomUUID());
     try {
@@ -76,9 +79,9 @@ export default function MetaPromotionsPanel({ token, stream, locations, close, o
   async function upload(file?: File) {
     if (!file) return;
     if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) { setNotice("Use a JPG, PNG or WebP image."); return; }
-    setBusy(true); setReview(null); setForm(f => ({ ...f, imageHash: "", posterUrl: "" }));
+    setBusy(true); setReview(null); setPreviewMeta(null); setForm(f => ({ ...f, imageHash: "", posterUrl: "" }));
     const controller = new AbortController(); uploadController.current = controller;
-    try { const image = await uploadCreativeFile({ file, stream, headers: recruitmentClientHeaders(token), signal: controller.signal, onPreview: value => setPreview(value.url), onStatus: setNotice }); setForm(f => ({ ...f, imageHash: image.imageHash, posterUrl: image.previewUrl || image.posterUrl || "" })); setNotice(""); }
+    try { const image = await uploadCreativeFile({ file, stream, headers: recruitmentClientHeaders(token), signal: controller.signal, onPreview: value => { setPreview(value.url); setPreviewMeta(value); }, onStatus: setNotice }); setForm(f => ({ ...f, imageHash: image.imageHash, posterUrl: image.previewUrl || image.posterUrl || "" })); setNotice(""); }
     catch (error) { setNotice(error instanceof Error ? error.message : "Upload failed."); }
     finally { setBusy(false); }
   }
@@ -111,13 +114,14 @@ export default function MetaPromotionsPanel({ token, stream, locations, close, o
         <div className={mode === "new" ? styles.composer : styles.stack}>
         {mode === "new" ? <section className={styles.creative} aria-label="Promotion details">
           <h3>Ad details</h3>
-          <div className={`${styles.two} ${styles.mobileStack}`}><label>Ad type<select value={form.purpose} onChange={e => { if (e.target.value === "recruitment") openRecruitment(form.locationId); else update("purpose", e.target.value as PromotionPurpose); }}><option value="recruitment">Recruitment · instant form & leads</option><option value="service_offer">Delivery / service promotion</option><option value="customer_offer">Customer offer</option><option value="brand">Brand promotion</option></select></label><label>Location<select value={form.locationId} onChange={e => update("locationId", e.target.value)}><option value="">Choose station / store</option>{locations.map(l => <option key={l.id} value={l.id}>{l.code} — {l.name}</option>)}</select></label></div>
+          <div className={`${styles.two} ${styles.mobileStack}`}><label>Ad type<select value={form.purpose} onChange={e => { if (e.target.value === "recruitment") openRecruitment(form.locationId); else update("purpose", e.target.value as PromotionPurpose); }}><option value="recruitment">Recruitment · instant form & leads</option><option value="service_offer">Delivery / service promotion</option><option value="customer_offer">Customer offer</option><option value="brand">Brand promotion</option></select></label><SearchableAdSelect label="Location" value={form.locationId} onChange={value => update("locationId", value)} placeholder="Choose station / store" options={locations.map(l => ({value:l.id,label:`${l.code} — ${l.name}`}))}/></div>
           <small className={styles.routingHint}>Need a designation and instant form? Select Recruitment to receive applications in {stream === "hr" ? "Candidates" : "All Leads"}.</small>
           <label>Ad name<input value={form.adName} maxLength={200} onChange={e => update("adName", e.target.value)} placeholder="Calicut delivery service offer" /></label>
           <div className={styles.two}><label>Daily budget (₹)<input type="number" min="100" value={form.dailyBudget} onChange={e => update("dailyBudget", e.target.value)} /></label><label>Run for (days)<input type="number" min="1" max="90" value={form.daysRequired} onChange={e => update("daysRequired", e.target.value)} /></label></div>
           <label>Website destination<input type="url" value={form.destinationUrl} onChange={e => update("destinationUrl", e.target.value)} placeholder="https://your-service-page.example" /></label>
           <div className={`${styles.two} ${styles.mobileStack}`}><label>Headline<input maxLength={255} value={form.headline} onChange={e => update("headline", e.target.value)} /></label><label>Image · JPG, PNG or WebP<input type="file" accept="image/jpeg,image/png,image/webp" onChange={e => void upload(e.target.files?.[0])} /></label></div>
           <label>Ad text<textarea rows={2} maxLength={2000} value={form.primaryText} onChange={e => update("primaryText", e.target.value)} /></label>
+          <MetaPosterGuidance media={previewMeta}/>
           {preview ? <img className={styles.preview} src={preview} alt="Promotion image preview" /> : null}
         </section> : <div className={styles.adContext}><strong>{selected?.ad.ad_name}</strong><span>{selectedLocation?.code}</span></div>}
         {mode !== "delivery" ? <section className={styles.audience}>

@@ -1,4 +1,5 @@
 "use client";
+import MetaPosterGuidance from "./MetaPosterGuidance";
 
 import { useEffect, useRef, useState } from "react";
 import { PlacementGallery } from "./MetaAdPublisher";
@@ -191,6 +192,7 @@ export default function MetaCreativeReplacement({ token, stream, ad, close, afte
             <small>{posterMeta ? `${posterMeta.width} × ${posterMeta.height} · ${(posterMeta.size / 1024 / 1024).toFixed(2)} MB` : "No replacement selected"}</small>
           </article>
         </div>
+        <MetaPosterGuidance media={posterMeta}/>
         {uploading ? <p className="success-banner" role="status">{uploadStatus}</p> : null}
         {previewUrl && posterMeta ? <PlacementGallery image={previewUrl} kind={posterMeta.kind} headline={creative.headline || ad.ad_name || "Recruitment opening"} copy={creative.primaryText || "Join DropX Logistics. Apply now."} cta={creative.callToAction || "APPLY_NOW"} width={posterMeta.width} height={posterMeta.height}/> : null}
         <div className="creative-replacement-controls">

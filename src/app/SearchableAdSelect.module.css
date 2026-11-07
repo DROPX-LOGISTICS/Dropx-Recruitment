@@ -1,0 +1,10 @@
+.field{position:relative;display:grid;align-content:start;gap:4px;min-width:0;font-size:11px;font-weight:650}
+.field .trigger{display:flex;align-items:center;justify-content:space-between;gap:8px;min-width:0;width:100%;min-height:36px;padding:8px;text-align:left;border:1px solid #d8deea;border-radius:7px;color:#202b40;background:#fff;font:inherit;font-size:13px;white-space:normal}
+.trigger>span:first-child{overflow-wrap:anywhere}
+.popup{position:absolute;z-index:20;top:100%;left:0;right:0;min-width:0;margin-top:4px;padding:8px;border:1px solid #d8deea;border-radius:9px;background:#fff;box-shadow:0 8px 24px #202b4026}
+.options{max-height:220px;overflow:auto;overscroll-behavior:contain;margin-top:5px}
+.field .options button{display:block;width:100%;border:0;border-radius:5px;padding:9px 8px;text-align:left;font-size:12px;white-space:normal;color:#202b40;background:#fff;overflow-wrap:anywhere}
+.field .options button:hover,.field .options button.active{background:#f5edf3}
+.field .options button[aria-selected=true]{color:#bd1d50;font-weight:750}
+.options p{padding:8px;margin:0;color:#65728a;font-weight:400}
+@media(max-width:600px){.field .trigger,.field .options button{min-height:44px;font-size:16px}}
