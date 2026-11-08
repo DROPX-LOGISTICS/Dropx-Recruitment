@@ -98,12 +98,15 @@ export function buildDependentLeadFacets(groups: LeadFacetGroup[], selected: Dep
 }
 
 /** Preserve a selected zero-result value so it can always be removed. */
-export function dependentFilterOptions(catalog: Array<[string, string]>, counts: Array<{value: string; count: number}> | undefined, selected: string, normalize = (value: string) => value): Array<[string, string]> {
+export function dependentFilterOptions(catalog: Array<[string, string]>, counts: Array<{value: string; count: number}> | undefined, selected: string, normalize = (value: string) => value, includeObserved = false): Array<[string, string]> {
   const selectedValues = selected.split(",").filter(Boolean);
   const selectedSet = new Set(selectedValues);
   const totals = new Map((counts ?? []).map(item => [item.value, item.count]));
   const known = new Set(catalog.map(([code]) => code));
-  const options: Array<[string, string]> = [...catalog, ...selectedValues.filter(code => !known.has(code)).map(code => [code, code] as [string, string])];
+  // Historical station/role masters can be inactive while their leads remain
+  // in the queue. Keep those observed codes discoverable as well.
+  const additional = new Set([...selectedValues, ...(includeObserved ? [...totals.keys()] : [])]);
+  const options: Array<[string, string]> = [...catalog, ...[...additional].filter(code => !known.has(code)).map(code => [code, code] as [string, string])];
   return options.filter(([code]) => selectedSet.has(code) || (totals.get(normalize(code)) ?? 0) > 0)
     .map(([code, label]) => [code, counts ? `${label} (${(totals.get(normalize(code)) ?? 0).toLocaleString("en-IN")})` : label]);
 }

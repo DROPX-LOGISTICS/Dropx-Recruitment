@@ -87,3 +87,11 @@ describe("dependent lead filters", () => {
     expect(buildDependentLeadFacets([], facetSelections(new URLSearchParams()), owners)).toEqual({locations:[],clusters:[],roles:[],statuses:[],finalStatuses:[],updatedAges:[]});
   });
 });
+
+
+it("includes historical stations with leads even when absent from the active master", () => {
+  expect(dependentFilterOptions([["PMB","PMB — Perambra"]], [{value:"PMB",count:2},{value:"ERSE",count:90}], "", undefined, true))
+    .toEqual([["PMB","PMB — Perambra (2)"],["ERSE","ERSE (90)"]]);
+  // Status/outcome menus remain restricted to their supported choices.
+  expect(dependentFilterOptions([["joined","Joined"]], [{value:"old_status",count:90}], "")).toEqual([]);
+});

@@ -641,9 +641,9 @@ export default function RecruitmentApp() {
   const showLeads = ["All Leads","Archived Leads","No Response / Call Back","Interviews","Unmapped","Screening","Documents","Offers","Hired"].includes(active);
   const streamRoles = workspaceRoleCatalog(options.roles ?? [], stream);
   const allClusters = [...new Set<string>(options.locations.map((item:any)=>String(item.cluster||"")).filter(Boolean))];
-  const locationChoices = dependentFilterOptions(options.locations.map((item:any)=>[item.code, `${item.code} — ${item.name}`]), facets?.locations, filters.station);
+  const locationChoices = dependentFilterOptions(options.locations.map((item:any)=>[item.code, `${item.code} — ${item.name}`]), facets?.locations, filters.station, undefined, true);
   const clusterChoices = dependentFilterOptions(allClusters.map(value=>[value,value]), facets?.clusters, filters.cluster);
-  const roleChoices = dependentFilterOptions(streamRoles.map((item:any)=>[item.code, `${item.code} — ${item.name}`]), facets?.roles, filters.role);
+  const roleChoices = dependentFilterOptions(streamRoles.map((item:any)=>[item.code, `${item.code} — ${item.name}`]), facets?.roles, filters.role, undefined, true);
   const statusChoices = dependentFilterOptions(stream === "workforce"
     ? workforceStatusFilterOptions(workforceStatusOptions(options)).map((item:any)=>[item.code,item.label])
     : hrLifecycleFilterOptions(options.hrLifecycleRules), facets?.statuses, filters.status, value=>value==="__BLANK__"?"new":value);
