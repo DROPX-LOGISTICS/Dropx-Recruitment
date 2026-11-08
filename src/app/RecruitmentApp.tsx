@@ -1,4 +1,5 @@
 "use client";
+import { facetRows } from "@/lib/dependent-filters";
 
 import { useLeadFacets } from "./useLeadFacets";
 import { dependentFilterOptions } from "@/lib/lead-facets";
@@ -2559,16 +2560,13 @@ function SystemLogs({ data }: { data: { events?: RecruitmentSystemLog[]; sources
   const [action, setAction] = useState("");
   const [actor, setActor] = useState("");
   const events = useMemo(() => data?.events ?? [], [data?.events]);
-  const sources = useMemo(() => data?.sources ?? [...new Set(events.map((event) => event.source))].sort(), [data?.sources, events]);
-  const actions = useMemo(() => data?.actions ?? [...new Set(events.map((event) => event.action))].sort(), [data?.actions, events]);
-  const actors = useMemo(() => [...new Set(events.map((event) => event.actor))].sort(), [events]);
-  const filtered = useMemo(() => {
-    const term = searchValue.trim().toLowerCase();
-    return events.filter((event) => (!source || event.source === source)
-      && (!action || event.action === action)
-      && (!actor || event.actor === actor)
-      && (!term || `${event.source} ${event.entity} ${event.subject} ${event.action} ${event.change} ${event.actor}`.toLowerCase().includes(term)));
-  }, [action, actor, events, searchValue, source]);
+  const facets = useMemo(() => facetRows(events, {
+    source: {selected: source ? [source] : [], values: event => event.source},
+    action: {selected: action ? [action] : [], values: event => event.action},
+    actor: {selected: actor ? [actor] : [], values: event => event.actor}
+  }, event => !searchValue.trim() || `${event.source} ${event.entity} ${event.subject} ${event.action} ${event.change} ${event.actor}`.toLowerCase().includes(searchValue.trim().toLowerCase())), [events, source, action, actor, searchValue]);
+  const sources = facets.values("source"), actions = facets.values("action"), actors = facets.values("actor");
+  const filtered = facets.rows;
   const visible = filtered.slice(0, 300);
   return <section className="system-logs-view">
     <div className="system-log-kpis">
@@ -3863,6 +3861,12 @@ function ActiveAds({ data, token, stream, roleCatalog, reload, request, canDirec
   const selectedAdStations = new Set(station.split(",").filter(Boolean));
   const selectedOperationalOwners = new Set(operationalOwner.split(",").filter(Boolean));
   const selectedAdRoles = new Set(role.split(",").filter(Boolean));
+  const adFacets = useMemo(() => facetRows<any, "status" | "station" | "owner" | "role">(ads, {
+    status: {selected: status.split(",").filter(Boolean), values: item => String(item.status || "unknown").toUpperCase()},
+    station: {selected: station.split(",").filter(Boolean), values: item => item.recruitment_locations?.code},
+    owner: {selected: operationalOwner.split(",").filter(Boolean), values: item => item.recruitment_locations?.operational_owner?.name},
+    role: {selected: role.split(",").filter(Boolean), values: item => item.recruitment_roles?.code}
+  }, item => !search.trim() || [item.ad_name,item.campaign_name,item.adset_name,item.recruitment_locations?.code,item.recruitment_locations?.name,item.recruitment_locations?.operational_owner?.name,item.recruitment_roles?.code,item.recruitment_roles?.name].join(" ").toLowerCase().includes(search.trim().toLowerCase())), [ads, status, station, operationalOwner, role, search]);
   const visible = useMemo(() => {
     const query = search.trim().toLowerCase();
     return ads.filter((item:any) => {
@@ -3970,7 +3974,7 @@ function ActiveAds({ data, token, stream, roleCatalog, reload, request, canDirec
       <article className="ad-stat stat-total-spend"><span>Lifetime Spend</span><strong>₹{filtered.lifetimeSpend.toLocaleString("en-IN",{maximumFractionDigits:0})}</strong><small>historical total</small></article>
       <article className="ad-stat stat-leads"><span>Mapped Leads</span><strong>{filtered.leads.toLocaleString("en-IN")}</strong><small>unique dashboard leads</small></article>
     </div>
-    <div className="toolbar filter-toolbar ad-filter-toolbar"><input placeholder="Search ad, station, owner or role…" value={search} onChange={(event)=>setSearch(event.target.value)}/><MultiFilter label="Status" value={status} options={states.map((item)=>[item,statusLabel(item)])} onChange={setStatus}/><MultiFilter label="Stations" value={station} options={stationCatalog.map((item)=>[item.code,`${item.code} — ${item.name}`])} onChange={setStation}/><MultiFilter label="Operational owners" value={operationalOwner} options={operationalOwners.map((item)=>[item,item])} onChange={setOperationalOwner}/><MultiFilter label="Roles" value={role} options={roles.map((item)=>[item.code,`${item.code} — ${item.name}`])} onChange={setRole}/><FilterSelect label="Sort" value={sort} options={[["today","Today spend"],["ending","End date: earliest first"],["week","7-day spend"],["lifetime","Lifetime spend"],["budget","Daily budget"],["leads","Leads"],["newest","Newest"],["name","Ad name"],["station","Station"]]} onChange={setSort}/>{hasFilters?<button className="secondary-action" onClick={resetFilters}>Clear</button>:null}<span>{visible.length} of {ads.length}</span></div>
+    <div className="toolbar filter-toolbar ad-filter-toolbar"><input placeholder="Search ad, station, owner or role…" value={search} onChange={(event)=>setSearch(event.target.value)}/><MultiFilter label="Status" value={status} options={states.filter(item=>(adFacets.available.status.has(item) || selectedAdStates.has(item))).map((item)=>[item,statusLabel(item)])} onChange={setStatus}/><MultiFilter label="Stations" value={station} options={stationCatalog.filter(item=>(adFacets.available.station.has(item.code) || selectedAdStations.has(item.code))).map((item)=>[item.code,`${item.code} — ${item.name}`])} onChange={setStation}/><MultiFilter label="Operational owners" value={operationalOwner} options={operationalOwners.filter(item=>(adFacets.available.owner.has(item) || selectedOperationalOwners.has(item))).map((item)=>[item,item])} onChange={setOperationalOwner}/><MultiFilter label="Roles" value={role} options={roles.filter(item=>(adFacets.available.role.has(item.code) || selectedAdRoles.has(item.code))).map((item)=>[item.code,`${item.code} — ${item.name}`])} onChange={setRole}/><FilterSelect label="Sort" value={sort} options={[["today","Today spend"],["ending","End date: earliest first"],["week","7-day spend"],["lifetime","Lifetime spend"],["budget","Daily budget"],["leads","Leads"],["newest","Newest"],["name","Ad name"],["station","Station"]]} onChange={setSort}/>{hasFilters?<button className="secondary-action" onClick={resetFilters}>Clear</button>:null}<span>{visible.length} of {ads.length}</span></div>
     {insightState.loading?<div className="ad-insight-loading">Refreshing today and 7-day Meta insight in the background…</div>:insightState.available===false?<div className="ad-insight-warning">Daily Meta insight is temporarily unavailable. Lifetime values and saved budgets remain visible.{insightState.error?` ${insightState.error}`:""}</div>:null}
     {posterError?<div className="error-banner poster-error">{posterError}<button type="button" onClick={()=>setPosterError("")}>×</button></div>:null}
     <AdHealthPanel ads={visible} loading={insightState.loading} available={insightState.available} checkedAt={insightState.checkedAt} period={insightState.period}
