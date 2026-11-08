@@ -1,5 +1,8 @@
 "use client";
 
+import { useLeadFacets } from "./useLeadFacets";
+import { dependentFilterOptions } from "@/lib/lead-facets";
+import { leadQueueQuery, LEAD_QUEUE_MENUS } from "@/lib/lead-queue-query";
 import { metaDeliveryStatus } from "@/lib/meta-ad-delivery";
 import AdExtensionSummary from "./AdExtensionSummary";
 const MetaAdAudienceEditor = dynamic(() => import("./MetaAdAudienceEditor"), { ssr: false });
@@ -217,7 +220,12 @@ export default function RecruitmentApp() {
   const [filters, setFilters] = useState(emptyLeadFilters);
   const [urlFilters,setUrlFilters] = useState(emptyLeadFilters);
   const [urlSearch,setUrlSearch] = useState("");
-  const [facets, setFacets] = useState<any>(null);
+  const [facetRevision, setFacetRevision] = useState(0);
+  const {facets, loading: facetsLoading, error: facetsError, retry: retryFacets} = useLeadFacets({
+    params: leadQueueQuery(active, stream, filters, search),
+    enabled: Boolean(user && LEAD_QUEUE_MENUS.includes(active)), token: token ?? "", requestHeaders: headers,
+    locations: options.locations, revision: facetRevision
+  });
   const urlReady = useRef(false);
   const restoringUrl = useRef(false);
   const [routeRevision,setRouteRevision] = useState(0);
@@ -277,7 +285,7 @@ export default function RecruitmentApp() {
       if(!route)return;
       restoringUrl.current=true;loadController.current?.abort();loadVersion.current++;
       setStream(route.stream);setActive(route.menu);setFilters(route.filters);setUrlFilters(route.filters);setPage(route.page);setSearch(route.search);setUrlSearch(route.search);
-      setSelectedLead(null);setModuleData(null);setLeads([]);setFacets(null);setRouteRevision(value=>value+1);
+      setSelectedLead(null);setModuleData(null);setLeads([]);setRouteRevision(value=>value+1);
     };
     window.addEventListener('popstate',restore);
     return ()=>window.removeEventListener('popstate',restore);
@@ -359,32 +367,8 @@ export default function RecruitmentApp() {
         setModuleData(payload);
         setTotal(payload.total ?? 0);
       } else if (["All Leads","Archived Leads","No Response / Call Back","Interviews","Unmapped","Screening","Documents","Offers","Hired"].includes(active)) {
-        const params = new URLSearchParams({ limit: "50", page: String(effectivePage) });
-        // The lead API authorizes the exact queue/menu being opened. Keep this
-        // on every Workforce and HR list request so Owner, View, Edit and All
-        // grants are evaluated against the intended queue instead of being
-        // rejected as an unidentified request.
-        params.set("menu", active);
-        if(stream==="workforce")params.set("sort",effectiveFilters.sort);
-        const status = active === "No Response / Call Back" ? "no_response,call_back"
-          : active === "Interviews" && stream === "workforce" ? WORKFORCE_ACTIVE_INTERVIEW_STATUS_QUERY
-          : stream === "hr" ? hrQueueStatusQuery(active)
-          : "";
-        params.set("stream", stream);
-        if (active === "Archived Leads") params.set("archive", "archived");
-        if (status) params.set("status", status);
-        if (effectiveFilters.status) params.set("status", effectiveFilters.status);
-        if (effectiveFilters.adIds) params.set("adIds", effectiveFilters.adIds);
-        if (effectiveFilters.station) params.set("station", effectiveFilters.station);
-        if (effectiveFilters.cluster) params.set("cluster", effectiveFilters.cluster);
-        if (effectiveFilters.role) params.set("role", effectiveFilters.role);
-        if (active === "No Response / Call Back" && effectiveFilters.updatedAge) params.set("updatedAge", effectiveFilters.updatedAge);
-        if (active === "Interviews" && effectiveFilters.interviewFrom) params.set("interviewFrom", effectiveFilters.interviewFrom);
-        if (active === "Interviews" && effectiveFilters.interviewTo) params.set("interviewTo", effectiveFilters.interviewTo);
-        if (active === "Interviews" && stream === "hr" && effectiveFilters.finalStatus) params.set("finalStatus", effectiveFilters.finalStatus);
-        if (effectiveFilters.stale24) params.set("stale24", "true");
-        if (active === "Unmapped") params.set("unmapped", "true");
-        if (effectiveSearch.trim()) params.set("search", effectiveSearch.trim());
+        const params = leadQueueQuery(active, stream, effectiveFilters, effectiveSearch, effectivePage);
+        setFacetRevision(value => value + 1);
         const response = await fetch(`/api/recruitment/leads?${params}`, {
           headers: headers(token), cache: "no-store", signal: controller.signal
         });
@@ -402,7 +386,6 @@ export default function RecruitmentApp() {
           : null);
         setDetailBusy(false);
         setTotal(payload.total);
-        if (payload.facets) setFacets(payload.facets);
         if (pendingCandidateOpen.current) {
           const candidateId = pendingCandidateOpen.current;
           pendingCandidateOpen.current = null;
@@ -562,7 +545,7 @@ export default function RecruitmentApp() {
     loadVersion.current++;
     setSearch("");
     setFilters(label === "Interviews" ? {...emptyLeadFilters, interviewFrom:istDate(), interviewTo:istDate()} : emptyLeadFilters);
-    setFacets(null);
+
     setPage(1);
     setLeads([]);
     setTotal(0);
@@ -583,7 +566,7 @@ export default function RecruitmentApp() {
     setSelectedLead(null);
     setSearch("");
     setFilters(emptyLeadFilters);
-    setFacets(null);
+
     setPage(1);
     setLeads([]);
     setTotal(0);
@@ -657,19 +640,19 @@ export default function RecruitmentApp() {
   const navGroups = groupRecruitNavigation(nav);
   const showLeads = ["All Leads","Archived Leads","No Response / Call Back","Interviews","Unmapped","Screening","Documents","Offers","Hired"].includes(active);
   const streamRoles = workspaceRoleCatalog(options.roles ?? [], stream);
-  const selectedStations = new Set(filters.station.split(",").filter(Boolean));
-  const selectedClusters = new Set(filters.cluster.split(",").filter(Boolean));
-  const facetLocationCounts = new Map((facets?.locations ?? []).map((item:any) => [item.value, item.count]));
-  const facetClusterCounts = new Map((facets?.clusters ?? []).map((item:any) => [item.value, item.count]));
-  const facetRoleCounts = new Map((facets?.roles ?? []).map((item:any) => [item.value, item.count]));
-  const availableLocations = facets ? options.locations.filter((item:any) => facetLocationCounts.has(item.code) || selectedStations.has(item.code)) : options.locations;
   const allClusters = [...new Set<string>(options.locations.map((item:any)=>String(item.cluster||"")).filter(Boolean))];
-  const availableClusters = facets ? allClusters.filter((value) => facetClusterCounts.has(value) || selectedClusters.has(value)) : allClusters;
-  const availableRoles = streamRoles;
-  const withCount = (label: string, count: unknown) => typeof count === "number" ? `${label} (${count.toLocaleString("en-IN")})` : label;
+  const locationChoices = dependentFilterOptions(options.locations.map((item:any)=>[item.code, `${item.code} — ${item.name}`]), facets?.locations, filters.station);
+  const clusterChoices = dependentFilterOptions(allClusters.map(value=>[value,value]), facets?.clusters, filters.cluster);
+  const roleChoices = dependentFilterOptions(streamRoles.map((item:any)=>[item.code, `${item.code} — ${item.name}`]), facets?.roles, filters.role);
+  const statusChoices = dependentFilterOptions(stream === "workforce"
+    ? workforceStatusFilterOptions(workforceStatusOptions(options)).map((item:any)=>[item.code,item.label])
+    : hrLifecycleFilterOptions(options.hrLifecycleRules), facets?.statuses, filters.status, value=>value==="__BLANK__"?"new":value);
+  const outcomeChoices = dependentFilterOptions(workforceInterviewFilterOptions(workforceStatusOptions(options)).map(item=>[item.code,item.label]), facets?.statuses, filters.status);
+  const finalStatusChoices = dependentFilterOptions(options.finalStatuses.map((item:string)=>[item,item]), facets?.finalStatuses, filters.finalStatus);
+  const updatedChoices = dependentFilterOptions([["never","Never"],["lt30","Under 30 min"],["gt60","60+ min"],["gt120","120+ min"],["gt24h","24h+"],["gt2d","2 days+"]], facets?.updatedAges, filters.updatedAge);
   const applyLeadFilters = () => { setPage(1); void load({ page: 1 }); };
   const resetLeadFilters = () => {
-    setSearch(""); setFilters({...emptyLeadFilters}); setFacets(null); setPage(1);
+    setSearch(""); setFilters({...emptyLeadFilters});  setPage(1);
     void load({ page: 1, filterValues: {...emptyLeadFilters}, searchValue: "" });
   };
   const pageTitle = active === "Dashboard"
@@ -721,7 +704,7 @@ export default function RecruitmentApp() {
             setFilters({...emptyLeadFilters,station,role:designation,status,adIds,stale24});
             setSearch("");
             setPage(1);
-            setFacets(null);
+
           }}
         />
       </> : null}
@@ -732,20 +715,19 @@ export default function RecruitmentApp() {
         <div className="lead-registry-head"><div><b>{stream === "workforce" ? "Workforce calling queue" : "HR candidate pipeline"}</b><span>{stream === "workforce" ? "Call, update status and expand only when application answers are needed." : "Screen profiles, collect documents, coordinate interview rounds and capture manager decisions."}</span></div><strong>{total.toLocaleString("en-IN")} {active === "Archived Leads" ? "archived" : "active"} {stream === "workforce" ? "workforce leads" : "HR candidates"}</strong></div>
         <div className="toolbar filter-toolbar">
           <input placeholder="Name, phone, city, email or ad…" value={search} onChange={(event) => setSearch(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") applyLeadFilters(); }} />
-          {!(stream==="workforce"&&active==="Interviews")?<MultiFilter label="Status" value={filters.status} options={stream==="workforce"
-            ? workforceStatusFilterOptions(workforceStatusOptions(options)).map((item:any)=>[item.code,item.label])
-            : hrLifecycleFilterOptions(options.hrLifecycleRules)} onChange={(value)=>setFilters({...filters,status:value,stale24:false})} onApply={applyLeadFilters} busy={busy}/>:null}
-          <MultiFilter label="Stations" value={filters.station} options={availableLocations.map((item:any)=>[item.code,withCount(`${item.code} — ${item.name}`,facetLocationCounts.get(item.code))])} onChange={(value)=>setFilters({...filters,station:value})} onApply={applyLeadFilters} busy={busy}/>
-          <MultiFilter label="Operational owners" value={filters.cluster} options={availableClusters.map((value:string)=>[value,withCount(value,facetClusterCounts.get(value))])} onChange={(value)=>setFilters({...filters,cluster:value})} onApply={applyLeadFilters} busy={busy}/>
-          <MultiFilter label="Designations" value={filters.role} options={availableRoles.map((item:any)=>[item.code,withCount(`${item.code} — ${item.name}`,facetRoleCounts.get(item.code))])} onChange={(value)=>setFilters({...filters,role:value})} onApply={applyLeadFilters} busy={busy}/>
-          {active==="No Response / Call Back"?<MultiFilter label="Updated" value={filters.updatedAge} options={[["never","Never"],["lt30","Under 30 min"],["gt60","60+ min"],["gt120","120+ min"],["gt24h","24h+"],["gt2d","2 days+"]]} onChange={(value)=>setFilters({...filters,updatedAge:value})} onApply={applyLeadFilters} busy={busy}/>:null}
-          {active==="Interviews"?<>{stream==="workforce"?<MultiFilter label="Outcome" value={filters.status} options={workforceInterviewFilterOptions(workforceStatusOptions(options)).map((item)=>[item.code,item.label])} onChange={(value)=>setFilters({...filters,status:value,finalStatus:""})} onApply={applyLeadFilters} busy={busy}/>:null}<label className="compact-date">From<input type="date" aria-label="Interview from" value={filters.interviewFrom} onChange={(event)=>setFilters({...filters,interviewFrom:event.target.value})}/></label><label className="compact-date">To<input type="date" aria-label="Interview to" value={filters.interviewTo} onChange={(event)=>setFilters({...filters,interviewTo:event.target.value})}/></label>{stream==="hr"?<MultiFilter label="Final status" value={filters.finalStatus} options={options.finalStatuses.map((item:string)=>[item,item])} onChange={(value)=>setFilters({...filters,finalStatus:value})} onApply={applyLeadFilters} busy={busy}/>:null}</>:null}
+          {!(stream==="workforce"&&active==="Interviews")?<MultiFilter label="Status" value={filters.status} options={statusChoices} onChange={(value)=>setFilters({...filters,status:value,stale24:false})} onApply={applyLeadFilters} busy={busy} loading={facetsLoading && !facets}/>:null}
+          <MultiFilter label="Stations" value={filters.station} options={locationChoices} onChange={(value)=>setFilters({...filters,station:value})} onApply={applyLeadFilters} busy={busy} loading={facetsLoading && !facets}/>
+          <MultiFilter label="Operational owners" value={filters.cluster} options={clusterChoices} onChange={(value)=>setFilters({...filters,cluster:value})} onApply={applyLeadFilters} busy={busy} loading={facetsLoading && !facets}/>
+          <MultiFilter label="Designations" value={filters.role} options={roleChoices} onChange={(value)=>setFilters({...filters,role:value})} onApply={applyLeadFilters} busy={busy} loading={facetsLoading && !facets}/>
+          {active==="No Response / Call Back"?<MultiFilter label="Updated" value={filters.updatedAge} options={updatedChoices} onChange={(value)=>setFilters({...filters,updatedAge:value})} onApply={applyLeadFilters} busy={busy} loading={facetsLoading && !facets}/>:null}
+          {active==="Interviews"?<>{stream==="workforce"?<MultiFilter label="Outcome" value={filters.status} options={outcomeChoices} onChange={(value)=>setFilters({...filters,status:value,finalStatus:""})} onApply={applyLeadFilters} busy={busy} loading={facetsLoading && !facets}/>:null}<label className="compact-date">From<input type="date" aria-label="Interview from" value={filters.interviewFrom} onChange={(event)=>setFilters({...filters,interviewFrom:event.target.value})}/></label><label className="compact-date">To<input type="date" aria-label="Interview to" value={filters.interviewTo} onChange={(event)=>setFilters({...filters,interviewTo:event.target.value})}/></label>{stream==="hr"?<MultiFilter label="Final status" value={filters.finalStatus} options={finalStatusChoices} onChange={(value)=>setFilters({...filters,finalStatus:value})} onApply={applyLeadFilters} busy={busy} loading={facetsLoading && !facets}/>:null}</>:null}
           {stream==="workforce"?<select aria-label="Sort leads" value={filters.sort} onChange={(event)=>setFilters({...filters,sort:event.target.value})}><option value="newest">Newest first</option><option value="nearest">Nearby first · local PINs, then km</option></select>:null}
           {filters.stale24?<span className="filter-chip">24h+ pending</span>:null}
           {filters.adIds?<span className="filter-chip">Dashboard ad selection</span>:null}
           <button onClick={applyLeadFilters} disabled={busy}>{busy ? "Applying…" : "Apply filters"}</button>
           <button className="reset-btn" onClick={resetLeadFilters} disabled={busy}>Reset filters</button>
         </div>
+        {facetsError?<p className="dropdown-empty" role="status">{facetsError} <button type="button" onClick={retryFacets}>Retry filter choices</button></p>:null}
         {stream === "workforce"
           ? <WorkforceQueue leads={leads} selected={selectedLead} busy={busy||detailBusy} active={active} token={token} statusOptions={workforceStatusOptions(options)} canEdit={canEditMenu("workforce",active)} open={async(id)=>{if(selectedLead?.lead.id===id){setSelectedLead(null);}else{await openLead(id);}}} update={updateStatus} retry={retryLead} refresh={async(id)=>{await openLead(id);await load();}}/>
           : <HRCandidateWorkspace leads={leads} selected={selectedLead} busy={busy} detailBusy={detailBusy} token={token} options={options} canManage={menuLevel("hr","All Leads")==="all"} access={{activity:menuLevel("hr","All Leads"),screening:menuLevel("hr","Screening"),interviews:menuLevel("hr","Interviews"),documents:menuLevel("hr","Documents"),offers:menuLevel("hr","Offers")}} open={openLead} close={()=>{detailRequestVersion.current+=1;setSelectedLead(null);setDetailBusy(false);}} prefetch={prefetchLead} refresh={async(id,savedLead)=>{if(savedLead){setLeads((current)=>current.map((item)=>item.id===id?{...item,...savedLead}:item));setSelectedLead((current)=>current?.lead.id===id?{...current,lead:{...current.lead,...savedLead}}:current);}detailCache.current.delete(id);await openLead(id,true);await load();}} save={saveLead}/>} 
@@ -2215,7 +2197,7 @@ function FilterSelect({ label, value, options, onChange }: { label: string; valu
   return <select value={value} onChange={(event)=>onChange(event.target.value)}><option value="">{label}</option>{options.map(([option,labelText])=><option value={option} key={option}>{labelText}</option>)}</select>;
 }
 
-function MultiFilter({ label, value, options, onChange, onApply, busy = false }: { label: string; value: string; options: Array<[string,string]>; onChange: (value:string)=>void; onApply?:()=>void; busy?:boolean }) {
+function MultiFilter({ label, value, options, onChange, onApply, busy = false, loading = false }: { label: string; value: string; options: Array<[string,string]>; onChange: (value:string)=>void; onApply?:()=>void; busy?:boolean; loading?:boolean }) {
   const detailsRef = useRef<HTMLDetailsElement>(null);
   const [query,setQuery]=useState("");
   const selected = value.split(",").map((item)=>item.trim()).filter(Boolean);
@@ -2243,7 +2225,7 @@ function MultiFilter({ label, value, options, onChange, onApply, busy = false }:
     <div className="multi-filter-menu">
       <header><b>{label}</b><span><button type="button" onClick={(event)=>{event.preventDefault();toggleAllVisible();}}>{allVisibleSelected?"Clear all":query?"Select shown":"Select all"}</button>{selected.length&&!allVisibleSelected?<button type="button" onClick={(event)=>{event.preventDefault();onChange("");}}>Clear</button>:null}</span></header>
       <input className="dropdown-search" placeholder={`Search ${label.toLowerCase()}…`} value={query} onChange={(event)=>setQuery(event.target.value)}/>
-      <div>{visibleOptions.map(([option,labelText])=><label key={option}><input type="checkbox" checked={selectedSet.has(option)} onChange={()=>toggle(option)}/><span>{labelText}</span></label>)}{!visibleOptions.length?<p className="dropdown-empty">No matching options</p>:null}</div>
+      <div>{visibleOptions.map(([option,labelText])=><label key={option}><input type="checkbox" checked={selectedSet.has(option)} onChange={()=>toggle(option)}/><span>{labelText}</span></label>)}{!visibleOptions.length?<p className="dropdown-empty">{loading ? "Updating choices…" : "No matching options"}</p>:null}</div>
       {onApply?<footer><button type="button" disabled={busy} onClick={(event)=>{event.preventDefault();event.stopPropagation();detailsRef.current?.removeAttribute("open");setQuery("");onApply();}}>{busy?"Applying…":"Apply filters"}</button></footer>:null}
     </div>
   </details>;

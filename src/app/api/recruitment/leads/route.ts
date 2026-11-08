@@ -2,57 +2,17 @@ import { withLeadProximity } from "@/lib/lead-proximity-data";
 import { compareLeadProximity } from "@/lib/lead-proximity";
 import { NextResponse } from "next/server";
 import { applyLeadScope, canUseRecruitmentMenu, recruitmentSession, requiredEnv } from "@/lib/recruitment-api";
-import type { RecruitmentMenuId } from "@/lib/recruitment-menu-roles";
-import { buildLeadFacets } from "@/lib/lead-facets";
+import { buildDependentLeadFacets, facetSelections } from "@/lib/lead-facets";
+import { loadLeadFacetSummary } from "@/lib/lead-facet-data";
+import { resolveLeadMenu } from "@/lib/lead-queue-menu";
 import { loadMetaReceivedTimes } from "@/lib/lead-meta-intake";
 import { loadMainDashboardStations } from "@/lib/main-dashboard-masters";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { loadAllSupabaseRows } from "@/lib/supabase-pagination";
-import { WORKFORCE_ACTIVE_INTERVIEW_STATUS_QUERY } from "@/lib/workforce-interview-lifecycle";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-// facets=true pages through every lead matching the current scope (up to loadAllSupabaseRows's
-// ceiling) just to compute facet counts in Node via buildLeadFacets -- already documented above
-// (see the comment at its call site) as having caused connection-pool exhaustion in production
-// on a large queue. The leads list itself is requested on essentially every queue view and
-// filter change, often by several people looking at the same queue/filters within a short
-// window, and facet counts don't need to be more current than a couple of minutes old. A short
-// TTL cache, keyed by everything that changes the facet query (scope + every filter that reaches
-// the facet computation), means repeated identical facet requests share one full scan instead of
-// each re-running it. The main paginated lead list itself is left uncached -- it's a bounded
-// .range() query already, not a full scan.
-const facetsCache = new Map<string, { expires: number; body: Promise<unknown> }>();
-const FACETS_CACHE_TTL_MS = 120_000;
-
-const leadMenus = new Set<RecruitmentMenuId>([
-  "All Leads", "Archived Leads", "No Response / Call Back", "Interviews",
-  "Unmapped", "Screening", "Documents", "Offers", "Hired"
-]);
-
-// Older/cached browser bundles did not identify the queue in lead requests.
-// Resolve those requests from the queue-specific filters so they continue to
-// receive the same permission check as the current client. Requests without a
-// queue-specific filter are the All Leads queue.
-function resolveLeadMenu(url: URL): RecruitmentMenuId | null {
-  const requested = url.searchParams.get("menu") as RecruitmentMenuId | null;
-  if (requested) return leadMenus.has(requested) ? requested : null;
-  if (url.searchParams.get("archive") === "archived") return "Archived Leads";
-  if (url.searchParams.get("unmapped") === "true") return "Unmapped";
-
-  const status = url.searchParams.get("status") ?? "";
-  if (status === "no_response,call_back") return "No Response / Call Back";
-  if (status === "__BLANK__,assigned,contacting,interested") return "Screening";
-  if (status === "documents_pending") return "Documents";
-  if (status === "selected,offer_pending,offered") return "Offers";
-  if (status === "joined") return "Hired";
-  if (status === WORKFORCE_ACTIVE_INTERVIEW_STATUS_QUERY) return "Interviews";
-  if (status === "interview_scheduled,interview_rescheduled,interview_completed,interview_no_show,selected,joined,no_response,call_back,not_interested,not_fit,long_distance") {
-    return "Interviews";
-  }
-  return "All Leads";
-}
 
 function csv(value: string | null) {
   return (value ?? "").split(",").map((part) => part.trim()).filter(Boolean);
@@ -64,10 +24,6 @@ function startOfIstDay(value: string) {
 
 function endOfIstDay(value: string) {
   return `${value}T23:59:59.999+05:30`;
-}
-
-function relation<T>(value: T | T[] | null | undefined) {
-  return Array.isArray(value) ? value[0] ?? null : value ?? null;
 }
 
 export async function GET(request: Request) {
@@ -102,6 +58,7 @@ export async function GET(request: Request) {
       || !canUseRecruitmentMenu(session, menu, "view", stream)) {
       return NextResponse.json({ error: "View access to this Recruitment queue is required." }, { status: 403 });
     }
+    url.searchParams.set("menu", menu);
     const companyId = requiredEnv("RECRUITMENT_COMPANY_ID");
     const mainStations = clusters.length || includeFacets
       ? await loadMainDashboardStations(companyId)
@@ -245,114 +202,13 @@ export async function GET(request: Request) {
     if (result.error) throw new Error(result.error.message);
     if(stream==='workforce'&&!compact)result.data=await withLeadProximity(result.data??[]);
 
-    let facets = null;
-    if (includeFacets) {
-      // Cache key covers every input that changes the facet scan or its JS-side filtering:
-      // the requesting session's own effective lead scope (two sessions with different
-      // location/role access must never share a cached result), archive mode, the interview-id
-      // restriction, and every filter applied inside the commonRows.filter() below.
-      const facetsScopeKey = JSON.stringify({
-        companyId, stream, archive,
-        structuredInterviewIds: structuredInterviewIds ? [...structuredInterviewIds].sort() : null,
-        sessionOwner: session.isOwner,
-        sessionAllLocations: session.allLocations,
-        sessionLocationIds: [...session.locationIds].sort(),
-        sessionRoleIds: [...session.roleIds].sort(),
-        status, finalStatus, stale24, unmapped, adIds, leadFrom, leadTo,
-        interviewFrom, interviewTo, updatedAge: [...updatedAge].sort(), search,
-        stationCodes: [...stationCodes].sort(), clusters: [...clusters].sort(), roleCodes: [...roleCodes].sort()
-      });
-      const cachedFacets = facetsCache.get(facetsScopeKey);
-      if (cachedFacets && cachedFacets.expires > Date.now()) {
-        facets = await cachedFacets.body;
-      } else {
-        const facetsBody = (async () => {
-      const facetQuery = () => {
-        let scoped: any = supabaseAdmin!
-          .from("recruitment_leads")
-          .select("id,status,final_status,full_name,phone,email,city,post_code,ad_name,updated_at,lead_created_at,follow_up_at,location_id,role_id,recruitment_locations(code),recruitment_roles(code)")
-          .eq("company_id", companyId);
-        if (archive === "archived") scoped = scoped.eq("archived", true);
-        else if (archive !== "all") scoped = scoped.eq("archived", false);
-        scoped = applyLeadScope(scoped, session, stream);
-        if (structuredInterviewIds) scoped = structuredInterviewIds.length
-          ? scoped.in("id", structuredInterviewIds)
-          : scoped.eq("id", "00000000-0000-0000-0000-000000000000");
-        if(adIds.length)scoped=scoped.in('ad_id',adIds);
-        if(leadFrom)scoped=scoped.gte('lead_created_at',startOfIstDay(leadFrom));
-        if(leadTo)scoped=scoped.lte('lead_created_at',endOfIstDay(leadTo));
-        return scoped;
-      };
-      // Paged sequentially (not with Promise.all) so a large queue doesn't
-      // open dozens of concurrent joined queries against Supabase at once -
-      // that exhausted the connection pool and surfaced as intermittent
-      // 500s / statement timeouts on this route even though each page is
-      // fast on its own. See dashboard/route.ts for the same fix.
-      const commonRowsRaw = await loadAllSupabaseRows<any>((from, to) =>
-        facetQuery().order("id", { ascending: true }).range(from, to) as any
-      );
-      const selectedStatuses = status ? csv(status).flatMap((item) => item === "__BLANK__" || item === "new" ? ["", "new"] : [item]) : [];
-      const selectedFinalStatuses = finalStatus ? csv(finalStatus) : [];
-      const interviewStart = interviewFrom ? new Date(startOfIstDay(interviewFrom)).getTime() : null;
-      const interviewEnd = interviewTo ? new Date(endOfIstDay(interviewTo)).getTime() : null;
-      const now = Date.now();
-      const safeSearch = search?.replace(/[%(),]/g, " ").trim().toLowerCase() ?? "";
-      const commonRows = commonRowsRaw.filter((row: any) => {
-        const normalizedStatus = String(row.status ?? "");
-        if (selectedStatuses.length && !selectedStatuses.includes(normalizedStatus)) return false;
-        if (selectedFinalStatuses.length && !selectedFinalStatuses.includes(String(row.final_status ?? ""))) return false;
-        if (stale24 && (
-          !["", "new", "no_response", "call_back"].includes(normalizedStatus) ||
-          !row.lead_created_at ||
-          new Date(row.lead_created_at).getTime() >= now - 24 * 60 * 60_000
-        )) return false;
-        if (unmapped && row.location_id && row.role_id) return false;
-        if (interviewStart !== null || interviewEnd !== null) {
-          const interviewAt = row.follow_up_at ? new Date(row.follow_up_at).getTime() : NaN;
-          if (!Number.isFinite(interviewAt)) return false;
-          if (interviewStart !== null && interviewAt < interviewStart) return false;
-          if (interviewEnd !== null && interviewAt > interviewEnd) return false;
-        }
-        if (updatedAge.length) {
-          const updatedAt = row.updated_at ? new Date(row.updated_at).getTime() : null;
-          if (updatedAge.length === 1 && updatedAge[0] === "never" && updatedAt !== null) return false;
-          const thresholds: Record<string, number> = {
-            lt30: now - 30 * 60_000,
-            gt60: now - 60 * 60_000,
-            gt120: now - 120 * 60_000,
-            gt24h: now - 24 * 60 * 60_000,
-            gt2d: now - 48 * 60 * 60_000
-          };
-          const oldest = updatedAge.filter((item) => item in thresholds)
-            .sort((a, b) => thresholds[b] - thresholds[a])[0];
-          if (oldest === "lt30" && (updatedAt === null || updatedAt < thresholds.lt30)) return false;
-          if (oldest?.startsWith("gt") && (updatedAt === null || updatedAt > thresholds[oldest])) return false;
-        }
-        if (safeSearch) {
-          const searchable = [row.full_name, row.phone, row.email, row.city, row.post_code, row.ad_name]
-            .map((value) => String(value ?? "").toLowerCase());
-          if (!searchable.some((value) => value.includes(safeSearch))) return false;
-        }
-        return true;
-      }).map((row: any) => {
-        const location = relation(row.recruitment_locations) as { code?: string } | null;
-        const role = relation(row.recruitment_roles) as { code?: string } | null;
-        return {
-          locationCode: location?.code ?? null,
-          cluster: location?.code ? operationalOwnerByStationCode.get(location.code) ?? null : null,
-          roleCode: role?.code ?? null
-        };
-      });
-      return buildLeadFacets(commonRows, { stationCodes, clusters, roleCodes });
-        })();
-        // Evict on failure so one bad fetch doesn't keep every request for this scope failing
-        // for the rest of the TTL -- the next request gets a clean retry instead.
-        facetsBody.catch(() => { if (facetsCache.get(facetsScopeKey)?.body === facetsBody) facetsCache.delete(facetsScopeKey); });
-        facetsCache.set(facetsScopeKey, { expires: Date.now() + FACETS_CACHE_TTL_MS, body: facetsBody });
-        for (const [k, value] of facetsCache) if (value.expires <= Date.now()) facetsCache.delete(k);
-        facets = await facetsBody;
-      }
-    }
+    // Compatibility for older clients: use the compact aggregate, never download
+    // the entire queue to calculate filter choices.
+    const facets = includeFacets ? buildDependentLeadFacets(
+      await loadLeadFacetSummary(session, url, companyId, stream),
+      facetSelections(url.searchParams),
+      operationalOwnerByStationCode
+    ) : null;
 
     const receivedTimes = includeMetaIntake
       ? await loadMetaReceivedTimes(companyId, (result.data ?? []).map((lead: any) => lead.id))
